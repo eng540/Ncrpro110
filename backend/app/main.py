@@ -1,6 +1,5 @@
 from fastapi import FastAPI, Depends, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 from typing import List, Optional
@@ -126,24 +125,26 @@ def seed_latrines(count: int = 110, db: Session = Depends(get_db)):
 static_dir = os.path.join(os.path.dirname(__file__), "static")
 
 if os.path.exists(static_dir) and os.path.exists(os.path.join(static_dir, "index.html")):
-    # Serve static files from /static path
-    app.mount("/static", StaticFiles(directory=static_dir), name="static_assets")
-
-    # Serve React app on root and all non-API routes
+    
     @app.get("/")
     async def serve_react_root():
         return FileResponse(os.path.join(static_dir, "index.html"))
 
     @app.get("/{full_path:path}")
     async def serve_react_catchall(full_path: str):
-        # Don't intercept API routes
-        if full_path.startswith("api/") or full_path.startswith("static/"):
-            raise HTTPException(status_code=404, detail="Not found")
-        # Serve static file if it exists
+        # 1. Protect API routes from being intercepted by the frontend handler
+        if full_path.startswith("api/"):
+            raise HTTPException(status_code=404, detail="API Route Not Found")
+        
+        # 2. Construct the absolute path to the requested file
         file_path = os.path.join(static_dir, full_path)
+        
+        # 3. If the file exists (e.g., /static/js/main.js or /favicon.ico), serve it directly
         if os.path.exists(file_path) and os.path.isfile(file_path):
             return FileResponse(file_path)
-        # Otherwise serve index.html (React Router handles routing)
+        
+        # 4. If the file doesn't exist, it's likely a React Router path (e.g., /dashboard)
+        # Fallback to index.html so React can handle the routing
         return FileResponse(os.path.join(static_dir, "index.html"))
 else:
     @app.get("/")
