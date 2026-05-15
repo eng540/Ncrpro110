@@ -1,3 +1,11 @@
+FROM node:18-alpine AS frontend-builder
+
+WORKDIR /frontend
+COPY frontend/package.json .
+RUN npm install
+COPY frontend/ .
+RUN npm run build
+
 FROM python:3.11-slim
 
 WORKDIR /app
@@ -10,6 +18,10 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY backend/alembic.ini .
 COPY backend/alembic ./alembic
 COPY backend/app ./app
+
+# Copy React build into backend static folder
+COPY --from=frontend-builder /frontend/build ./app/static
+
 COPY entrypoint.sh .
 RUN chmod +x entrypoint.sh
 

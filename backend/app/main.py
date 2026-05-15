@@ -130,3 +130,23 @@ def seed_latrines(count: int = 110, db: Session = Depends(get_db)):
         crud.seed_boq_items(db, db_latrine.id)
         created.append(code)
     return {"created": len(created), "codes": created[:5]}
+
+
+# Serve React frontend static files
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
+import os
+
+# Check if static build exists (production)
+static_dir = os.path.join(os.path.dirname(__file__), "static")
+if os.path.exists(static_dir) and os.path.exists(os.path.join(static_dir, "index.html")):
+    app.mount("/static", StaticFiles(directory=static_dir), name="static")
+
+    @app.get("/{full_path:path}")
+    async def serve_react(full_path: str):
+        # API routes take precedence (already defined above)
+        # This catches all other routes and serves React
+        file_path = os.path.join(static_dir, full_path)
+        if os.path.exists(file_path) and os.path.isfile(file_path):
+            return FileResponse(file_path)
+        return FileResponse(os.path.join(static_dir, "index.html"))

@@ -22,5 +22,4 @@ except Exception as e:
 "
 
 echo "Starting uvicorn server on port ${PORT:-8000}..."
-# Use exec to replace shell process, and explicitly pass --port
 exec uvicorn app.main:app --host 0.0.0.0 --port "${PORT:-8000}" --log-level info
