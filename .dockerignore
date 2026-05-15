@@ -1,5 +1,4 @@
 # Ignore files not needed in Docker image
-frontend/
 *.zip
 *.md
 .git/
@@ -27,3 +26,6 @@ coverage.xml
 .mypy_cache/
 .dmypy.json
 dmypy.json
+
+# NOTE: frontend/ is needed for multi-stage build
+# Do NOT ignore it
