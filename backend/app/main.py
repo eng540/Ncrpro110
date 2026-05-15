@@ -1,5 +1,7 @@
 from fastapi import FastAPI, Depends, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 from typing import List, Optional
 from app import models, schemas, crud
@@ -7,41 +9,36 @@ from app.database import engine, get_db, Base
 import os
 
 # Create tables on startup
-Base.metadata.create_all(bind=engine)
+try:
+    Base.metadata.create_all(bind=engine)
+    print("Database tables verified/created")
+except Exception as e:
+    print(f"Warning: Could not create tables: {e}")
 
 app = FastAPI(
     title="NRC Latrine Tracker",
     description="ECHO 2525 - Al-Zohra District HH Latrines Tracking System",
-    version="1.0.0"
+    version="1.0.0",
+    docs_url="/api/docs",      # Move Swagger to /api/docs
+    redoc_url="/api/redoc",    # Move ReDoc to /api/redoc
+    openapi_url="/api/openapi.json"
 )
 
-# CORS - allow Railway frontend + local dev
-origins = [
-    "http://localhost:3000",
-    "https://localhost:3000",
-    os.getenv("FRONTEND_URL", "")
-]
-# Remove empty strings
-origins = [o for o in origins if o]
-
+# CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # In production, restrict this
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# ---------- HEALTH ----------
-@app.get("/")
-def root():
-    return {"message": "NRC Latrine Tracker API", "project": "ECHO 2525", "status": "running"}
+# ========== API ROUTES (all under /api) ==========
 
-@app.get("/health")
+@app.get("/api/health")
 def health_check():
     return {"status": "healthy", "service": "running"}
 
-# ---------- LATRINES ----------
 @app.get("/api/latrines", response_model=List[schemas.LatrineOut])
 def list_latrines(skip: int = 0, limit: int = 100, status: Optional[str] = None, db: Session = Depends(get_db)):
     return crud.get_latrines(db, skip=skip, limit=limit, status=status)
@@ -59,7 +56,6 @@ def create_latrine(latrine: schemas.LatrineCreate, db: Session = Depends(get_db)
     if existing:
         raise HTTPException(status_code=400, detail="Latrine ID already exists")
     db_latrine = crud.create_latrine(db, latrine)
-    # Auto-create BoQ items
     crud.seed_boq_items(db, db_latrine.id)
     return db_latrine
 
@@ -70,7 +66,6 @@ def patch_latrine(latrine_id: int, updates: schemas.LatrineUpdate, db: Session =
         raise HTTPException(status_code=404, detail="Latrine not found")
     return latrine
 
-# ---------- BOQ ITEMS ----------
 @app.get("/api/boq-items", response_model=List[schemas.BoqItemOut])
 def list_boq_items(latrine_id: Optional[int] = None, db: Session = Depends(get_db)):
     return crud.get_boq_items(db, latrine_id=latrine_id)
@@ -82,7 +77,6 @@ def update_boq_item(item_id: int, updates: schemas.BoqItemUpdate, db: Session = 
         raise HTTPException(status_code=404, detail="BoQ item not found")
     return item
 
-# ---------- REMARKS ----------
 @app.get("/api/remarks", response_model=List[schemas.RemarkOut])
 def list_remarks(latrine_id: Optional[int] = None, status: Optional[str] = None, db: Session = Depends(get_db)):
     return crud.get_remarks(db, latrine_id=latrine_id, status=status)
@@ -98,7 +92,6 @@ def patch_remark(remark_id: int, updates: schemas.RemarkUpdate, db: Session = De
         raise HTTPException(status_code=404, detail="Remark not found")
     return remark
 
-# ---------- DASHBOARD ----------
 @app.get("/api/dashboard/summary", response_model=schemas.DashboardSummary)
 def dashboard_summary(db: Session = Depends(get_db)):
     return crud.get_dashboard_summary(db)
@@ -107,10 +100,8 @@ def dashboard_summary(db: Session = Depends(get_db)):
 def category_progress(db: Session = Depends(get_db)):
     return crud.get_category_progress(db)
 
-# ---------- BULK SEED (for setup) ----------
 @app.post("/api/seed-latrines")
 def seed_latrines(count: int = 110, db: Session = Depends(get_db)):
-    """Seed N latrines with BoQ items. Use once during setup."""
     created = []
     for i in range(1, count + 1):
         code = f"LAT-{str(i).zfill(3)}"
@@ -131,22 +122,30 @@ def seed_latrines(count: int = 110, db: Session = Depends(get_db)):
         created.append(code)
     return {"created": len(created), "codes": created[:5]}
 
-
-# Serve React frontend static files
-from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
-import os
-
-# Check if static build exists (production)
+# ========== REACT FRONTEND (serve static files) ==========
 static_dir = os.path.join(os.path.dirname(__file__), "static")
+
 if os.path.exists(static_dir) and os.path.exists(os.path.join(static_dir, "index.html")):
-    app.mount("/static", StaticFiles(directory=static_dir), name="static")
+    # Serve static files from /static path
+    app.mount("/static", StaticFiles(directory=static_dir), name="static_assets")
+
+    # Serve React app on root and all non-API routes
+    @app.get("/")
+    async def serve_react_root():
+        return FileResponse(os.path.join(static_dir, "index.html"))
 
     @app.get("/{full_path:path}")
-    async def serve_react(full_path: str):
-        # API routes take precedence (already defined above)
-        # This catches all other routes and serves React
+    async def serve_react_catchall(full_path: str):
+        # Don't intercept API routes
+        if full_path.startswith("api/") or full_path.startswith("static/"):
+            raise HTTPException(status_code=404, detail="Not found")
+        # Serve static file if it exists
         file_path = os.path.join(static_dir, full_path)
         if os.path.exists(file_path) and os.path.isfile(file_path):
             return FileResponse(file_path)
+        # Otherwise serve index.html (React Router handles routing)
         return FileResponse(os.path.join(static_dir, "index.html"))
+else:
+    @app.get("/")
+    def root():
+        return {"message": "NRC Latrine Tracker API", "project": "ECHO 2525", "status": "running", "frontend": "not built"}
