@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from typing import Optional, List
 from datetime import datetime
 
@@ -60,6 +60,20 @@ class BoqItemBulkUpdate(BaseModel):
     achieved_qty: Optional[float] = None
     status: Optional[str] = None
     quality_pass: Optional[str] = None
+
+    @field_validator('item_id', mode='before')
+    @classmethod
+    def validate_item_id(cls, v):
+        if isinstance(v, str):
+            return int(v)
+        return v
+
+    @field_validator('achieved_qty', mode='before')
+    @classmethod
+    def validate_achieved(cls, v):
+        if v is None or v == "" or v == "null":
+            return None
+        return float(v)
 
 class BoqItemOut(BoqItemBase):
     id: int
