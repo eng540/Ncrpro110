@@ -3,6 +3,7 @@ import Dashboard from './components/Dashboard';
 import LatrineList from './components/LatrineList';
 import LatrineDetail from './components/LatrineDetail';
 import Remarks from './components/Remarks';
+import BulkUpdate from './components/BulkUpdate';
 
 const API_URL = '/api';
 
@@ -33,6 +34,7 @@ function App() {
       case 'latrines': return <LatrineList apiUrl={API_URL} onSelect={(l) => { setSelectedLatrine(l); setView('detail'); }} />;
       case 'detail': return <LatrineDetail apiUrl={API_URL} latrine={selectedLatrine} onBack={() => setView('latrines')} />;
       case 'remarks': return <Remarks apiUrl={API_URL} />;
+      case 'bulk': return <BulkUpdate apiUrl={API_URL} />;
       default: return <Dashboard apiUrl={API_URL} />;
     }
   };
@@ -51,6 +53,7 @@ function App() {
           <nav style={styles.nav}>
             <button style={styles.navBtn(view==='dashboard')} onClick={() => setView('dashboard')}>لوحة القيادة</button>
             <button style={styles.navBtn(view==='latrines')} onClick={() => setView('latrines')}>الحمامات</button>
+            <button style={styles.navBtn(view==='bulk')} onClick={() => setView('bulk')}>التحديث الجماعي</button>
             <button style={styles.navBtn(view==='remarks')} onClick={() => setView('remarks')}>الملاحظات</button>
           </nav>
         </div>
