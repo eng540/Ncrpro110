@@ -76,6 +76,11 @@ def update_boq_item(item_id: int, updates: schemas.BoqItemUpdate, db: Session = 
         raise HTTPException(status_code=404, detail="BoQ item not found")
     return item
 
+@app.patch("/api/boq-items/bulk")
+def bulk_update_boq_items(items: List[schemas.BoqItemBulkUpdate], db: Session = Depends(get_db)):
+    result = crud.bulk_update_boq_items(db, items)
+    return result
+
 @app.get("/api/remarks", response_model=List[schemas.RemarkOut])
 def list_remarks(latrine_id: Optional[int] = None, status: Optional[str] = None, db: Session = Depends(get_db)):
     return crud.get_remarks(db, latrine_id=latrine_id, status=status)
@@ -125,7 +130,7 @@ def seed_latrines(count: int = 110, db: Session = Depends(get_db)):
 static_dir = os.path.join(os.path.dirname(__file__), "static")
 
 if os.path.exists(static_dir) and os.path.exists(os.path.join(static_dir, "index.html")):
-    
+
     @app.get("/")
     async def serve_react_root():
         return FileResponse(os.path.join(static_dir, "index.html"))
@@ -135,14 +140,14 @@ if os.path.exists(static_dir) and os.path.exists(os.path.join(static_dir, "index
         # 1. Protect API routes from being intercepted by the frontend handler
         if full_path.startswith("api/"):
             raise HTTPException(status_code=404, detail="API Route Not Found")
-        
+
         # 2. Construct the absolute path to the requested file
         file_path = os.path.join(static_dir, full_path)
-        
+
         # 3. If the file exists (e.g., /static/js/main.js or /favicon.ico), serve it directly
         if os.path.exists(file_path) and os.path.isfile(file_path):
             return FileResponse(file_path)
-        
+
         # 4. If the file doesn't exist, it's likely a React Router path (e.g., /dashboard)
         # Fallback to index.html so React can handle the routing
         return FileResponse(os.path.join(static_dir, "index.html"))
