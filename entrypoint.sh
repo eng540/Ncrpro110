@@ -4,11 +4,10 @@ set -e
 echo "========================================"
 echo "NRC Latrine Tracker - Starting up..."
 echo "========================================"
-
-# Check DATABASE_URL
+echo "PORT env var: $PORT"
 echo "DATABASE_URL is set: ${DATABASE_URL:+YES}"
 
-# Create tables using SQLAlchemy (fallback, works without Alembic)
+# Create tables using SQLAlchemy
 echo "Creating database tables..."
 python -c "
 from app.database import engine
@@ -22,5 +21,6 @@ except Exception as e:
     sys.exit(1)
 "
 
-echo "Starting uvicorn server..."
-exec uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000} --log-level info
+echo "Starting uvicorn server on port ${PORT:-8000}..."
+# Use exec to replace shell process, and explicitly pass --port
+exec uvicorn app.main:app --host 0.0.0.0 --port "${PORT:-8000}" --log-level info

@@ -11,12 +11,9 @@ COPY backend/alembic.ini .
 COPY backend/alembic ./alembic
 COPY backend/app ./app
 COPY entrypoint.sh .
-
-# CRITICAL: Git doesn't preserve execute permissions, must chmod in Dockerfile
 RUN chmod +x entrypoint.sh
 
 ENV PYTHONPATH=/app
-ENV PORT=8000
 
 EXPOSE 8000
 

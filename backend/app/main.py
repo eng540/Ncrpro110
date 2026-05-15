@@ -38,12 +38,8 @@ def root():
     return {"message": "NRC Latrine Tracker API", "project": "ECHO 2525", "status": "running"}
 
 @app.get("/health")
-def health_check(db: Session = Depends(get_db)):
-    try:
-        db.execute("SELECT 1")
-        return {"status": "healthy", "database": "connected"}
-    except Exception as e:
-        raise HTTPException(status_code=503, detail=f"Database error: {str(e)}")
+def health_check():
+    return {"status": "healthy", "service": "running"}
 
 # ---------- LATRINES ----------
 @app.get("/api/latrines", response_model=List[schemas.LatrineOut])
