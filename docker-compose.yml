@@ -18,7 +18,9 @@ services:
       retries: 5
 
   backend:
-    build: ./backend
+    build:
+      context: .
+      dockerfile: Dockerfile
     environment:
       DATABASE_URL: postgresql://postgres:postgres@db:5432/nrc_latrines
       FRONTEND_URL: http://localhost:3000
@@ -27,7 +29,6 @@ services:
     depends_on:
       db:
         condition: service_healthy
-    # Migrations run automatically via Dockerfile CMD
 
   frontend:
     build: ./frontend
