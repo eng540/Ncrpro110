@@ -1,5 +1,6 @@
 from sqlalchemy.orm import Session
 from sqlalchemy import func
+from typing import List
 from app import models, schemas
 from datetime import datetime
 
@@ -52,6 +53,31 @@ def update_boq_item(db: Session, item_id: int, updates: schemas.BoqItemUpdate):
     db.refresh(item)
     recalc_latrine_progress(db, item.latrine_id)
     return item
+
+def bulk_update_boq_items(db: Session, updates: List[schemas.BoqItemBulkUpdate]):
+    updated_latrine_ids = set()
+    for upd in updates:
+        item = db.query(models.BoqItem).filter(models.BoqItem.id == upd.item_id).first()
+        if not item:
+            continue
+        if upd.achieved_qty is not None:
+            item.achieved_qty = upd.achieved_qty
+        if upd.status is not None:
+            item.status = upd.status
+        if upd.quality_pass is not None:
+            item.quality_pass = upd.quality_pass
+        if item.planned_qty and item.planned_qty > 0:
+            item.achievement_pct = round((item.achieved_qty / item.planned_qty) * 100, 2)
+        updated_latrine_ids.add(item.latrine_id)
+    db.commit()
+    # Refresh all affected items
+    for upd in updates:
+        item = db.query(models.BoqItem).filter(models.BoqItem.id == upd.item_id).first()
+        if item:
+            db.refresh(item)
+    for lid in updated_latrine_ids:
+        recalc_latrine_progress(db, lid)
+    return {"updated_count": len(updates), "affected_latrines": len(updated_latrine_ids)}
 
 def recalc_latrine_progress(db: Session, latrine_id: int):
     items = db.query(models.BoqItem).filter(models.BoqItem.latrine_id == latrine_id).all()
