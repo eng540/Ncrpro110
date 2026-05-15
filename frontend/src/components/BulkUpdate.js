@@ -81,7 +81,7 @@ function BulkUpdate({ apiUrl }) {
       }
       return item;
     }));
-    setMessage('تم تعيين جميع الحمامات لهذا البند كـ "منفذ كامل" (لم يُحفظ بعد)');
+    setMessage('تم تعيين جميع الحمامات لهذا البند كـ منفذ كامل (لم يُحفظ بعد)');
     setError('');
   };
 
@@ -97,7 +97,6 @@ function BulkUpdate({ apiUrl }) {
     const changed = boqItems
       .filter(b => b.boq_code === selectedCode)
       .map(b => {
-        // Ensure proper data types for API
         const qty = b.achieved_qty;
         let numQty = null;
         if (qty !== null && qty !== undefined && qty !== '' && !isNaN(parseFloat(qty))) {
@@ -111,7 +110,7 @@ function BulkUpdate({ apiUrl }) {
           quality_pass: b.quality_pass || 'pending'
         };
       })
-      .filter(b => !isNaN(b.item_id)); // Safety: remove any invalid items
+      .filter(b => !isNaN(b.item_id));
 
     if (changed.length === 0) {
       setError('لا توجد بيانات صالحة للحفظ');
@@ -129,7 +128,6 @@ function BulkUpdate({ apiUrl }) {
       if (res.ok) {
         const data = await res.json();
         setMessage(`تم حفظ ${data.updated_count} بند بنجاح (${data.affected_latrines} حمام متأثر)`);
-        // Refresh latrines to get updated overall_pct
         const latRes = await fetch(`${apiUrl}/latrines?limit=200`);
         const latData = await latRes.json();
         setLatrines(latData);
@@ -147,123 +145,125 @@ function BulkUpdate({ apiUrl }) {
     setSaving(false);
   };
 
-  const filteredLatrines = latrines;
+  if (loading) return React.createElement('div', {style: {textAlign:'center',padding:'40px'}}, 'جاري تحميل البيانات...');
 
-  if (loading) return <div style={{textAlign:'center',padding:'40px'}}>جاري تحميل البيانات...</div>;
+  return React.createElement('div', null,
+    React.createElement('div', {style: {display:'flex',gap:'12px',marginBottom:'20px',alignItems:'center',flexWrap:'wrap'}},
+      React.createElement('h2', {style: {color:'#1F4E78',margin:0}}, 'التحديث الجماعي حسب البند'),
+      React.createElement('select', {
+        value: selectedCode,
+        onChange: e => { setSelectedCode(e.target.value); setMessage(''); setError(''); },
+        style: {padding:'10px 14px',borderRadius:'4px',border:'1px solid #ccc',minWidth:'280px'}
+      },
+        React.createElement('option', {value: ''}, 'اختر بند BoQ...'),
+        boqCodes.map(b => React.createElement('option', {key: b.code, value: b.code}, b.label))
+      ),
+      selectedCode ? React.createElement(React.Fragment, null,
+        React.createElement('button', {
+          onClick: completeAll,
+          style: {padding:'10px 16px',background:'#70AD47',color:'white',border:'none',borderRadius:'4px',cursor:'pointer',fontWeight:'bold'}
+        }, 'تنفيذ كامل للجميع'),
+        React.createElement('button', {
+          onClick: saveAll,
+          disabled: saving,
+          style: {padding:'10px 20px',background:'#1F4E78',color:'white',border:'none',borderRadius:'4px',cursor:'pointer',fontWeight:'bold'}
+        }, saving ? 'جاري الحفظ...' : 'حفظ جميع التغييرات')
+      ) : null
+    ),
 
-  return (
-    <div>
-      <div style={{display:'flex',gap:'12px',marginBottom:'20px',alignItems:'center',flexWrap:'wrap'}}>
-        <h2 style={{color:'#1F4E78',margin:0}}>التحديث الجماعي حسب البند</h2>
-        <select 
-          value={selectedCode} 
-          onChange={e => { setSelectedCode(e.target.value); setMessage(''); setError(''); }}
-          style={{padding:'10px 14px',borderRadius:'4px',border:'1px solid #ccc',minWidth:'280px'}}
-        >
-          <option value="">اختر بند BoQ...</option>
-          {boqCodes.map(b => (
-            <option key={b.code} value={b.code}>{b.label}</option>
-          ))}
-        </select>
-        {selectedCode && (
-          <>
-            <button 
-              onClick={completeAll}
-              style={{padding:'10px 16px',background:'#70AD47',color:'white',border:'none',borderRadius:'4px',cursor:'pointer',fontWeight:'bold'}}
-            >
-              ✅ تنفيذ كامل للجميع
-            </button>
-            <button 
-              onClick={saveAll}
-              disabled={saving}
-              style={{padding:'10px 20px',background:'#1F4E78',color:'white',border:'none',borderRadius:'4px',cursor:'pointer',fontWeight:'bold'}}
-            >
-              {saving ? 'جاري الحفظ...' : '💾 حفظ جميع التغييرات'}
-            </button>
-          </>
-        )}
-      </div>
+    message ? React.createElement('div', {
+      style: {padding:'12px 16px',background:'#C6EFCE',borderRadius:'4px',marginBottom:'16px',color:'#1F4E78',fontWeight:'bold',border:'1px solid #70AD47'}
+    }, message) : null,
 
-      {message && (
-        <div style={{padding:'12px 16px',background:'#C6EFCE',borderRadius:'4px',marginBottom:'16px',color:'#1F4E78',fontWeight:'bold',border:'1px solid #70AD47'}}>
-          ✅ {message}
-        </div>
-      )}
+    error ? React.createElement('div', {
+      style: {padding:'12px 16px',background:'#FFC7CE',borderRadius:'4px',marginBottom:'16px',color:'#C00000',fontWeight:'bold',border:'1px solid #C00000'}
+    }, error) : null,
 
-      {error && (
-        <div style={{padding:'12px 16px',background:'#FFC7CE',borderRadius:'4px',marginBottom:'16px',color:'#C00000',fontWeight:'bold',border:'1px solid #C00000'}}>
-          ⚠️ {error}
-        </div>
-      )}
+    selectedCode ? React.createElement('div', {style: {background:'white',borderRadius:'8px',overflow:'hidden',boxShadow:'0 2px 8px rgba(0,0,0,0.08)'}},
+      React.createElement('table', {style: {width:'100%',borderCollapse:'collapse'}},
+        React.createElement('thead', {style: {background:'#1F4E78',color:'white'}},
+          React.createElement('tr', null,
+            React.createElement('th', {style: {padding:'12px',textAlign:'right'}}, 'رقم الحمام'),
+            React.createElement('th', {style: {padding:'12px',textAlign:'right'}}, 'المستفيد'),
+            React.createElement('th', {style: {padding:'12px',textAlign:'right'}}, 'المجموعة'),
+            React.createElement('th', {style: {padding:'12px',textAlign:'right'}}, 'المخطط'),
+            React.createElement('th', {style: {padding:'12px',textAlign:'right'}}, 'المنفذ'),
+            React.createElement('th', {style: {padding:'12px',textAlign:'right'}}, 'نسب سريعة'),
+            React.createElement('th', {style: {padding:'12px',textAlign:'right'}}, 'الحالة'),
+            React.createElement('th', {style: {padding:'12px',textAlign:'right'}}, 'جودة'),
+            React.createElement('th', {style: {padding:'12px',textAlign:'right'}}, 'كامل')
+          )
+        ),
+        React.createElement('tbody', null,
+          latrines.map(lat => {
+            const item = getItemForLatrine(lat.id);
+            if (!item) return null;
+            return React.createElement('tr', {key: lat.id, style: {borderBottom:'1px solid #eee'}},
+              React.createElement('td', {style: {padding:'10px',fontWeight:'bold'}}, lat.latrine_id),
+              React.createElement('td', {style: {padding:'10px',fontSize:'13px'}}, lat.beneficiary_hh),
+              React.createElement('td', {style: {padding:'10px'}}, lat.block_no),
+              React.createElement('td', {style: {padding:'10px'}}, `${item.planned_qty} ${item.unit}`),
+              React.createElement('td', {style: {padding:'10px'}},
+                React.createElement('input', {
+                  type: 'number',
+                  step: '0.01',
+                  value: item.achieved_qty,
+                  onChange: e => updateItemField(item.id, 'achieved_qty', e.target.value),
+                  style: {width:'70px',padding:'4px'}
+                })
+              ),
+              React.createElement('td', {style: {padding:'10px'}},
+                React.createElement('div', {style: {display:'flex',gap:'2px',flexWrap:'wrap'}},
+                  [25,50,75,100].map(pct => React.createElement('button', {
+                    key: pct,
+                    onClick: () => setQuickPct(item, pct),
+                    style: {fontSize:'10px',padding:'2px 6px',cursor:'pointer',border:'1px solid #ccc',background:'#f5f5f5',borderRadius:'3px'}
+                  }, `${pct}%`))
+                )
+              ),
+              React.createElement('td', {style: {padding:'10px'}},
+                React.createElement('select', {
+                  value: item.status || 'not_started',
+                  onChange: e => updateItemField(item.id, 'status', e.target.value),
+                  style: {padding:'4px',background: statusColors[item.status] || '#E2EFDA',fontSize:'12px'}
+                },
+                  React.createElement('option', {value: 'not_started'}, 'لم يبدأ'),
+                  React.createElement('option', {value: 'in_progress'}, 'جاري'),
+                  React.createElement('option', {value: 'completed'}, 'منفذ'),
+                  React.createElement('option', {value: 'pending_inspection'}, 'بانتظار الفحص'),
+                  React.createElement('option', {value: 'accepted'}, 'مقبول'),
+                  React.createElement('option', {value: 'rejected'}, 'مرفوض'),
+                  React.createElement('option', {value: 'rework_required'}, 'يحتاج إعادة')
+                )
+              ),
+              React.createElement('td', {style: {padding:'10px'}},
+                React.createElement('select', {
+                  value: item.quality_pass || 'pending',
+                  onChange: e => updateItemField(item.id, 'quality_pass', e.target.value),
+                  style: {padding:'4px',background: qualityColors[item.quality_pass] || '#FFEB9C',fontSize:'12px'}
+                },
+                  React.createElement('option', {value: 'pending'}, 'معلق'),
+                  React.createElement('option', {value: 'pass'}, 'مقبول'),
+                  React.createElement('option', {value: 'fail'}, 'مرفوض')
+                )
+              ),
+              React.createElement('td', {style: {padding:'10px'}},
+                React.createElement('button', {
+                  onClick: () => {
+                    updateItemField(item.id, 'achieved_qty', item.planned_qty);
+                    updateItemField(item.id, 'status', 'completed');
+                  },
+                  style: {padding:'4px 10px',background:'#70AD47',color:'white',border:'none',borderRadius:'4px',cursor:'pointer',fontSize:'12px'}
+                }, 'كامل')
+              )
+            );
+          })
+        )
+      )
+    ) : React.createElement('div', {style: {textAlign:'center',padding:'60px',color:'#666',background:'white',borderRadius:'8px'}},
+      'اختر بند BoQ من القائمة أعلاه لعرض جميع الحمامات وتحديثها دفعة واحدة'
+    )
+  );
+}
 
-      {selectedCode ? (
-        <div style={{background:'white',borderRadius:'8px',overflow:'hidden',boxShadow:'0 2px 8px rgba(0,0,0,0.08)'}}>
-          <table style={{width:'100%',borderCollapse:'collapse'}}>
-            <thead style={{background:'#1F4E78',color:'white'}}>
-              <tr>
-                <th style={{padding:'12px',textAlign:'right'}}>رقم الحمام</th>
-                <th style={{padding:'12px',textAlign:'right'}}>المستفيد</th>
-                <th style={{padding:'12px',textAlign:'right'}}>المجموعة</th>
-                <th style={{padding:'12px',textAlign:'right'}}>المخطط</th>
-                <th style={{padding:'12px',textAlign:'right'}}>المنفذ</th>
-                <th style={{padding:'12px',textAlign:'right'}}>نسب سريعة</th>
-                <th style={{padding:'12px',textAlign:'right'}}>الحالة</th>
-                <th style={{padding:'12px',textAlign:'right'}}>جودة</th>
-                <th style={{padding:'12px',textAlign:'right'}}>كامل</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filteredLatrines.map(lat => {
-                const item = getItemForLatrine(lat.id);
-                if (!item) return null;
-                return (
-                  <tr key={lat.id} style={{borderBottom:'1px solid #eee'}}>
-                    <td style={{padding:'10px',fontWeight:'bold'}}>{lat.latrine_id}</td>
-                    <td style={{padding:'10px',fontSize:'13px'}}>{lat.beneficiary_hh}</td>
-                    <td style={{padding:'10px'}}>{lat.block_no}</td>
-                    <td style={{padding:'10px'}}>{item.planned_qty} {item.unit}</td>
-                    <td style={{padding:'10px'}}>
-                      <input 
-                        type="number" 
-                        step="0.01"
-                        value={item.achieved_qty}
-                        onChange={e => updateItemField(item.id, 'achieved_qty', e.target.value)}
-                        style={{width:'70px',padding:'4px'}}
-                      />
-                    </td>
-                    <td style={{padding:'10px'}}>
-                      <div style={{display:'flex',gap:'2px',flexWrap:'wrap'}}>
-                        {[25,50,75,100].map(pct => (
-                          <button 
-                            key={pct}
-                            onClick={() => setQuickPct(item, pct)}
-                            style={{fontSize:'10px',padding:'2px 6px',cursor:'pointer',border:'1px solid #ccc',background:'#f5f5f5',borderRadius:'3px'}}
-                          >
-                            {pct}%
-                          </button>
-                        ))}
-                      </div>
-                    </td>
-                    <td style={{padding:'10px'}}>
-                      <select 
-                        value={item.status || 'not_started'}
-                        onChange={e => updateItemField(item.id, 'status', e.target.value)}
-                        style={{padding:'4px',background: statusColors[item.status] || '#E2EFDA',fontSize:'12px'}}
-                      >
-                        <option value="not_started">لم يبدأ</option>
-                        <option value="in_progress">جاري</option>
-                        <option value="completed">منفذ</option>
-                        <option value="pending_inspection">بانتظار الفحص</option>
-                        <option value="accepted">مقبول</option>
-                        <option value="rejected">مرفوض</option>
-                        <option value="rework_required">يحتاج إعادة</option>
-                      </select>
-                    </td>
-                    <td style={{padding:'10px'}}>
-                      <select 
-                        value={item.quality_pass || 'pending'}
-                        onChange={e => updateItemField(item.id, 'quality_pass', e.target.value)}
-                        style={{padding:'4px',background: qualityColors[item.quality_pass] || '#FFEB9C',fontSize:'12px'}}
-                      >
-                        <option value="pending">معلق</option>
-                        <option value="pass">مقبول</op
+export default BulkUpdate;
