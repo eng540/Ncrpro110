@@ -55,6 +55,12 @@ class BoqItemUpdate(BaseModel):
     inspection_date: Optional[datetime] = None
     inspector: Optional[str] = None
 
+class BoqItemBulkUpdate(BaseModel):
+    item_id: int
+    achieved_qty: Optional[float] = None
+    status: Optional[str] = None
+    quality_pass: Optional[str] = None
+
 class BoqItemOut(BoqItemBase):
     id: int
     latrine_id: int
