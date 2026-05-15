@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Depends, HTTPException, Query
+from fastapi import FastAPI, Depends, HTTPException, Query, Body
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
@@ -18,8 +18,8 @@ app = FastAPI(
     title="NRC Latrine Tracker",
     description="ECHO 2525 - Al-Zohra District HH Latrines Tracking System",
     version="1.0.0",
-    docs_url="/api/docs",      # Move Swagger to /api/docs
-    redoc_url="/api/redoc",    # Move ReDoc to /api/redoc
+    docs_url="/api/docs",
+    redoc_url="/api/redoc",
     openapi_url="/api/openapi.json"
 )
 
@@ -77,9 +77,15 @@ def update_boq_item(item_id: int, updates: schemas.BoqItemUpdate, db: Session = 
     return item
 
 @app.patch("/api/boq-items/bulk")
-def bulk_update_boq_items(items: List[schemas.BoqItemBulkUpdate], db: Session = Depends(get_db)):
-    result = crud.bulk_update_boq_items(db, items)
-    return result
+def bulk_update_boq_items(
+    items: List[schemas.BoqItemBulkUpdate] = Body(...),
+    db: Session = Depends(get_db)
+):
+    try:
+        result = crud.bulk_update_boq_items(db, items)
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Bulk update failed: {str(e)}")
 
 @app.get("/api/remarks", response_model=List[schemas.RemarkOut])
 def list_remarks(latrine_id: Optional[int] = None, status: Optional[str] = None, db: Session = Depends(get_db)):
@@ -137,19 +143,14 @@ if os.path.exists(static_dir) and os.path.exists(os.path.join(static_dir, "index
 
     @app.get("/{full_path:path}")
     async def serve_react_catchall(full_path: str):
-        # 1. Protect API routes from being intercepted by the frontend handler
         if full_path.startswith("api/"):
             raise HTTPException(status_code=404, detail="API Route Not Found")
 
-        # 2. Construct the absolute path to the requested file
         file_path = os.path.join(static_dir, full_path)
 
-        # 3. If the file exists (e.g., /static/js/main.js or /favicon.ico), serve it directly
         if os.path.exists(file_path) and os.path.isfile(file_path):
             return FileResponse(file_path)
 
-        # 4. If the file doesn't exist, it's likely a React Router path (e.g., /dashboard)
-        # Fallback to index.html so React can handle the routing
         return FileResponse(os.path.join(static_dir, "index.html"))
 else:
     @app.get("/")
