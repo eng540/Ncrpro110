@@ -118,6 +118,9 @@ function BulkUpdate({ apiUrl }) {
       return;
     }
 
+    // DEBUG: Log what we're sending
+    console.log('Sending bulk update:', JSON.stringify(changed, null, 2));
+
     try {
       const res = await fetch(`${apiUrl}/boq-items/bulk`, {
         method: 'PATCH',
@@ -132,11 +135,18 @@ function BulkUpdate({ apiUrl }) {
         const latData = await latRes.json();
         setLatrines(latData);
       } else {
+        // DEBUG: Log full error response
+        const errData = await res.json();
+        console.error('Server error response:', errData);
+
         let errText = 'خطأ أثناء الحفظ على الخادم';
-        try {
-          const errData = await res.json();
-          errText = errData.detail || JSON.stringify(errData);
-        } catch(e) {}
+        if (Array.isArray(errData.detail)) {
+          errText = errData.detail.map(e => `${e.loc?.join('.')}: ${e.msg}`).join(' | ');
+        } else if (typeof errData.detail === 'string') {
+          errText = errData.detail;
+        } else {
+          errText = JSON.stringify(errData);
+        }
         setError(`خطأ ${res.status}: ${errText}`);
       }
     } catch (e) {
