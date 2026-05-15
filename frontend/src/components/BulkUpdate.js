@@ -39,9 +39,11 @@ function BulkUpdate({ apiUrl }) {
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState('');
+  const [error, setError] = useState('');
 
   useEffect(() => {
     setLoading(true);
+    setError('');
     Promise.all([
       fetch(`${apiUrl}/latrines?limit=200`).then(r => r.json()),
       fetch(`${apiUrl}/boq-items`).then(r => r.json())
@@ -52,7 +54,7 @@ function BulkUpdate({ apiUrl }) {
       setLoading(false);
     })
     .catch(() => {
-      setMessage('تعذر تحميل البيانات');
+      setError('تعذر تحميل البيانات من الخادم');
       setLoading(false);
     });
   }, [apiUrl]);
@@ -80,24 +82,42 @@ function BulkUpdate({ apiUrl }) {
       return item;
     }));
     setMessage('تم تعيين جميع الحمامات لهذا البند كـ "منفذ كامل" (لم يُحفظ بعد)');
+    setError('');
   };
 
   const saveAll = async () => {
     if (!selectedCode) {
-      setMessage('اختر بنداً أولاً');
+      setError('اختر بنداً أولاً');
       return;
     }
     setSaving(true);
     setMessage('');
+    setError('');
 
     const changed = boqItems
       .filter(b => b.boq_code === selectedCode)
-      .map(b => ({
-        item_id: b.id,
-        achieved_qty: parseFloat(b.achieved_qty),
-        status: b.status,
-        quality_pass: b.quality_pass
-      }));
+      .map(b => {
+        // Ensure proper data types for API
+        const qty = b.achieved_qty;
+        let numQty = null;
+        if (qty !== null && qty !== undefined && qty !== '' && !isNaN(parseFloat(qty))) {
+          numQty = parseFloat(parseFloat(qty).toFixed(2));
+        }
+
+        return {
+          item_id: parseInt(b.id, 10),
+          achieved_qty: numQty,
+          status: b.status || 'not_started',
+          quality_pass: b.quality_pass || 'pending'
+        };
+      })
+      .filter(b => !isNaN(b.item_id)); // Safety: remove any invalid items
+
+    if (changed.length === 0) {
+      setError('لا توجد بيانات صالحة للحفظ');
+      setSaving(false);
+      return;
+    }
 
     try {
       const res = await fetch(`${apiUrl}/boq-items/bulk`, {
@@ -105,6 +125,7 @@ function BulkUpdate({ apiUrl }) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(changed)
       });
+
       if (res.ok) {
         const data = await res.json();
         setMessage(`تم حفظ ${data.updated_count} بند بنجاح (${data.affected_latrines} حمام متأثر)`);
@@ -113,15 +134,20 @@ function BulkUpdate({ apiUrl }) {
         const latData = await latRes.json();
         setLatrines(latData);
       } else {
-        setMessage('خطأ أثناء الحفظ على الخادم');
+        let errText = 'خطأ أثناء الحفظ على الخادم';
+        try {
+          const errData = await res.json();
+          errText = errData.detail || JSON.stringify(errData);
+        } catch(e) {}
+        setError(`خطأ ${res.status}: ${errText}`);
       }
     } catch (e) {
-      setMessage('فشل الاتصال بالخادم');
+      setError(`فشل الاتصال بالخادم: ${e.message}`);
     }
     setSaving(false);
   };
 
-  const filteredLatrines = latrines; // show all, items will be matched by selectedCode
+  const filteredLatrines = latrines;
 
   if (loading) return <div style={{textAlign:'center',padding:'40px'}}>جاري تحميل البيانات...</div>;
 
@@ -131,7 +157,7 @@ function BulkUpdate({ apiUrl }) {
         <h2 style={{color:'#1F4E78',margin:0}}>التحديث الجماعي حسب البند</h2>
         <select 
           value={selectedCode} 
-          onChange={e => { setSelectedCode(e.target.value); setMessage(''); }}
+          onChange={e => { setSelectedCode(e.target.value); setMessage(''); setError(''); }}
           style={{padding:'10px 14px',borderRadius:'4px',border:'1px solid #ccc',minWidth:'280px'}}
         >
           <option value="">اختر بند BoQ...</option>
@@ -159,8 +185,14 @@ function BulkUpdate({ apiUrl }) {
       </div>
 
       {message && (
-        <div style={{padding:'12px 16px',background:'#FFEB9C',borderRadius:'4px',marginBottom:'16px',color:'#333',fontWeight:'bold'}}>
-          {message}
+        <div style={{padding:'12px 16px',background:'#C6EFCE',borderRadius:'4px',marginBottom:'16px',color:'#1F4E78',fontWeight:'bold',border:'1px solid #70AD47'}}>
+          ✅ {message}
+        </div>
+      )}
+
+      {error && (
+        <div style={{padding:'12px 16px',background:'#FFC7CE',borderRadius:'4px',marginBottom:'16px',color:'#C00000',fontWeight:'bold',border:'1px solid #C00000'}}>
+          ⚠️ {error}
         </div>
       )}
 
@@ -214,9 +246,9 @@ function BulkUpdate({ apiUrl }) {
                     </td>
                     <td style={{padding:'10px'}}>
                       <select 
-                        value={item.status}
+                        value={item.status || 'not_started'}
                         onChange={e => updateItemField(item.id, 'status', e.target.value)}
-                        style={{padding:'4px',background: statusColors[item.status],fontSize:'12px'}}
+                        style={{padding:'4px',background: statusColors[item.status] || '#E2EFDA',fontSize:'12px'}}
                       >
                         <option value="not_started">لم يبدأ</option>
                         <option value="in_progress">جاري</option>
@@ -229,39 +261,9 @@ function BulkUpdate({ apiUrl }) {
                     </td>
                     <td style={{padding:'10px'}}>
                       <select 
-                        value={item.quality_pass}
+                        value={item.quality_pass || 'pending'}
                         onChange={e => updateItemField(item.id, 'quality_pass', e.target.value)}
-                        style={{padding:'4px',background: qualityColors[item.quality_pass],fontSize:'12px'}}
+                        style={{padding:'4px',background: qualityColors[item.quality_pass] || '#FFEB9C',fontSize:'12px'}}
                       >
                         <option value="pending">معلق</option>
-                        <option value="pass">مقبول</option>
-                        <option value="fail">مرفوض</option>
-                      </select>
-                    </td>
-                    <td style={{padding:'10px'}}>
-                      <button 
-                        onClick={() => {
-                          updateItemField(item.id, 'achieved_qty', item.planned_qty);
-                          updateItemField(item.id, 'status', 'completed');
-                        }}
-                        style={{padding:'4px 10px',background:'#70AD47',color:'white',border:'none',borderRadius:'4px',cursor:'pointer',fontSize:'12px'}}
-                      >
-                        ✅ كامل
-                      </button>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      ) : (
-        <div style={{textAlign:'center',padding:'60px',color:'#666',background:'white',borderRadius:'8px'}}>
-          اختر بند BoQ من القائمة أعلاه لعرض جميع الحمامات وتحديثها دفعة واحدة
-        </div>
-      )}
-    </div>
-  );
-}
-
-export default BulkUpdate;
+                        <option value="pass">مقبول</op
