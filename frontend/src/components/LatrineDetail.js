@@ -38,7 +38,7 @@ function LatrineDetail({ apiUrl, latrine, onBack }) {
     if (item.status) payload.status = item.status;
     if (item.quality_pass) payload.quality_pass = item.quality_pass;
     payload.inspection_date = new Date().toISOString();
-    payload.inspector = "Field Engineer"; // Would come from auth context
+    payload.inspector = "Field Engineer";
 
     await fetch(`${apiUrl}/boq-items/${item.id}`, {
       method: 'PATCH',
@@ -46,11 +46,42 @@ function LatrineDetail({ apiUrl, latrine, onBack }) {
       body: JSON.stringify(payload)
     });
 
-    // Refresh latrine data to get updated overall %
     const latRes = await fetch(`${apiUrl}/latrines/${latrine.id}`);
     const latData = await latRes.json();
     setLatrineData(latData);
     setSaving(false);
+  };
+
+  const completeItem = async (item) => {
+    setSaving(true);
+    const payload = {
+      achieved_qty: item.planned_qty,
+      status: 'completed',
+      quality_pass: 'pending',
+      inspection_date: new Date().toISOString(),
+      inspector: "Field Engineer"
+    };
+
+    await fetch(`${apiUrl}/boq-items/${item.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+
+    // Update local state
+    setItems(prev => prev.map(it => 
+      it.id === item.id ? { ...it, achieved_qty: item.planned_qty, status: 'completed', quality_pass: 'pending' } : it
+    ));
+
+    const latRes = await fetch(`${apiUrl}/latrines/${latrine.id}`);
+    const latData = await latRes.json();
+    setLatrineData(latData);
+    setSaving(false);
+  };
+
+  const setQuickPct = (item, pct) => {
+    const val = parseFloat((item.planned_qty * (pct / 100)).toFixed(2));
+    updateItem(item.id, 'achieved_qty', val);
   };
 
   return (
@@ -90,6 +121,7 @@ function LatrineDetail({ apiUrl, latrine, onBack }) {
               <th style={{padding:'12px',textAlign:'right'}}>الوحدة</th>
               <th style={{padding:'12px',textAlign:'right'}}>المخطط</th>
               <th style={{padding:'12px',textAlign:'right'}}>المنفذ</th>
+              <th style={{padding:'12px',textAlign:'right'}}>نسب سريعة</th>
               <th style={{padding:'12px',textAlign:'right'}}>%</th>
               <th style={{padding:'12px',textAlign:'right'}}>الحالة</th>
               <th style={{padding:'12px',textAlign:'right'}}>جودة</th>
@@ -111,6 +143,19 @@ function LatrineDetail({ apiUrl, latrine, onBack }) {
                     onChange={e => updateItem(item.id, 'achieved_qty', e.target.value)}
                     style={{width:'70px',padding:'4px'}}
                   />
+                </td>
+                <td style={{padding:'10px'}}>
+                  <div style={{display:'flex',gap:'2px',flexWrap:'wrap'}}>
+                    {[25,50,75,100].map(pct => (
+                      <button 
+                        key={pct}
+                        onClick={() => setQuickPct(item, pct)}
+                        style={{fontSize:'10px',padding:'2px 6px',cursor:'pointer',border:'1px solid #ccc',background:'#f5f5f5',borderRadius:'3px'}}
+                      >
+                        {pct}%
+                      </button>
+                    ))}
+                  </div>
                 </td>
                 <td style={{padding:'10px',fontWeight:'bold'}}>{item.achievement_pct}%</td>
                 <td style={{padding:'10px'}}>
@@ -139,13 +184,20 @@ function LatrineDetail({ apiUrl, latrine, onBack }) {
                     <option value="fail">مرفوض</option>
                   </select>
                 </td>
-                <td style={{padding:'10px'}}>
+                <td style={{padding:'10px',display:'flex',gap:'4px',flexDirection:'column'}}>
                   <button 
                     onClick={() => saveItem(item)}
                     disabled={saving}
                     style={{padding:'6px 12px',background:'#1F4E78',color:'white',border:'none',borderRadius:'4px',cursor:'pointer'}}
                   >
                     {saving ? '...' : 'حفظ'}
+                  </button>
+                  <button 
+                    onClick={() => completeItem(item)}
+                    disabled={saving}
+                    style={{padding:'6px 12px',background:'#70AD47',color:'white',border:'none',borderRadius:'4px',cursor:'pointer',fontSize:'12px'}}
+                  >
+                    ✅ كامل
                   </button>
                 </td>
               </tr>
