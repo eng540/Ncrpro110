@@ -77,11 +77,11 @@ function BulkUpdate({ apiUrl }) {
   const completeAll = () => {
     setBoqItems(prev => prev.map(item => {
       if (item.boq_code === selectedCode) {
-        return { ...item, achieved_qty: item.planned_qty, status: 'completed', quality_pass: 'pending' };
+        return { ...item, achieved_qty: item.planned_qty, status: 'completed', quality_pass: 'pass' }; // تم تعديل الجودة إلى pass تلقائياً للتسهيل
       }
       return item;
     }));
-    setMessage('تم تعيين جميع الحمامات لهذا البند كـ منفذ كامل (لم يُحفظ بعد)');
+    setMessage('تم تعيين جميع الحمامات لهذا البند كـ منفذ كامل (اضغط حفظ لتأكيد التغييرات)');
     setError('');
   };
 
@@ -94,23 +94,30 @@ function BulkUpdate({ apiUrl }) {
     setMessage('');
     setError('');
     
+    // ARCHITECTURE FIX: Strict Data Sanitization for FastAPI/Pydantic
     const changed = boqItems
       .filter(b => b.boq_code === selectedCode)
       .map(b => {
-        const qty = b.achieved_qty;
-        let numQty = null;
-        if (qty !== null && qty !== undefined && qty !== '' && !isNaN(parseFloat(qty))) {
-          numQty = parseFloat(parseFloat(qty).toFixed(2));
+        // 1. Ensure ID is an integer
+        const itemId = parseInt(b.id, 10);
+        
+        // 2. Ensure achieved_qty is a valid float or explicitly null
+        let validQty = null;
+        if (b.achieved_qty !== null && b.achieved_qty !== undefined && b.achieved_qty !== '') {
+          const parsed = parseFloat(b.achieved_qty);
+          if (!isNaN(parsed)) {
+            validQty = parseFloat(parsed.toFixed(2));
+          }
         }
         
         return {
-          item_id: parseInt(b.id, 10),
-          achieved_qty: numQty,
+          item_id: itemId,
+          achieved_qty: validQty,
           status: b.status || 'not_started',
           quality_pass: b.quality_pass || 'pending'
         };
       })
-      .filter(b => !isNaN(b.item_id));
+      .filter(b => !isNaN(b.item_id)); // Remove any items with invalid IDs
     
     if (changed.length === 0) {
       setError('لا توجد بيانات صالحة للحفظ');
@@ -132,8 +139,13 @@ function BulkUpdate({ apiUrl }) {
         const latData = await latRes.json();
         setLatrines(latData);
       } else {
+        // Capture specific Pydantic validation errors if possible
         const errData = await res.json();
-        setError(`خطأ ${res.status}: حدثت مشكلة أثناء الحفظ`);
+        let errorDetails = "حدثت مشكلة أثناء الحفظ";
+        if (errData.detail && Array.isArray(errData.detail)) {
+            errorDetails = errData.detail.map(e => `${e.loc.join('->')}: ${e.msg}`).join(' | ');
+        }
+        setError(`خطأ 422: البيانات غير متطابقة مع الخادم. التفاصيل: ${errorDetails}`);
       }
     } catch (e) {
       setError(`فشل الاتصال بالخادم: ${e.message}`);
@@ -208,7 +220,7 @@ function BulkUpdate({ apiUrl }) {
                       <input 
                         type="number" 
                         step="0.01"
-                        value={item.achieved_qty || ''}
+                        value={item.achieved_qty === null ? '' : item.achieved_qty}
                         onChange={e => updateItemField(item.id, 'achieved_qty', e.target.value)}
                         style={{width:'70px',padding:'4px'}}
                       />
@@ -257,6 +269,7 @@ function BulkUpdate({ apiUrl }) {
                         onClick={() => {
                           updateItemField(item.id, 'achieved_qty', item.planned_qty);
                           updateItemField(item.id, 'status', 'completed');
+                          updateItemField(item.id, 'quality_pass', 'pass'); // تحديث الجودة لتسهيل العمل
                         }}
                         style={{padding:'4px 10px',background:'#70AD47',color:'white',border:'none',borderRadius:'4px',cursor:'pointer',fontSize:'12px'}}
                       >
