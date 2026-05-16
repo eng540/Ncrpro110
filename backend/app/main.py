@@ -69,13 +69,7 @@ def patch_latrine(latrine_id: int, updates: schemas.LatrineUpdate, db: Session =
 def list_boq_items(latrine_id: Optional[int] = None, db: Session = Depends(get_db)):
     return crud.get_boq_items(db, latrine_id=latrine_id)
 
-@app.patch("/api/boq-items/{item_id}", response_model=schemas.BoqItemOut)
-def update_boq_item(item_id: int, updates: schemas.BoqItemUpdate, db: Session = Depends(get_db)):
-    item = crud.update_boq_item(db, item_id, updates)
-    if not item:
-        raise HTTPException(status_code=404, detail="BoQ item not found")
-    return item
-
+# ARCHITECTURE FIX: Static route MUST be defined before the dynamic {item_id} route
 @app.patch("/api/boq-items/bulk")
 def bulk_update_boq_items(
     request: schemas.BoqItemBulkRequest,
@@ -86,6 +80,14 @@ def bulk_update_boq_items(
         return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Bulk update failed: {str(e)}")
+
+# Dynamic route comes AFTER the static route
+@app.patch("/api/boq-items/{item_id}", response_model=schemas.BoqItemOut)
+def update_boq_item(item_id: int, updates: schemas.BoqItemUpdate, db: Session = Depends(get_db)):
+    item = crud.update_boq_item(db, item_id, updates)
+    if not item:
+        raise HTTPException(status_code=404, detail="BoQ item not found")
+    return item
 
 @app.get("/api/remarks", response_model=List[schemas.RemarkOut])
 def list_remarks(latrine_id: Optional[int] = None, status: Optional[str] = None, db: Session = Depends(get_db)):
