@@ -47,7 +47,7 @@ def update_boq_item(db: Session, item_id: int, updates: schemas.BoqItemUpdate):
     data = updates.dict(exclude_unset=True)
     for key, value in data.items():
         setattr(item, key, value)
-    if item.planned_qty > 0:
+    if item.planned_qty and item.planned_qty > 0:
         item.achievement_pct = round((item.achieved_qty / item.planned_qty) * 100, 2)
     db.commit()
     db.refresh(item)
@@ -70,31 +70,73 @@ def bulk_update_boq_items(db: Session, updates: List[schemas.BoqItemBulkUpdate])
             item.achievement_pct = round((item.achieved_qty / item.planned_qty) * 100, 2)
         updated_latrine_ids.add(item.latrine_id)
     db.commit()
+    
     for upd in updates:
         item = db.query(models.BoqItem).filter(models.BoqItem.id == upd.item_id).first()
         if item:
             db.refresh(item)
+            
     for lid in updated_latrine_ids:
         recalc_latrine_progress(db, lid)
+        
     return {"updated_count": len(updates), "affected_latrines": len(updated_latrine_ids)}
 
 def recalc_latrine_progress(db: Session, latrine_id: int):
+    # Row-Level Locking لمنع تداخل البيانات
+    latrine = db.query(models.Latrine).filter(models.Latrine.id == latrine_id).with_for_update().first()
+    if not latrine:
+        return
+
     items = db.query(models.BoqItem).filter(models.BoqItem.latrine_id == latrine_id).all()
     if not items:
         return
-    weights = {'A-Building & Concrete': 0.60, 'B-Septic & Pipes': 0.25, 'C-Doors & Windows': 0.15}
-    total = 0.0
+    
+    # ARCHITECTURE FIX: Financial Progress Calculation (Earned Value)
+    # قاموس أسعار الوحدة (يمكن تعديله لاحقاً عند توفر العقد النهائي)
+    unit_prices = {
+        'A1': 10.0,  # سعر افتراضي لحفر وتسوية
+        'A2': 14.0,  # بلك مفرغ
+        'A3': 5.0,   # لياسة
+        'A4': 70.0,  # سقف خرسانة
+        'A5': 40.0,  # كرسي عربي
+        'A6': 5.0,   # بلاط
+        'B1': 5.0,   # حفر بيارة
+        'B2': 3.0,   # تمديد UPVC
+        'B3': 30.0,  # غطاء بيارة
+        'C1': 70.0,  # باب حديد
+        'C2': 20.0,  # نافذة ألمنيوم
+        'C3': 40.0,  # إضاءة شمسية
+        'C4': 30.0,  # لوحة معدنية
+    }
+    
+    total_planned_cost = 0.0
+    total_earned_value = 0.0
+    
     for item in items:
-        w = weights.get(item.category, 0.1)
-        total += (item.achievement_pct / 100.0) * w
-    latrine = get_latrine(db, latrine_id)
-    if latrine:
-        latrine.overall_pct = round(total * 100, 2)
-        if latrine.overall_pct >= 99.9:
-            latrine.status = 'completed'
-        elif latrine.overall_pct > 0:
-            latrine.status = 'in_progress'
-        db.commit()
+        price = unit_prices.get(item.boq_code, 0.0)
+        planned_qty = item.planned_qty or 0.0
+        achieved_qty = item.achieved_qty or 0.0
+        
+        # التكلفة المخططة = الكمية المخططة × السعر
+        total_planned_cost += (planned_qty * price)
+        # القيمة المكتسبة (المنفذ مالياً) = الكمية المنفذة × السعر
+        total_earned_value += (achieved_qty * price)
+    
+    # حساب النسبة الكلية بناءً على التكلفة المالية
+    if total_planned_cost > 0:
+        latrine.overall_pct = round((total_earned_value / total_planned_cost) * 100, 2)
+    else:
+        latrine.overall_pct = 0.0
+        
+    # تحديث الحالة تلقائياً
+    if latrine.overall_pct >= 99.9:
+        latrine.status = 'completed'
+    elif latrine.overall_pct > 0:
+        latrine.status = 'in_progress'
+    else:
+        latrine.status = 'not_started'
+        
+    db.commit()
 
 def create_remark(db: Session, remark: schemas.RemarkCreate):
     db_remark = models.Remark(**remark.dict())
