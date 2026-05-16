@@ -21,6 +21,12 @@ function LatrineDetail({ apiUrl, latrine, onBack }) {
   const [latrineData, setLatrineData] = useState(latrine);
   const [saving, setSaving] = useState(false);
 
+  // --- حالات نافذة الملاحظات (Remark Modal States) ---
+  const [showRemarkModal, setShowRemarkModal] = useState(false);
+  const [selectedBoq, setSelectedBoq] = useState('');
+  const [remarkForm, setRemarkForm] = useState({ description: '', severity: 'minor', action_required: '' });
+  const [submittingRemark, setSubmittingRemark] = useState(false);
+
   useEffect(() => {
     fetch(`${apiUrl}/boq-items?latrine_id=${latrine.id}`)
       .then(r => r.json())
@@ -83,8 +89,44 @@ function LatrineDetail({ apiUrl, latrine, onBack }) {
     updateItem(item.id, 'achieved_qty', val);
   };
 
+  // --- دالة إرسال الملاحظة الجديدة ---
+  const submitRemark = async (e) => {
+    e.preventDefault();
+    if (!remarkForm.description) return alert("يرجى كتابة وصف الملاحظة");
+    
+    setSubmittingRemark(true);
+    try {
+      await fetch(`${apiUrl}/remarks`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          latrine_id: latrineData.id,
+          boq_code: selectedBoq,
+          type: 'General',
+          severity: remarkForm.severity,
+          description: remarkForm.description,
+          action_required: remarkForm.action_required
+        })
+      });
+
+      // إغلاق النافذة وتفريغ النموذج
+      setShowRemarkModal(false);
+      setRemarkForm({ description: '', severity: 'minor', action_required: '' });
+      
+      // تحديث بيانات الحمام لجلب العداد الجديد للملاحظات
+      const latRes = await fetch(`${apiUrl}/latrines/${latrineData.id}`);
+      const latData = await latRes.json();
+      setLatrineData(latData);
+      
+      alert("تم تسجيل الملاحظة بنجاح وتنبيه الإدارة.");
+    } catch (error) {
+      alert("حدث خطأ أثناء حفظ الملاحظة");
+    }
+    setSubmittingRemark(false);
+  };
+
   return (
-    <div>
+    <div style={{position: 'relative'}}>
       <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'20px'}}>
         <div>
           <button onClick={onBack} style={{marginBottom:'8px',padding:'6px 12px',cursor:'pointer'}}>← رجوع للقائمة</button>
@@ -101,7 +143,7 @@ function LatrineDetail({ apiUrl, latrine, onBack }) {
           <div><strong>المستفيد:</strong> {latrineData.beneficiary_hh}</div>
           <div><strong>المجموعة:</strong> {latrineData.block_no}</div>
           <div><strong>المهندس:</strong> {latrineData.site_engineer}</div>
-          <div><strong>الإحداثيات:</strong> {latrineData.gps_coordinates}</div>
+          <div><strong>الملاحظات المفتوحة:</strong> <span style={{color: latrineData.remarks_count > 0 ? '#C00000' : '#70AD47', fontWeight: 'bold'}}>{latrineData.remarks_count}</span></div>
           <div><strong>الحالة:</strong> 
             <span style={{background: statusColors[latrineData.status],padding:'2px 8px',borderRadius:'4px',marginRight:'8px'}}>
               {latrineData.status}
@@ -124,7 +166,7 @@ function LatrineDetail({ apiUrl, latrine, onBack }) {
               <th style={{padding:'12px',textAlign:'right'}}>%</th>
               <th style={{padding:'12px',textAlign:'right'}}>الحالة</th>
               <th style={{padding:'12px',textAlign:'right'}}>جودة</th>
-              <th style={{padding:'12px',textAlign:'right'}}>تحديث</th>
+              <th style={{padding:'12px',textAlign:'right'}}>الإجراءات</th>
             </tr>
           </thead>
           <tbody>
@@ -198,12 +240,76 @@ function LatrineDetail({ apiUrl, latrine, onBack }) {
                   >
                     كامل
                   </button>
+                  <button 
+                    onClick={() => { setSelectedBoq(item.boq_code); setShowRemarkModal(true); }}
+                    style={{padding:'6px 12px',background:'#C00000',color:'white',border:'none',borderRadius:'4px',cursor:'pointer',fontSize:'12px'}}
+                  >
+                    ⚠️ ملاحظة
+                  </button>
                 </td>
               </tr>
             ))}
           </tbody>
         </table>
       </div>
+
+      {/* --- نافذة إضافة الملاحظة (Modal) --- */}
+      {showRemarkModal && (
+        <div style={{position:'fixed',top:0,left:0,width:'100%',height:'100%',background:'rgba(0,0,0,0.6)',display:'flex',justifyContent:'center',alignItems:'center',zIndex:1000}}>
+          <div style={{background:'white',padding:'24px',borderRadius:'8px',width:'90%',maxWidth:'400px',boxShadow:'0 4px 20px rgba(0,0,0,0.2)'}}>
+            <h3 style={{color:'#C00000',marginTop:0}}>إضافة ملاحظة جودة</h3>
+            <p style={{fontSize:'14px',color:'#666'}}>الحمام: <strong>{latrineData.latrine_id}</strong> | البند: <strong>{selectedBoq}</strong></p>
+            
+            <form onSubmit={submitRemark}>
+              <div style={{marginBottom:'12px'}}>
+                <label style={{display:'block',marginBottom:'4px',fontSize:'14px',fontWeight:'bold'}}>مستوى الخطورة:</label>
+                <select 
+                  value={remarkForm.severity} 
+                  onChange={e => setRemarkForm({...remarkForm, severity: e.target.value})}
+                  style={{width:'100%',padding:'8px',borderRadius:'4px',border:'1px solid #ccc'}}
+                >
+                  <option value="minor">طفيفة (Minor)</option>
+                  <option value="major">كبيرة (Major)</option>
+                  <option value="critical">حرجة (Critical)</option>
+                </select>
+              </div>
+
+              <div style={{marginBottom:'12px'}}>
+                <label style={{display:'block',marginBottom:'4px',fontSize:'14px',fontWeight:'bold'}}>وصف المشكلة:</label>
+                <textarea 
+                  required
+                  rows="3"
+                  value={remarkForm.description}
+                  onChange={e => setRemarkForm({...remarkForm, description: e.target.value})}
+                  style={{width:'100%',padding:'8px',borderRadius:'4px',border:'1px solid #ccc',boxSizing:'border-box'}}
+                  placeholder="اكتب تفاصيل العيب أو المشكلة هنا..."
+                />
+              </div>
+
+              <div style={{marginBottom:'20px'}}>
+                <label style={{display:'block',marginBottom:'4px',fontSize:'14px',fontWeight:'bold'}}>الإجراء المطلوب (اختياري):</label>
+                <textarea 
+                  rows="2"
+                  value={remarkForm.action_required}
+                  onChange={e => setRemarkForm({...remarkForm, action_required: e.target.value})}
+                  style={{width:'100%',padding:'8px',borderRadius:'4px',border:'1px solid #ccc',boxSizing:'border-box'}}
+                  placeholder="ما الذي يجب على المقاول فعله؟"
+                />
+              </div>
+
+              <div style={{display:'flex',justifyContent:'flex-end',gap:'12px'}}>
+                <button type="button" onClick={() => setShowRemarkModal(false)} style={{padding:'8px 16px',background:'#eee',border:'none',borderRadius:'4px',cursor:'pointer',color:'#333'}}>
+                  إلغاء
+                </button>
+                <button type="submit" disabled={submittingRemark} style={{padding:'8px 16px',background:'#C00000',color:'white',border:'none',borderRadius:'4px',cursor:'pointer',fontWeight:'bold'}}>
+                  {submittingRemark ? 'جاري الحفظ...' : 'حفظ الملاحظة'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
     </div>
   );
 }
