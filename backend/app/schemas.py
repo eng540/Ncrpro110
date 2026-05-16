@@ -61,6 +61,9 @@ class BoqItemBulkUpdate(BaseModel):
     status: Optional[str] = None
     quality_pass: Optional[str] = None
 
+class BoqItemBulkRequest(BaseModel):
+    items: List[BoqItemBulkUpdate]
+
 class BoqItemOut(BoqItemBase):
     id: int
     latrine_id: int

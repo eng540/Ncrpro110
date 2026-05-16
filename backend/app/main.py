@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Depends, HTTPException, Query, Body
+from fastapi import FastAPI, Depends, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
@@ -78,11 +78,11 @@ def update_boq_item(item_id: int, updates: schemas.BoqItemUpdate, db: Session = 
 
 @app.patch("/api/boq-items/bulk")
 def bulk_update_boq_items(
-    items: List[schemas.BoqItemBulkUpdate] = Body(...),
+    request: schemas.BoqItemBulkRequest,
     db: Session = Depends(get_db)
 ):
     try:
-        result = crud.bulk_update_boq_items(db, items)
+        result = crud.bulk_update_boq_items(db, request.items)
         return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Bulk update failed: {str(e)}")
@@ -136,7 +136,7 @@ def seed_latrines(count: int = 110, db: Session = Depends(get_db)):
 static_dir = os.path.join(os.path.dirname(__file__), "static")
 
 if os.path.exists(static_dir) and os.path.exists(os.path.join(static_dir, "index.html")):
-
+    
     @app.get("/")
     async def serve_react_root():
         return FileResponse(os.path.join(static_dir, "index.html"))
@@ -145,12 +145,12 @@ if os.path.exists(static_dir) and os.path.exists(os.path.join(static_dir, "index
     async def serve_react_catchall(full_path: str):
         if full_path.startswith("api/"):
             raise HTTPException(status_code=404, detail="API Route Not Found")
-
+        
         file_path = os.path.join(static_dir, full_path)
-
+        
         if os.path.exists(file_path) and os.path.isfile(file_path):
             return FileResponse(file_path)
-
+        
         return FileResponse(os.path.join(static_dir, "index.html"))
 else:
     @app.get("/")

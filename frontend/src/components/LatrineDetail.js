@@ -68,7 +68,6 @@ function LatrineDetail({ apiUrl, latrine, onBack }) {
       body: JSON.stringify(payload)
     });
 
-    // Update local state
     setItems(prev => prev.map(it => 
       it.id === item.id ? { ...it, achieved_qty: item.planned_qty, status: 'completed', quality_pass: 'pending' } : it
     ));
@@ -197,7 +196,7 @@ function LatrineDetail({ apiUrl, latrine, onBack }) {
                     disabled={saving}
                     style={{padding:'6px 12px',background:'#70AD47',color:'white',border:'none',borderRadius:'4px',cursor:'pointer',fontSize:'12px'}}
                   >
-                    ✅ كامل
+                    كامل
                   </button>
                 </td>
               </tr>

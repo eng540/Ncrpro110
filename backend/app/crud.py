@@ -70,7 +70,6 @@ def bulk_update_boq_items(db: Session, updates: List[schemas.BoqItemBulkUpdate])
             item.achievement_pct = round((item.achieved_qty / item.planned_qty) * 100, 2)
         updated_latrine_ids.add(item.latrine_id)
     db.commit()
-    # Refresh all affected items
     for upd in updates:
         item = db.query(models.BoqItem).filter(models.BoqItem.id == upd.item_id).first()
         if item:

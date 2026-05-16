@@ -93,7 +93,7 @@ function BulkUpdate({ apiUrl }) {
     setSaving(true);
     setMessage('');
     setError('');
-
+    
     const changed = boqItems
       .filter(b => b.boq_code === selectedCode)
       .map(b => {
@@ -102,7 +102,7 @@ function BulkUpdate({ apiUrl }) {
         if (qty !== null && qty !== undefined && qty !== '' && !isNaN(parseFloat(qty))) {
           numQty = parseFloat(parseFloat(qty).toFixed(2));
         }
-
+        
         return {
           item_id: parseInt(b.id, 10),
           achieved_qty: numQty,
@@ -111,23 +111,22 @@ function BulkUpdate({ apiUrl }) {
         };
       })
       .filter(b => !isNaN(b.item_id));
-
+    
     if (changed.length === 0) {
       setError('لا توجد بيانات صالحة للحفظ');
       setSaving(false);
       return;
     }
 
-    // DEBUG: Log what we're sending
-    console.log('Sending bulk update:', JSON.stringify(changed, null, 2));
+    console.log('Sending bulk update:', JSON.stringify({ items: changed }, null, 2));
 
     try {
       const res = await fetch(`${apiUrl}/boq-items/bulk`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(changed)
+        body: JSON.stringify({ items: changed })
       });
-
+      
       if (res.ok) {
         const data = await res.json();
         setMessage(`تم حفظ ${data.updated_count} بند بنجاح (${data.affected_latrines} حمام متأثر)`);
@@ -135,10 +134,9 @@ function BulkUpdate({ apiUrl }) {
         const latData = await latRes.json();
         setLatrines(latData);
       } else {
-        // DEBUG: Log full error response
         const errData = await res.json();
         console.error('Server error response:', errData);
-
+        
         let errText = 'خطأ أثناء الحفظ على الخادم';
         if (Array.isArray(errData.detail)) {
           errText = errData.detail.map(e => `${e.loc?.join('.')}: ${e.msg}`).join(' | ');
