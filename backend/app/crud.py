@@ -82,7 +82,6 @@ def bulk_update_boq_items(db: Session, updates: List[schemas.BoqItemBulkUpdate])
     return {"updated_count": len(updates), "affected_latrines": len(updated_latrine_ids)}
 
 def recalc_latrine_progress(db: Session, latrine_id: int):
-    # Row-Level Locking لمنع تداخل البيانات
     latrine = db.query(models.Latrine).filter(models.Latrine.id == latrine_id).with_for_update().first()
     if not latrine:
         return
@@ -91,22 +90,10 @@ def recalc_latrine_progress(db: Session, latrine_id: int):
     if not items:
         return
     
-    # ARCHITECTURE FIX: Financial Progress Calculation (Earned Value)
-    # قاموس أسعار الوحدة (يمكن تعديله لاحقاً عند توفر العقد النهائي)
     unit_prices = {
-        'A1': 10.0,  # سعر افتراضي لحفر وتسوية
-        'A2': 14.0,  # بلك مفرغ
-        'A3': 5.0,   # لياسة
-        'A4': 70.0,  # سقف خرسانة
-        'A5': 40.0,  # كرسي عربي
-        'A6': 5.0,   # بلاط
-        'B1': 5.0,   # حفر بيارة
-        'B2': 3.0,   # تمديد UPVC
-        'B3': 30.0,  # غطاء بيارة
-        'C1': 70.0,  # باب حديد
-        'C2': 20.0,  # نافذة ألمنيوم
-        'C3': 40.0,  # إضاءة شمسية
-        'C4': 30.0,  # لوحة معدنية
+        'A1': 10.0, 'A2': 14.0, 'A3': 5.0, 'A4': 70.0, 'A5': 40.0, 'A6': 5.0,
+        'B1': 5.0, 'B2': 3.0, 'B3': 30.0,
+        'C1': 70.0, 'C2': 20.0, 'C3': 40.0, 'C4': 30.0,
     }
     
     total_planned_cost = 0.0
@@ -116,19 +103,14 @@ def recalc_latrine_progress(db: Session, latrine_id: int):
         price = unit_prices.get(item.boq_code, 0.0)
         planned_qty = item.planned_qty or 0.0
         achieved_qty = item.achieved_qty or 0.0
-        
-        # التكلفة المخططة = الكمية المخططة × السعر
         total_planned_cost += (planned_qty * price)
-        # القيمة المكتسبة (المنفذ مالياً) = الكمية المنفذة × السعر
         total_earned_value += (achieved_qty * price)
     
-    # حساب النسبة الكلية بناءً على التكلفة المالية
     if total_planned_cost > 0:
         latrine.overall_pct = round((total_earned_value / total_planned_cost) * 100, 2)
     else:
         latrine.overall_pct = 0.0
         
-    # تحديث الحالة تلقائياً
     if latrine.overall_pct >= 99.9:
         latrine.status = 'completed'
     elif latrine.overall_pct > 0:
@@ -220,3 +202,66 @@ def seed_boq_items(db: Session, latrine_id: int):
         db_item = models.BoqItem(latrine_id=latrine_id, **item)
         db.add(db_item)
     db.commit()
+
+# ---------- Sync Engine Processor ----------
+def process_sync_queue(db: Session, sync_req: schemas.SyncRequest) -> schemas.SyncResponse:
+    processed = []
+    failed = []
+    errors = {}
+    latrines_to_recalc = set()
+
+    for op in sync_req.operations:
+        try:
+            if op.type == "UPDATE_BOQ":
+                item_id = op.data.get("id")
+                item = db.query(models.BoqItem).filter(models.BoqItem.id == item_id).first()
+                if item:
+                    for key, value in op.data.items():
+                        if hasattr(item, key) and key != "id":
+                            setattr(item, key, value)
+                    if item.planned_qty and item.planned_qty > 0:
+                        item.achievement_pct = round((item.achieved_qty / item.planned_qty) * 100, 2)
+                    item.last_update = op.timestamp
+                    latrines_to_recalc.add(item.latrine_id)
+
+            elif op.type == "CREATE_REMARK":
+                new_remark = models.Remark(**op.data)
+                new_remark.date_logged = op.timestamp
+                db.add(new_remark)
+                latrines_to_recalc.add(op.data.get("latrine_id"))
+
+            elif op.type == "UPDATE_REMARK":
+                remark_id = op.data.get("id")
+                remark = db.query(models.Remark).filter(models.Remark.id == remark_id).first()
+                if remark:
+                    for key, value in op.data.items():
+                        if hasattr(remark, key) and key != "id":
+                            setattr(remark, key, value)
+                    remark.last_update = op.timestamp
+
+            elif op.type == "UPDATE_LATRINE":
+                latrine_id = op.data.get("id")
+                latrine = db.query(models.Latrine).filter(models.Latrine.id == latrine_id).first()
+                if latrine:
+                    for key, value in op.data.items():
+                        if hasattr(latrine, key) and key != "id":
+                            setattr(latrine, key, value)
+                    latrine.last_update = op.timestamp
+
+            db.commit()
+            processed.append(op.id)
+
+        except Exception as e:
+            db.rollback()
+            failed.append(op.id)
+            errors[op.id] = str(e)
+
+    for lid in latrines_to_recalc:
+        if lid:
+            recalc_latrine_progress(db, lid)
+
+    return schemas.SyncResponse(
+        processed_ids=processed,
+        failed_ids=failed,
+        errors=errors
+    )
