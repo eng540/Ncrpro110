@@ -8,7 +8,8 @@ import { db, populateLocalDB } from './db';
 const API_BASE_URL = process.env.REACT_APP_API_URL || '/api';
 
 function App() {
-  const [currentView, setCurrentView] = useState({ name: 'LIST', id: null });
+  // state يحتوي على: اسم الشاشة، رقم الحمام، ورقم البند (للملاحظات)
+  const [currentView, setCurrentView] = useState({ name: 'LIST', id: null, boqCode: null });
   const [isInitializing, setIsInitializing] = useState(true);
 
   const initializeData = async () => {
@@ -45,21 +46,22 @@ function App() {
       <div style={{ maxWidth: '1200px', margin: '0 auto', padding: '20px' }}>
         
         {currentView.name === 'LIST' && (
-          <LatrineList onSelectLatrine={(id) => setCurrentView({ name: 'BOQ', id })} />
+          <LatrineList onSelectLatrine={(id) => setCurrentView({ name: 'BOQ', id, boqCode: null })} />
         )}
 
         {currentView.name === 'BOQ' && (
           <BoqUpdater 
             latrineId={currentView.id} 
-            onBack={() => setCurrentView({ name: 'LIST', id: null })} 
-            onOpenRemarks={(id) => setCurrentView({ name: 'REMARKS', id })}
+            onBack={() => setCurrentView({ name: 'LIST', id: null, boqCode: null })} 
+            onOpenRemarks={(id, boqCode) => setCurrentView({ name: 'REMARKS', id, boqCode })}
           />
         )}
 
         {currentView.name === 'REMARKS' && (
           <RemarksManager 
             latrineId={currentView.id} 
-            onBack={() => setCurrentView({ name: 'BOQ', id: currentView.id })} 
+            boqCode={currentView.boqCode} // تمرير كود البند المخصص
+            onBack={() => setCurrentView({ name: 'BOQ', id: currentView.id, boqCode: null })} 
           />
         )}
 
