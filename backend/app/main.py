@@ -69,7 +69,6 @@ def patch_latrine(latrine_id: int, updates: schemas.LatrineUpdate, db: Session =
 def list_boq_items(latrine_id: Optional[int] = None, db: Session = Depends(get_db)):
     return crud.get_boq_items(db, latrine_id=latrine_id)
 
-# ARCHITECTURE FIX: Static route MUST be defined before the dynamic {item_id} route
 @app.patch("/api/boq-items/bulk")
 def bulk_update_boq_items(
     request: schemas.BoqItemBulkRequest,
@@ -81,7 +80,6 @@ def bulk_update_boq_items(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Bulk update failed: {str(e)}")
 
-# Dynamic route comes AFTER the static route
 @app.patch("/api/boq-items/{item_id}", response_model=schemas.BoqItemOut)
 def update_boq_item(item_id: int, updates: schemas.BoqItemUpdate, db: Session = Depends(get_db)):
     item = crud.update_boq_item(db, item_id, updates)
@@ -133,6 +131,14 @@ def seed_latrines(count: int = 110, db: Session = Depends(get_db)):
         crud.seed_boq_items(db, db_latrine.id)
         created.append(code)
     return {"created": len(created), "codes": created[:5]}
+
+# ---------- Sync Engine Endpoint ----------
+@app.post("/api/sync", response_model=schemas.SyncResponse)
+def sync_offline_data(request: schemas.SyncRequest, db: Session = Depends(get_db)):
+    try:
+        return crud.process_sync_queue(db, request)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Critical Sync Failure: {str(e)}")
 
 # ========== REACT FRONTEND (serve static files) ==========
 static_dir = os.path.join(os.path.dirname(__file__), "static")
