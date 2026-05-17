@@ -73,8 +73,9 @@ class BoqItem(Base):
     inspection_date = Column(DateTime, nullable=True)
     inspector = Column(String(50))
     quality_pass = Column(String(10), default=QualityPass.PENDING)
+    last_update = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
-    latrine = relationship("Latrine", back_populates="boq_items")
+    latrine = relationship("Latrine", back_populates="latrine")
 
 # REMARKS / DEFECTS
 class Remark(Base):
@@ -93,8 +94,9 @@ class Remark(Base):
     status = Column(String(20), default=RemarkStatus.OPEN)
     closed_date = Column(DateTime, nullable=True)
     photo_ref = Column(String(100))
+    last_update = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
-    latrine = relationship("Latrine", back_populates="remarks")
+    latrine = relationship("Latrine", back_populates="latrine")
 
 # DAILY LOG
 class DailyLog(Base):
