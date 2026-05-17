@@ -1,5 +1,5 @@
 from pydantic import BaseModel
-from typing import Optional, List
+from typing import Optional, List, Dict, Any
 from datetime import datetime
 
 # ---------- Latrine Schemas ----------
@@ -69,6 +69,7 @@ class BoqItemOut(BoqItemBase):
     latrine_id: int
     inspection_date: Optional[datetime] = None
     inspector: Optional[str] = None
+    last_update: Optional[datetime] = None
 
     class Config:
         from_attributes = True
@@ -97,6 +98,7 @@ class RemarkOut(RemarkBase):
     latrine_id: int
     date_logged: datetime
     closed_date: Optional[datetime] = None
+    last_update: Optional[datetime] = None
 
     class Config:
         from_attributes = True
@@ -121,3 +123,18 @@ class EngineerPerformance(BaseModel):
     engineer: str
     inspected_today: int
     accepted_today: int
+
+# ---------- Sync Engine Schemas ----------
+class SyncOperation(BaseModel):
+    id: str
+    type: str
+    timestamp: datetime
+    data: Dict[str, Any]
+
+class SyncRequest(BaseModel):
+    operations: List[SyncOperation]
+
+class SyncResponse(BaseModel):
+    processed_ids: List[str]
+    failed_ids: List[str]
+    errors: Dict[str, str]
