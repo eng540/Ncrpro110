@@ -1,294 +1,182 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
+import { useLiveQuery } from 'dexie-react-hooks';
+import { db } from '../db';
+import { pushToSyncQueue } from '../syncEngine';
 
-const statusColors = {
-  not_started: '#E2EFDA',
-  in_progress: '#FFEB9C',
-  completed: '#C6EFCE',
-  pending_inspection: '#B8CCE4',
-  accepted: '#70AD47',
-  rejected: '#FFC7CE',
-  rework_required: '#FFC7CE'
-};
-
-const qualityColors = {
-  pass: '#C6EFCE',
-  fail: '#FFC7CE',
-  pending: '#FFEB9C'
-};
-
-const boqCodes = [
-  {code:'A1', label:'A1 - حفر وتسوية + أساس حجر'},
-  {code:'A2', label:'A2 - جدران بلك مفرغ 15سم'},
-  {code:'A3', label:'A3 - لياسة داخلية وخارجية'},
-  {code:'A4', label:'A4 - سقف خرسانة مسلحة'},
-  {code:'A5', label:'A5 - كرسي عربي + كوع ريحة'},
-  {code:'A6', label:'A6 - بلاط موزايكو'},
-  {code:'B1', label:'B1 - حفر بيارة قطر 1م'},
-  {code:'B2', label:'B2 - تمديد UPVC 4 انش + تهوية'},
-  {code:'B3', label:'B3 - غطاء بيارة خرساني'},
-  {code:'C1', label:'C1 - باب حديد صاج'},
-  {code:'C2', label:'C2 - نافذة ألمنيوم'},
-  {code:'C3', label:'C3 - إضاءة شمسية 10واط'},
-  {code:'C4', label:'C4 - لوحة معدنية + شعار'},
+const qualityColors = { pass: '#C6EFCE', fail: '#FFC7CE', pending: '#FFF2CC' };
+const itemStatuses = [
+  { value: 'not_started', label: 'لم يبدأ' },
+  { value: 'in_progress', label: 'قيد العمل' },
+  { value: 'completed', label: 'مكتمل' },
+  { value: 'pending_inspection', label: 'بانتظار الفحص' }
 ];
 
-function BulkUpdate({ apiUrl }) {
-  const [latrines, setLatrines] = useState([]);
-  const [boqItems, setBoqItems] = useState([]);
-  const [selectedCode, setSelectedCode] = useState('');
-  const [loading, setLoading] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [message, setMessage] = useState('');
-  const [error, setError] = useState('');
+// قائمة بنود مشروع ECHO 2525
+const boqCodes = ['A1', 'A2', 'A3', 'A4', 'A5', 'A6', 'B1', 'B2', 'B3', 'C1', 'C2', 'C3', 'C4'];
 
-  useEffect(() => {
-    setLoading(true);
-    setError('');
-    Promise.all([
-      fetch(`${apiUrl}/latrines?limit=200`).then(r => r.json()),
-      fetch(`${apiUrl}/boq-items`).then(r => r.json())
-    ])
-    .then(([latData, boqData]) => {
-      setLatrines(latData);
-      setBoqItems(boqData);
-      setLoading(false);
-    })
-    .catch(() => {
-      setError('تعذر تحميل البيانات من الخادم');
-      setLoading(false);
-    });
-  }, [apiUrl]);
+const BulkUpdate = () => {
+  const [selectedBoqCode, setSelectedBoqCode] = useState('A1');
+  const [selectedLatrines, setSelectedLatrines] = useState([]);
+  const [bulkQty, setBulkQty] = useState('');
+  const [bulkStatus, setBulkStatus] = useState('completed');
+  const [bulkQuality, setBulkQuality] = useState('pass');
+  const [isSaving, setIsSaving] = useState(false);
 
-  const getItemForLatrine = (latrineId) => {
-    return boqItems.find(b => b.latrine_id === latrineId && b.boq_code === selectedCode);
+  // جلب الحمامات وجداول الكميات المرتبطة بالبند المختار محلياً
+  const latrines = useLiveQuery(() => db.latrines.toArray(), []);
+  const boqItems = useLiveQuery(() => 
+    db.boq_items.where('boq_code').equals(selectedBoqCode).toArray(), 
+  [selectedBoqCode]);
+
+  if (!latrines || !boqItems) return <div style={{ textAlign: 'center', padding: '40px' }}>جاري التحميل...</div>;
+
+  // دمج البيانات لعرضها في الجدول
+  const tableData = latrines.map(latrine => {
+    const item = boqItems.find(i => i.latrine_id === latrine.id);
+    return { ...latrine, boqItem: item };
+  }).filter(data => data.boqItem !== undefined); // عرض الحمامات التي تمتلك هذا البند فقط
+
+  const toggleSelectAll = (e) => {
+    if (e.target.checked) setSelectedLatrines(tableData.map(d => d.id));
+    else setSelectedLatrines([]);
   };
 
-  const updateItemField = (itemId, field, value) => {
-    setBoqItems(prev => prev.map(item => 
-      item.id === itemId ? { ...item, [field]: value } : item
-    ));
+  const toggleSelect = (id) => {
+    setSelectedLatrines(prev => prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id]);
   };
 
-  const setQuickPct = (item, pct) => {
-    const val = parseFloat((item.planned_qty * (pct / 100)).toFixed(2));
-    updateItemField(item.id, 'achieved_qty', val);
-  };
-
-  const completeAll = () => {
-    setBoqItems(prev => prev.map(item => {
-      if (item.boq_code === selectedCode) {
-        return { ...item, achieved_qty: item.planned_qty, status: 'completed', quality_pass: 'pass' }; // تم تعديل الجودة إلى pass تلقائياً للتسهيل
-      }
-      return item;
-    }));
-    setMessage('تم تعيين جميع الحمامات لهذا البند كـ منفذ كامل (اضغط حفظ لتأكيد التغييرات)');
-    setError('');
-  };
-
-  const saveAll = async () => {
-    if (!selectedCode) {
-      setError('اختر بنداً أولاً');
+  const handleApplyBulkUpdate = async () => {
+    if (selectedLatrines.length === 0) {
+      alert("يرجى تحديد حمام واحد على الأقل.");
       return;
     }
-    setSaving(true);
-    setMessage('');
-    setError('');
-    
-    // ARCHITECTURE FIX: Strict Data Sanitization for FastAPI/Pydantic
-    const changed = boqItems
-      .filter(b => b.boq_code === selectedCode)
-      .map(b => {
-        // 1. Ensure ID is an integer
-        const itemId = parseInt(b.id, 10);
-        
-        // 2. Ensure achieved_qty is a valid float or explicitly null
-        let validQty = null;
-        if (b.achieved_qty !== null && b.achieved_qty !== undefined && b.achieved_qty !== '') {
-          const parsed = parseFloat(b.achieved_qty);
-          if (!isNaN(parsed)) {
-            validQty = parseFloat(parsed.toFixed(2));
+    if (bulkQty === '' || isNaN(parseFloat(bulkQty))) {
+      alert("يرجى إدخال الكمية المنفذة المراد تطبيقها.");
+      return;
+    }
+
+    if (!window.confirm(`هل أنت متأكد من تطبيق التحديث على ${selectedLatrines.length} حمامات؟`)) return;
+
+    setIsSaving(true);
+    try {
+      const qty = parseFloat(bulkQty);
+
+      // استخدام Transaction محلي لضمان سرعة وسلامة التحديث الجماعي
+      await db.transaction('rw', db.boq_items, db.sync_queue, async () => {
+        for (const latrineId of selectedLatrines) {
+          const targetItem = boqItems.find(i => i.latrine_id === latrineId);
+          if (targetItem) {
+            // 1. التحديث المحلي
+            await db.boq_items.update(targetItem.id, {
+              achieved_qty: qty,
+              status: bulkStatus,
+              quality_pass: bulkQuality
+            });
+
+            // 2. إضافته لطابور المزامنة
+            await pushToSyncQueue('UPDATE_BOQ', {
+              id: targetItem.id,
+              achieved_qty: qty,
+              status: bulkStatus,
+              quality_pass: bulkQuality,
+              latrine_id: latrineId
+            });
           }
         }
-        
-        return {
-          item_id: itemId,
-          achieved_qty: validQty,
-          status: b.status || 'not_started',
-          quality_pass: b.quality_pass || 'pending'
-        };
-      })
-      .filter(b => !isNaN(b.item_id)); // Remove any items with invalid IDs
-    
-    if (changed.length === 0) {
-      setError('لا توجد بيانات صالحة للحفظ');
-      setSaving(false);
-      return;
-    }
-
-    try {
-      const res = await fetch(`${apiUrl}/boq-items/bulk`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ items: changed })
       });
-      
-      if (res.ok) {
-        const data = await res.json();
-        setMessage(`تم حفظ ${data.updated_count} بند بنجاح (${data.affected_latrines} حمام متأثر)`);
-        const latRes = await fetch(`${apiUrl}/latrines?limit=200`);
-        const latData = await latRes.json();
-        setLatrines(latData);
-      } else {
-        // Capture specific Pydantic validation errors if possible
-        const errData = await res.json();
-        let errorDetails = "حدثت مشكلة أثناء الحفظ";
-        if (errData.detail && Array.isArray(errData.detail)) {
-            errorDetails = errData.detail.map(e => `${e.loc.join('->')}: ${e.msg}`).join(' | ');
-        }
-        setError(`خطأ 422: البيانات غير متطابقة مع الخادم. التفاصيل: ${errorDetails}`);
-      }
-    } catch (e) {
-      setError(`فشل الاتصال بالخادم: ${e.message}`);
+
+      alert("تم تطبيق التحديث الجماعي بنجاح وحفظه في طابور المزامنة.");
+      setSelectedLatrines([]); // إفراغ التحديد بعد النجاح
+      setBulkQty('');
+    } catch (error) {
+      console.error(error);
+      alert("حدث خطأ أثناء التحديث الجماعي.");
+    } finally {
+      setIsSaving(false);
     }
-    setSaving(false);
   };
 
-  if (loading) return <div style={{textAlign:'center',padding:'40px'}}>جاري تحميل البيانات...</div>;
-
   return (
-    <div>
-      <div style={{display:'flex',gap:'12px',marginBottom:'20px',alignItems:'center',flexWrap:'wrap'}}>
-        <h2 style={{color:'#1F4E78',margin:0}}>التحديث الجماعي حسب البند</h2>
-        <select 
-          value={selectedCode}
-          onChange={e => { setSelectedCode(e.target.value); setMessage(''); setError(''); }}
-          style={{padding:'10px 14px',borderRadius:'4px',border:'1px solid #ccc',minWidth:'280px'}}
-        >
-          <option value="">اختر بند BoQ...</option>
-          {boqCodes.map(b => <option key={b.code} value={b.code}>{b.label}</option>)}
-        </select>
-        
-        {selectedCode && (
-          <>
-            <button 
-              onClick={completeAll}
-              style={{padding:'10px 16px',background:'#70AD47',color:'white',border:'none',borderRadius:'4px',cursor:'pointer',fontWeight:'bold'}}
-            >
-              تنفيذ كامل للجميع
-            </button>
-            <button 
-              onClick={saveAll}
-              disabled={saving}
-              style={{padding:'10px 20px',background:'#1F4E78',color:'white',border:'none',borderRadius:'4px',cursor:'pointer',fontWeight:'bold'}}
-            >
-              {saving ? 'جاري الحفظ...' : 'حفظ جميع التغييرات'}
-            </button>
-          </>
-        )}
+    <div style={{ direction: 'rtl' }}>
+      <h2 style={{ color: '#1F4E78', marginBottom: '20px' }}>التحديث الجماعي للبنود (Bulk Update)</h2>
+
+      {/* لوحة التحكم بالتحديث الجماعي */}
+      <div style={{ background: '#fff', padding: '20px', borderRadius: '8px', boxShadow: '0 2px 8px rgba(0,0,0,0.1)', marginBottom: '20px' }}>
+        <div style={{ display: 'flex', gap: '15px', flexWrap: 'wrap', alignItems: 'flex-end' }}>
+          
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
+            <label style={{ fontWeight: 'bold' }}>اختر البند المستهدف:</label>
+            <select value={selectedBoqCode} onChange={(e) => { setSelectedBoqCode(e.target.value); setSelectedLatrines([]); }} style={{ padding: '8px', borderRadius: '4px', border: '1px solid #ccc', minWidth: '150px' }}>
+              {boqCodes.map(code => <option key={code} value={code}>البند {code}</option>)}
+            </select>
+          </div>
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
+            <label style={{ fontWeight: 'bold', color: '#2980b9' }}>الكمية المنفذة المراد تطبيقها:</label>
+            <input type="number" step="0.01" value={bulkQty} onChange={(e) => setBulkQty(e.target.value)} style={{ padding: '8px', borderRadius: '4px', border: '2px solid #3498db', minWidth: '100px' }} placeholder="الكمية..." />
+          </div>
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
+            <label style={{ fontWeight: 'bold' }}>الحالة:</label>
+            <select value={bulkStatus} onChange={(e) => setBulkStatus(e.target.value)} style={{ padding: '8px', borderRadius: '4px', border: '1px solid #ccc' }}>
+              {itemStatuses.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
+            </select>
+          </div>
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
+            <label style={{ fontWeight: 'bold' }}>الجودة:</label>
+            <select value={bulkQuality} onChange={(e) => setBulkQuality(e.target.value)} style={{ padding: '8px', borderRadius: '4px', border: '1px solid #ccc', backgroundColor: qualityColors[bulkQuality] }}>
+              <option value="pending">قيد الفحص</option>
+              <option value="pass">مقبول</option>
+              <option value="fail">مرفوض</option>
+            </select>
+          </div>
+
+          <button onClick={handleApplyBulkUpdate} disabled={isSaving || selectedLatrines.length === 0} style={{ padding: '10px 20px', background: selectedLatrines.length > 0 ? '#27ae60' : '#bdc3c7', color: 'white', border: 'none', borderRadius: '4px', cursor: selectedLatrines.length > 0 ? 'pointer' : 'not-allowed', fontWeight: 'bold', height: '40px' }}>
+            {isSaving ? 'جاري التطبيق...' : `تطبيق على (${selectedLatrines.length}) حمام`}
+          </button>
+        </div>
       </div>
 
-      {message && <div style={{padding:'12px 16px',background:'#C6EFCE',borderRadius:'4px',marginBottom:'16px',color:'#1F4E78',fontWeight:'bold',border:'1px solid #70AD47'}}>{message}</div>}
-      {error && <div style={{padding:'12px 16px',background:'#FFC7CE',borderRadius:'4px',marginBottom:'16px',color:'#C00000',fontWeight:'bold',border:'1px solid #C00000'}}>{error}</div>}
-
-      {selectedCode ? (
-        <div style={{background:'white',borderRadius:'8px',overflow:'hidden',boxShadow:'0 2px 8px rgba(0,0,0,0.08)'}}>
-          <table style={{width:'100%',borderCollapse:'collapse'}}>
-            <thead style={{background:'#1F4E78',color:'white'}}>
-              <tr>
-                <th style={{padding:'12px',textAlign:'right'}}>رقم الحمام</th>
-                <th style={{padding:'12px',textAlign:'right'}}>المستفيد</th>
-                <th style={{padding:'12px',textAlign:'right'}}>المجموعة</th>
-                <th style={{padding:'12px',textAlign:'right'}}>المخطط</th>
-                <th style={{padding:'12px',textAlign:'right'}}>المنفذ</th>
-                <th style={{padding:'12px',textAlign:'right'}}>نسب سريعة</th>
-                <th style={{padding:'12px',textAlign:'right'}}>الحالة</th>
-                <th style={{padding:'12px',textAlign:'right'}}>جودة</th>
-                <th style={{padding:'12px',textAlign:'right'}}>كامل</th>
-              </tr>
-            </thead>
-            <tbody>
-              {latrines.map(lat => {
-                const item = getItemForLatrine(lat.id);
-                if (!item) return null;
-                return (
-                  <tr key={lat.id} style={{borderBottom:'1px solid #eee'}}>
-                    <td style={{padding:'10px',fontWeight:'bold'}}>{lat.latrine_id}</td>
-                    <td style={{padding:'10px',fontSize:'13px'}}>{lat.beneficiary_hh}</td>
-                    <td style={{padding:'10px'}}>{lat.block_no}</td>
-                    <td style={{padding:'10px'}}>{`${item.planned_qty} ${item.unit}`}</td>
-                    <td style={{padding:'10px'}}>
-                      <input 
-                        type="number" 
-                        step="0.01"
-                        value={item.achieved_qty === null ? '' : item.achieved_qty}
-                        onChange={e => updateItemField(item.id, 'achieved_qty', e.target.value)}
-                        style={{width:'70px',padding:'4px'}}
-                      />
-                    </td>
-                    <td style={{padding:'10px'}}>
-                      <div style={{display:'flex',gap:'2px',flexWrap:'wrap'}}>
-                        {[25,50,75,100].map(pct => (
-                          <button 
-                            key={pct}
-                            onClick={() => setQuickPct(item, pct)}
-                            style={{fontSize:'10px',padding:'2px 6px',cursor:'pointer',border:'1px solid #ccc',background:'#f5f5f5',borderRadius:'3px'}}
-                          >
-                            {pct}%
-                          </button>
-                        ))}
-                      </div>
-                    </td>
-                    <td style={{padding:'10px'}}>
-                      <select 
-                        value={item.status || 'not_started'}
-                        onChange={e => updateItemField(item.id, 'status', e.target.value)}
-                        style={{padding:'4px',background: statusColors[item.status] || '#E2EFDA',fontSize:'12px'}}
-                      >
-                        <option value="not_started">لم يبدأ</option>
-                        <option value="in_progress">جاري</option>
-                        <option value="completed">منفذ</option>
-                        <option value="pending_inspection">بانتظار الفحص</option>
-                        <option value="accepted">مقبول</option>
-                        <option value="rejected">مرفوض</option>
-                        <option value="rework_required">يحتاج إعادة</option>
-                      </select>
-                    </td>
-                    <td style={{padding:'10px'}}>
-                      <select 
-                        value={item.quality_pass || 'pending'}
-                        onChange={e => updateItemField(item.id, 'quality_pass', e.target.value)}
-                        style={{padding:'4px',background: qualityColors[item.quality_pass] || '#FFEB9C',fontSize:'12px'}}
-                      >
-                        <option value="pending">معلق</option>
-                        <option value="pass">مقبول</option>
-                        <option value="fail">مرفوض</option>
-                      </select>
-                    </td>
-                    <td style={{padding:'10px'}}>
-                      <button 
-                        onClick={() => {
-                          updateItemField(item.id, 'achieved_qty', item.planned_qty);
-                          updateItemField(item.id, 'status', 'completed');
-                          updateItemField(item.id, 'quality_pass', 'pass'); // تحديث الجودة لتسهيل العمل
-                        }}
-                        style={{padding:'4px 10px',background:'#70AD47',color:'white',border:'none',borderRadius:'4px',cursor:'pointer',fontSize:'12px'}}
-                      >
-                        كامل
-                      </button>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      ) : (
-        <div style={{textAlign:'center',padding:'60px',color:'#666',background:'white',borderRadius:'8px'}}>
-          اختر بند BoQ من القائمة أعلاه لعرض جميع الحمامات وتحديثها دفعة واحدة
-        </div>
-      )}
+      {/* جدول اختيار الحمامات */}
+      <div style={{ background: 'white', borderRadius: '8px', overflow: 'hidden', boxShadow: '0 2px 8px rgba(0,0,0,0.08)' }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+          <thead style={{ background: '#1F4E78', color: 'white' }}>
+            <tr>
+              <th style={{ padding: '12px', textAlign: 'center', width: '50px' }}>
+                <input type="checkbox" onChange={toggleSelectAll} checked={tableData.length > 0 && selectedLatrines.length === tableData.length} />
+              </th>
+              <th style={{ padding: '12px', textAlign: 'right' }}>رقم الحمام</th>
+              <th style={{ padding: '12px', textAlign: 'right' }}>المنفذ حالياً (للبند {selectedBoqCode})</th>
+              <th style={{ padding: '12px', textAlign: 'right' }}>حالة البند الحالية</th>
+              <th style={{ padding: '12px', textAlign: 'right' }}>المهندس</th>
+            </tr>
+          </thead>
+          <tbody>
+            {tableData.length === 0 ? (
+              <tr><td colSpan="5" style={{ padding: '20px', textAlign: 'center' }}>لا توجد بيانات</td></tr>
+            ) : (
+              tableData.map(row => (
+                <tr key={row.id} style={{ borderBottom: '1px solid #eee', backgroundColor: selectedLatrines.includes(row.id) ? '#f1f8ff' : 'transparent' }}>
+                  <td style={{ padding: '12px', textAlign: 'center' }}>
+                    <input type="checkbox" checked={selectedLatrines.includes(row.id)} onChange={() => toggleSelect(row.id)} />
+                  </td>
+                  <td style={{ padding: '12px', fontWeight: 'bold', color: '#1F4E78' }}>{row.latrine_id}</td>
+                  <td style={{ padding: '12px' }}>{row.boqItem.achieved_qty} / {row.boqItem.planned_qty} {row.boqItem.unit}</td>
+                  <td style={{ padding: '12px' }}>
+                    <span style={{ background: qualityColors[row.boqItem.quality_pass || 'pending'], padding: '4px 8px', borderRadius: '4px', fontSize: '12px' }}>
+                      {row.boqItem.quality_pass === 'pass' ? 'مقبول' : row.boqItem.quality_pass === 'fail' ? 'مرفوض' : 'قيد الفحص'}
+                    </span>
+                  </td>
+                  <td style={{ padding: '12px' }}>{row.site_engineer}</td>
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
-}
+};
 
 export default BulkUpdate;
