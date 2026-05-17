@@ -52,6 +52,7 @@ class Latrine(Base):
     last_update = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     remarks_count = Column(Integer, default=0)
 
+    # هنا الأسماء الصحيحة التي يجب أن يرتبط بها back_populates
     boq_items = relationship("BoqItem", back_populates="latrine", cascade="all, delete-orphan")
     remarks = relationship("Remark", back_populates="latrine", cascade="all, delete-orphan")
 
@@ -75,7 +76,8 @@ class BoqItem(Base):
     quality_pass = Column(String(10), default=QualityPass.PENDING)
     last_update = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
-    latrine = relationship("Latrine", back_populates="latrine")
+    # تم التصحيح هنا: back_populates="boq_items" بدلاً من "latrine"
+    latrine = relationship("Latrine", back_populates="boq_items")
 
 # REMARKS / DEFECTS
 class Remark(Base):
@@ -96,7 +98,8 @@ class Remark(Base):
     photo_ref = Column(String(100))
     last_update = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
-    latrine = relationship("Latrine", back_populates="latrine")
+    # تم التصحيح هنا: back_populates="remarks" بدلاً من "latrine"
+    latrine = relationship("Latrine", back_populates="remarks")
 
 # DAILY LOG
 class DailyLog(Base):
