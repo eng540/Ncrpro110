@@ -1,11 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '../db';
-import { syncWithServer } from '../syncEngine';
+import { syncWithServer, getPendingSyncCount } from '../syncEngine';
 
 const API_BASE_URL = process.env.REACT_APP_API_URL || '/api';
 
-// ✅ استعادة أنماط البطاقات من النسخة السابقة (ألوان Excel المألوفة)
 const cardStyle = (color) => ({ 
   background: color, 
   color: 'white', 
@@ -19,7 +18,6 @@ const cardStyle = (color) => ({
 const labelStyle = { fontSize: '12px', opacity: 0.9, marginBottom: '8px', fontWeight: 'bold' };
 const valueStyle = { fontSize: '28px', fontWeight: 'bold', margin: 0 };
 
-// ✅ بطاقة معلومات ملونة (للبنود المقبولة/المرفوضة/الملاحظات)
 const infoCardStyle = (bgColor, textColor, borderColor) => ({
   background: bgColor,
   color: textColor,
@@ -37,11 +35,22 @@ const Dashboard = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [isSyncing, setIsSyncing] = useState(false);
+  const [pendingCount, setPendingCount] = useState(0);
 
-  const pendingCount = useLiveQuery(() => db.sync_queue.count(), []) || 0;
   const isOnline = navigator.onLine;
 
-  // ✅ جلب البيانات من الخادم (summary + categories بالتوازي)
+  // ✅ استخدام getPendingSyncCount بدلاً من useLiveQuery المباشر
+  useEffect(() => {
+    const checkPending = async () => {
+      const count = await getPendingSyncCount();
+      setPendingCount(count);
+    };
+    checkPending();
+    // تحديث كل 5 ثوانٍ
+    const interval = setInterval(checkPending, 5000);
+    return () => clearInterval(interval);
+  }, []);
+
   const fetchDashboardData = async () => {
     setLoading(true);
     setError(null);
@@ -67,7 +76,6 @@ const Dashboard = () => {
     }
   };
 
-  // ✅ جلب البيانات فقط إذا كان متصلاً ولا توجد بيانات معلقة
   useEffect(() => {
     if (isOnline && pendingCount === 0) {
       fetchDashboardData();
@@ -77,8 +85,13 @@ const Dashboard = () => {
   const handleForceSync = async () => {
     setIsSyncing(true);
     try {
-      await syncWithServer();
-      // سيتم تشغيل useEffect تلقائياً لأن pendingCount سيصبح 0
+      const result = await syncWithServer();
+      // تحديث العدد بعد المزامنة
+      const newCount = await getPendingSyncCount();
+      setPendingCount(newCount);
+      if (result.failed > 0) {
+        alert(`تم مزامنة ${result.processed} عملية، لكن ${result.failed} فشلت. تحقق من Console.`);
+      }
     } catch (err) {
       console.error('Sync error:', err);
       alert("فشلت المزامنة: " + err.message);
@@ -119,12 +132,12 @@ const Dashboard = () => {
   if (error) return <div style={{ textAlign: 'center', padding: '40px', color: '#c0392b', fontWeight: 'bold' }}>{error}</div>;
   if (!summary) return null;
 
-  // --- عرض البيانات (The Dashboard UI) ---
+  // --- عرض البيانات ---
   return (
     <div style={{ direction: 'rtl' }}>
       <h2 style={{ color: '#1F4E78', marginBottom: '20px' }}>ملخص المشروع التنفيذي (Live Dashboard)</h2>
       
-      {/* ✅ استعادة البطاقات العلوية من النسخة السابقة + لون الجديد */}
+      {/* البطاقات العلوية */}
       <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap', marginBottom: '24px' }}>
         <div style={cardStyle('#1F4E78')}>
           <div style={labelStyle}>إجمالي الحمامات</div>
@@ -148,7 +161,7 @@ const Dashboard = () => {
         </div>
       </div>
 
-      {/* ✅ استعادة بطاقات البنود والملاحظات من النسخة السابقة */}
+      {/* بطاقات البنود والملاحظات */}
       <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap', marginBottom: '24px' }}>
         <div style={infoCardStyle('#C6EFCE', '#1F4E78', '#70AD47')}>
           <div style={{...labelStyle, color: '#333'}}>بنود مقبولة (Pass)</div>
@@ -168,7 +181,7 @@ const Dashboard = () => {
         </div>
       </div>
 
-      {/* ✅ استعادة شريط الإنجاز المالي من النسخة الجديدة */}
+      {/* شريط الإنجاز المالي */}
       <div style={{ background: 'white', padding: '25px', borderRadius: '8px', boxShadow: '0 2px 4px rgba(0,0,0,0.05)', marginBottom: '24px' }}>
         <h3 style={{ margin: '0 0 15px 0', color: '#2c3e50' }}>نسبة الإنجاز المالية للمشروع (Earned Value)</h3>
         <div style={{ width: '100%', background: '#ecf0f1', borderRadius: '10px', height: '30px', overflow: 'hidden', position: 'relative' }}>
@@ -194,7 +207,7 @@ const Dashboard = () => {
         </div>
       </div>
 
-      {/* ✅ استعادة تقدم الفئات من النسخة السابقة */}
+      {/* تقدم الفئات */}
       <div style={{ background: 'white', borderRadius: '8px', padding: '20px', boxShadow: '0 2px 8px rgba(0,0,0,0.08)' }}>
         <h3 style={{ color: '#1F4E78', marginTop: 0, marginBottom: '20px' }}>تقدم الأعمال حسب الفئة</h3>
         {categories.length === 0 ? (
