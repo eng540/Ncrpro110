@@ -1,14 +1,27 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '../db';
 import { pushToSyncQueue } from '../syncEngine';
-
-const API_BASE_URL = process.env.REACT_APP_API_URL || '/api';
+import { v4 as uuidv4 } from 'uuid';
 
 // ✅ توحيد الألوان
 const severityColors = { minor: '#FFC000', major: '#FF6600', critical: '#C00000' };
 const statusColors = { open: '#FFEB9C', closed: '#C6EFCE', overdue: '#FFC7CE' };
 const statusLabels = { open: 'مفتوحة', closed: 'مغلقة', overdue: 'متأخرة' };
+
+// ألوان حالة المزامنة ← جديد
+const syncStatusColors = {
+  local: '#9E9E9E',    // رمادي: لم يُرسل
+  pending: '#FFC107',  // أصفر: في الطابور
+  synced: '#4CAF50',   // أخضر: في الخادم
+  failed: '#F44336'    // أحمر: فشل الإرسال
+};
+const syncStatusLabels = {
+  local: 'محلي',
+  pending: 'قيد الإرسال',
+  synced: 'مُزامن',
+  failed: 'فشل'
+};
 
 const RemarksManager = ({ latrineId, boqCode, onBack }) => {
   const latrine = useLiveQuery(() => db.latrines.get(latrineId), [latrineId]);
@@ -29,9 +42,13 @@ const RemarksManager = ({ latrineId, boqCode, onBack }) => {
   }, [latrineId, boqCode]);
 
   // ✅ فلترة محلية (بدون انتظار الخادم)
-  const filtered = remarks?.filter(r => 
-    filter === '' || r.status === filter || r.severity === filter
-  ) || [];
+  const filtered = remarks?.filter(r => {
+    if (filter === '') return true;
+    if (['open', 'closed', 'overdue'].includes(filter)) return r.status === filter;
+    if (['minor', 'major', 'critical'].includes(filter)) return r.severity === filter;
+    if (['local', 'pending', 'synced', 'failed'].includes(filter)) return r.sync_status === filter;
+    return true;
+  }) || [];
 
   const handleAddRemark = async (e) => {
     e.preventDefault();
@@ -39,54 +56,62 @@ const RemarksManager = ({ latrineId, boqCode, onBack }) => {
 
     setIsSaving(true);
     try {
+      const localUuid = uuidv4();
       const newRemark = {
+        local_uuid: localUuid,
         latrine_id: latrineId,
         boq_code: boqCode || null,
-        description: description,
+        description: description.trim(),
         severity: severity,
-        action_required: actionRequired || null,
+        action_required: actionRequired.trim() || null,
         deadline: deadline ? new Date(deadline).toISOString() : null,
         status: 'open',
-        date_logged: new Date().toISOString()
+        sync_status: 'local', // ← جديد: تمييز المحلي
+        date_logged: new Date().toISOString(),
+        closed_date: null
       };
+
+      // حفظ محلي فوري
+      await db.remarks.add(newRemark);
 
       // إضافة للـ sync queue
       await pushToSyncQueue('CREATE_REMARK', newRemark);
-
-      // حفظ محلي فوري
-      const localId = -Math.floor(Math.random() * 1000000);
-      await db.remarks.add({ ...newRemark, id: localId });
 
       // تنظيف النموذج
       setDescription('');
       setActionRequired('');
       setDeadline('');
+      setSeverity('minor');
     } catch (error) {
       console.error('Add remark error:', error);
-      alert("خطأ في حفظ الملاحظة.");
+      alert("خطأ في حفظ الملاحظة محلياً.");
     } finally {
       setIsSaving(false);
     }
   };
 
-  // ✅ إغلاق الملاحظة (offline-first مع sync)
+  // ✅ إغلاق الملاحظة — يعمل Offline وOnline
   const handleCloseRemark = async (remark) => {
     setClosingId(remark.id);
     try {
-      const updateData = {
-        id: remark.id,
+      const closedDate = new Date().toISOString();
+      
+      // تحديث محلي فوري — لا يهم إذا كان local أم synced
+      const newSyncStatus = remark.sync_status === 'synced' ? 'pending' : 'local';
+      
+      await db.remarks.update(remark.id, { 
+        status: 'closed', 
+        closed_date: closedDate,
+        sync_status: newSyncStatus
+      });
+
+      // إضافة للـ sync queue
+      await pushToSyncQueue('UPDATE_REMARK', {
+        local_uuid: remark.local_uuid,
         status: 'closed',
-        closed_date: new Date().toISOString()
-      };
+        closed_date: closedDate
+      });
 
-      // إذا كان معرفاً محلياً (سلبي)، نُنشئ remark أولاً ثم نُغلق
-      if (remark.id < 0) {
-        alert('لا يمكن إغلاق ملاحظة غير مُرسلة للخادم. قم بالمزامنة أولاً.');
-        return;
-      }
-
-      await pushToSyncQueue('UPDATE_REMARK', updateData);
-      await db.remarks.update(remark.id, { status: 'closed', closed_date: updateData.closed_date });
     } catch (error) {
       console.error('Close remark error:', error);
       alert('خطأ في إغلاق الملاحظة.');
@@ -95,7 +120,7 @@ const RemarksManager = ({ latrineId, boqCode, onBack }) => {
     }
   };
 
-  if (!latrine || !remarks) {
+  if (!latrine) {
     return <div style={{ textAlign: 'center', padding: '40px' }}>جاري التحميل...</div>;
   }
 
@@ -148,8 +173,8 @@ const RemarksManager = ({ latrineId, boqCode, onBack }) => {
         </div>
       </form>
 
-      {/* ✅ فلترة (من Remarks.js) */}
-      <div style={{ display: 'flex', gap: '12px', marginBottom: '20px', alignItems: 'center' }}>
+      {/* ✅ فلترة محسّنة */}
+      <div style={{ display: 'flex', gap: '12px', marginBottom: '20px', alignItems: 'center', flexWrap: 'wrap' }}>
         <span style={{ fontWeight: 'bold', color: '#7f8c8d' }}>فلترة:</span>
         <select value={filter} onChange={e => setFilter(e.target.value)} style={{ padding: '8px', borderRadius: '4px', border: '1px solid #ccc' }}>
           <option value="">الكل</option>
@@ -159,12 +184,16 @@ const RemarksManager = ({ latrineId, boqCode, onBack }) => {
           <option value="critical">حرجة</option>
           <option value="major">كبيرة</option>
           <option value="minor">بسيطة</option>
+          <option value="local">محلية (غير مُرسلة)</option>
+          <option value="pending">قيد الإرسال</option>
+          <option value="synced">مُزامنة</option>
+          <option value="failed">فشل الإرسال</option>
         </select>
         <span style={{ color: '#7f8c8d', fontSize: '14px' }}>{filtered.length} ملاحظة</span>
       </div>
 
-      {/* ✅ عرض شبكي محسّن (من Remarks.js) */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: '16px' }}>
+      {/* ✅ عرض شبكي محسّن مع حالة المزامنة */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))', gap: '16px' }}>
         {filtered.length === 0 ? (
           <div style={{ gridColumn: '1 / -1', padding: '40px', textAlign: 'center', color: '#666', background: 'white', borderRadius: '8px' }}>
             لا توجد ملاحظات مسجلة.
@@ -179,22 +208,37 @@ const RemarksManager = ({ latrineId, boqCode, onBack }) => {
               borderRight: `4px solid ${severityColors[r.severity]}`,
               opacity: r.status === 'closed' ? 0.7 : 1
             }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px', alignItems: 'center' }}>
+              {/* رأس البطاقة */}
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px', alignItems: 'center', flexWrap: 'wrap', gap: '5px' }}>
                 <span style={{ fontWeight: 'bold', fontSize: '14px', color: '#1F4E78' }}>
-                  {r.remark_id || `REM-${Math.abs(r.id)}`}
+                  {r.remark_id || `REM-${r.local_uuid?.slice(0, 8) || r.id}`}
                 </span>
-                <span style={{ 
-                  background: severityColors[r.severity], 
-                  color: 'white', 
-                  padding: '2px 8px', 
-                  borderRadius: '4px', 
-                  fontSize: '12px',
-                  fontWeight: 'bold'
-                }}>
-                  {r.severity}
-                </span>
+                <div style={{ display: 'flex', gap: '5px' }}>
+                  {/* شارة الخطورة */}
+                  <span style={{ 
+                    background: severityColors[r.severity], 
+                    color: 'white', 
+                    padding: '2px 8px', 
+                    borderRadius: '4px', 
+                    fontSize: '12px',
+                    fontWeight: 'bold'
+                  }}>
+                    {r.severity}
+                  </span>
+                  {/* شارة حالة المزامنة ← جديد */}
+                  <span style={{ 
+                    background: syncStatusColors[r.sync_status || 'local'], 
+                    color: 'white', 
+                    padding: '2px 8px', 
+                    borderRadius: '4px', 
+                    fontSize: '11px'
+                  }}>
+                    {syncStatusLabels[r.sync_status || 'local']}
+                  </span>
+                </div>
               </div>
               
+              {/* المحتوى */}
               <div style={{ fontSize: '13px', color: '#666', marginBottom: '8px' }}>
                 الحمام: {latrine.latrine_id} {r.boq_code ? `| البند: ${r.boq_code}` : '| عام'}
               </div>
@@ -209,16 +253,17 @@ const RemarksManager = ({ latrineId, boqCode, onBack }) => {
                 </div>
               )}
               
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '10px' }}>
+              {/* الإجراءات */}
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '10px', flexWrap: 'wrap', gap: '5px' }}>
                 <span style={{ 
-                  background: statusColors[r.status], 
+                  background: statusColors[r.status] || statusColors.local, 
                   padding: '4px 8px', 
                   borderRadius: '4px', 
                   fontSize: '12px',
                   fontWeight: 'bold',
                   color: r.status === 'open' ? '#856404' : r.status === 'overdue' ? '#721c24' : '#155724'
                 }}>
-                  {statusLabels[r.status] || r.status}
+                  {r.status === 'open' ? 'مفتوحة' : r.status === 'closed' ? 'مغلقة' : r.status}
                 </span>
                 
                 {r.status === 'open' && (
@@ -241,6 +286,7 @@ const RemarksManager = ({ latrineId, boqCode, onBack }) => {
                 )}
               </div>
               
+              {/* تواريخ */}
               {r.deadline && (
                 <div style={{ 
                   fontSize: '11px', 
@@ -256,6 +302,12 @@ const RemarksManager = ({ latrineId, boqCode, onBack }) => {
               {r.closed_date && (
                 <div style={{ fontSize: '11px', color: '#27ae60', marginTop: '8px' }}>
                   تم الإغلاق: {new Date(r.closed_date).toLocaleDateString('ar-SA')}
+                </div>
+              )}
+              
+              {r.date_logged && (
+                <div style={{ fontSize: '11px', color: '#95a5a6', marginTop: '4px' }}>
+                  تسجيل: {new Date(r.date_logged).toLocaleDateString('ar-SA')}
                 </div>
               )}
             </div>
