@@ -153,7 +153,7 @@ def update_remark(db: Session, remark_id: int, updates: schemas.RemarkUpdate):
     db.refresh(remark)
     return remark
 
-# ---------- Daily Log CRUD (جديد) ----------
+# ---------- Daily Log CRUD ----------
 def create_daily_log(db: Session, log: schemas.DailyLogCreate):
     db_log = models.DailyLog(**log.dict())
     db.add(db_log)
@@ -170,24 +170,20 @@ def get_daily_logs(db: Session, skip: int = 0, limit: int = 30, from_date: datet
     return query.order_by(models.DailyLog.date.desc()).offset(skip).limit(limit).all()
 
 def get_daily_log_stats(db: Session, target_date: datetime):
-    """حساب إحصائيات تلقائية من البيانات الموجودة"""
     start_of_day = target_date.replace(hour=0, minute=0, second=0, microsecond=0)
     end_of_day = target_date.replace(hour=23, minute=59, second=59, microsecond=999999)
     
-    # عدد البنود التي تم فحصها اليوم (لها inspection_date)
     inspected = db.query(models.BoqItem).filter(
         models.BoqItem.inspection_date >= start_of_day,
         models.BoqItem.inspection_date <= end_of_day
     ).count()
     
-    # عدد البنود المقبولة اليوم
     accepted = db.query(models.BoqItem).filter(
         models.BoqItem.quality_pass == 'pass',
         models.BoqItem.inspection_date >= start_of_day,
         models.BoqItem.inspection_date <= end_of_day
     ).count()
     
-    # عدد الملاحظات المُنشأة اليوم
     remarks = db.query(models.Remark).filter(
         models.Remark.date_logged >= start_of_day,
         models.Remark.date_logged <= end_of_day
@@ -250,134 +246,109 @@ def seed_boq_items(db: Session, latrine_id: int):
         db.add(db_item)
     db.commit()
 
-# ---------- Sync Engine Processor (مُصلَّح ومُبرهن) ----------
+# ---------- Sync Engine Processor (المُحدّث والمقاوم للأخطاء) ----------
 def process_sync_queue(db: Session, sync_req: schemas.SyncRequest) -> schemas.SyncResponse:
     processed = []
     failed = []
     errors = {}
     latrines_to_recalc = set()
 
-    # Transaction واحدة لكل batch — كل أو لا شيء
-    try:
-        for op in sync_req.operations:
-            try:
-                if op.type == "UPDATE_BOQ":
-                    item_id = op.data.get("id")
-                    if not item_id:
-                        failed.append(op.id)
-                        errors[op.id] = "Missing item id"
-                        continue
-                        
-                    item = db.query(models.BoqItem).filter(models.BoqItem.id == item_id).first()
-                    if item:
-                        for key, value in op.data.items():
-                            if hasattr(item, key) and key != "id":
-                                setattr(item, key, value)
-                        if item.planned_qty and item.planned_qty > 0:
-                            item.achievement_pct = round((item.achieved_qty / item.planned_qty) * 100, 2)
-                        item.last_update = op.timestamp
-                        latrines_to_recalc.add(item.latrine_id)
-                        processed.append(op.id)
-                    else:
-                        failed.append(op.id)
-                        errors[op.id] = "BoQ item not found"
+    for op in sync_req.operations:
+        try:
+            if op.type == "UPDATE_BOQ":
+                item_id = op.data.get("id")
+                item = db.query(models.BoqItem).filter(models.BoqItem.id == item_id).first()
+                if item:
+                    for key, value in op.data.items():
+                        if hasattr(item, key) and key != "id":
+                            setattr(item, key, value)
+                    if item.planned_qty and item.planned_qty > 0:
+                        item.achievement_pct = round((item.achieved_qty / item.planned_qty) * 100, 2)
+                    item.last_update = op.timestamp
+                    latrines_to_recalc.add(item.latrine_id)
 
-                elif op.type == "CREATE_REMARK":
-                    remark_data = op.data.copy()
-                    local_uuid = remark_data.pop('local_uuid', None)
-                    local_id = remark_data.pop('local_id', None)
-                    remark_data.pop('sync_status', None)  # ✅ إزالة — غير موجود في DB
-                    remark_data.pop('id', None)           # ✅ إزالة — id محلي من IndexedDB
-                    
-                    # التحقق من وجود latrine_id
-                    latrine_id = remark_data.get("latrine_id")
-                    if not latrine_id:
-                        failed.append(op.id)
-                        errors[op.id] = "Missing latrine_id"
-                        continue
-                    
-                    # التحقق من عدم التكرار (idempotency)
-                    if local_uuid:
-                        existing = db.query(models.Remark).filter(
-                            models.Remark.remark_id == local_uuid
-                        ).first()
-                        if existing:
-                            processed.append(op.id)
-                            continue
-                    
-                    new_remark = models.Remark(**remark_data)
-                    new_remark.date_logged = op.timestamp
-                    if local_uuid:
-                        new_remark.remark_id = local_uuid
-                    
-                    db.add(new_remark)
-                    db.flush()
-                    processed.append(op.id)
-                    latrines_to_recalc.add(latrine_id)
+            elif op.type == "CREATE_REMARK":
+                remark_data = op.data.copy()
+                local_uuid = remark_data.pop('local_uuid', None)
+                
+                # 🛡️ الحماية 1: إزالة الحقول التي ترسلها الواجهة الأمامية ولا توجد في قاعدة البيانات
+                remark_data.pop('sync_status', None)
+                remark_data.pop('id', None)
+                remark_data.pop('local_id', None)
+                
+                new_remark = models.Remark(**remark_data)
+                new_remark.date_logged = op.timestamp
+                
+                if local_uuid:
+                    # 🛡️ الحماية 2: قص الـ UUID ليتناسب مع حجم 20 حرف في قاعدة البيانات
+                    new_remark.remark_id = str(local_uuid)[:20]
+                
+                db.add(new_remark)
+                db.flush()
+                
+                processed.append(op.id)
+                latrines_to_recalc.add(op.data.get("latrine_id"))
 
-                elif op.type == "UPDATE_REMARK":
-                    local_uuid = op.data.get("local_uuid")
-                    remark = None
-                    
-                    if local_uuid:
-                        remark = db.query(models.Remark).filter(
-                            models.Remark.remark_id == local_uuid
-                        ).first()
-                    
-                    if not remark and op.data.get("id"):
+            elif op.type == "UPDATE_REMARK":
+                local_uuid = op.data.get("local_uuid")
+                remark = None
+                
+                if local_uuid:
+                    # 🛡️ الحماية 3: البحث باستخدام الـ UUID المقصوص
+                    short_uuid = str(local_uuid)[:20]
+                    remark = db.query(models.Remark).filter(
+                        models.Remark.remark_id == short_uuid
+                    ).first()
+                
+                if not remark and op.data.get("id"):
+                    # تجاهل الـ IDs السلبية (المحلية)
+                    if int(op.data.get("id")) > 0:
                         remark = db.query(models.Remark).filter(
                             models.Remark.id == op.data.get("id")
                         ).first()
-                    
-                    if remark:
-                        # تحديث فقط الحقول المسموحة
-                        allowed_fields = ['status', 'closed_date', 'description', 'action_required', 'severity', 'deadline']
-                        for key, value in op.data.items():
-                            if hasattr(remark, key) and key not in ["id", "local_uuid", "sync_status"]:
-                                setattr(remark, key, value)
-                        remark.last_update = op.timestamp
-                        processed.append(op.id)
-                    else:
-                        failed.append(op.id)
-                        errors[op.id] = "Remark not found"
+                
+                if remark:
+                    for key, value in op.data.items():
+                        # 🛡️ الحماية 4: تحديث الحقول الصالحة فقط
+                        if hasattr(remark, key) and key not in ["id", "local_uuid", "sync_status", "local_id"]:
+                            setattr(remark, key, value)
+                    remark.last_update = op.timestamp
+                    processed.append(op.id)
+                else:
+                    failed.append(op.id)
+                    errors[op.id] = "Remark not found on server"
 
-                elif op.type == "UPDATE_LATRINE":
-                    latrine_id = op.data.get("id")
-                    if not latrine_id:
-                        failed.append(op.id)
-                        errors[op.id] = "Missing latrine id"
-                        continue
-                        
-                    latrine = db.query(models.Latrine).filter(models.Latrine.id == latrine_id).first()
-                    if latrine:
-                        for key, value in op.data.items():
-                            if hasattr(latrine, key) and key != "id":
-                                setattr(latrine, key, value)
-                        latrine.last_update = op.timestamp
-                        processed.append(op.id)
-                    else:
-                        failed.append(op.id)
-                        errors[op.id] = "Latrine not found"
+            elif op.type == "UPDATE_LATRINE":
+                latrine_id = op.data.get("id")
+                latrine = db.query(models.Latrine).filter(models.Latrine.id == latrine_id).first()
+                if latrine:
+                    for key, value in op.data.items():
+                        if hasattr(latrine, key) and key != "id":
+                            setattr(latrine, key, value)
+                    latrine.last_update = op.timestamp
 
-            except Exception as e:
-                failed.append(op.id)
-                errors[op.id] = str(e)
+            elif op.type == "CREATE_DAILY_LOG":
+                log_data = op.data.copy()
+                log_data.pop('sync_status', None)
+                log_data.pop('id', None)
+                
+                new_log = models.DailyLog(**log_data)
+                if not new_log.date:
+                    new_log.date = op.timestamp
+                db.add(new_log)
 
-        # commit واحد في النهاية
-        db.commit()
-        
-        # إعادة الحساب بعد الـcommit الناجح
-        for lid in latrines_to_recalc:
-            if lid:
-                recalc_latrine_progress(db, lid)
+            db.commit()
+            if op.type not in ["UPDATE_REMARK", "CREATE_REMARK"]: 
+                processed.append(op.id)
 
-    except Exception as e:
-        db.rollback()
-        all_ids = [op.id for op in sync_req.operations]
-        failed = list(set(all_ids) - set(processed))
-        for op_id in failed:
-            if op_id not in errors:
-                errors[op_id] = f"Batch transaction failed: {str(e)}"
+        except Exception as e:
+            db.rollback()
+            failed.append(op.id)
+            errors[op.id] = str(e)
+
+    for lid in latrines_to_recalc:
+        if lid:
+            recalc_latrine_progress(db, lid)
 
     return schemas.SyncResponse(
         processed_ids=processed,
