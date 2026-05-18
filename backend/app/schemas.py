@@ -103,6 +103,32 @@ class RemarkOut(RemarkBase):
     class Config:
         from_attributes = True
 
+# ---------- Daily Log Schemas (جديد) ----------
+class DailyLogBase(BaseModel):
+    date: datetime
+    engineer: Optional[str] = None
+    latrines_inspected: Optional[int] = 0
+    latrines_accepted: Optional[int] = 0
+    remarks_issued: Optional[int] = 0
+    weather: Optional[str] = None
+    manpower: Optional[int] = 0
+    equipment: Optional[str] = None
+    notes: Optional[str] = None
+
+class DailyLogCreate(DailyLogBase):
+    pass
+
+class DailyLogOut(DailyLogBase):
+    id: int
+
+    class Config:
+        from_attributes = True
+
+class DailyLogStats(BaseModel):
+    latrines_inspected: int
+    latrines_accepted: int
+    remarks_issued: int
+
 # ---------- Dashboard Schemas ----------
 class DashboardSummary(BaseModel):
     total_latrines: int
@@ -129,6 +155,7 @@ class SyncOperation(BaseModel):
     id: str
     type: str
     timestamp: datetime
+    local_uuid: Optional[str] = None
     data: Dict[str, Any]
 
 class SyncRequest(BaseModel):
