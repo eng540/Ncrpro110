@@ -31,15 +31,25 @@ const BulkUpdate = ({ onOpenRemarks }) => {
   const [bulkQuality, setBulkQuality] = useState('pass');
   const [isSaving, setIsSaving] = useState(false);
   const [savingRowId, setSavingRowId] = useState(null);
+  const [errorMsg, setErrorMsg] = useState(null);
 
   const latrines = useLiveQuery(() => db.latrines.toArray(), []);
-  const boqItems = useLiveQuery(() => db.boq_items.where('boq_code').equals(selectedBoqCode).toArray(), [selectedBoqCode]);
+  const boqItems = useLiveQuery(() => 
+    db.boq_items.where('boq_code').equals(selectedBoqCode).toArray(), 
+  [selectedBoqCode]);
 
   useEffect(() => {
     setSelectedLatrines([]);
   }, [selectedBoqCode]);
 
-  // ✅ التنفيذ: استخدام useMemo لمنع إعادة الحساب غير الضرورية ع كل ريندر
+  useEffect(() => {
+    if (!errorMsg) return;
+    const timer = setTimeout(() => setErrorMsg(null), 4000);
+    return () => clearTimeout(timer);
+  }, [errorMsg]);
+
+  const showError = (msg) => setErrorMsg(msg);
+
   const tableData = useMemo(() => {
     if (!latrines || !boqItems) return [];
     return latrines.map(latrine => {
@@ -57,7 +67,7 @@ const BulkUpdate = ({ onOpenRemarks }) => {
     setSelectedLatrines(prev => prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id]);
   };
 
-  // ✅ التنفيذ: إزالة useCallback الغير ضروري + لف العمليات بـ Transaction
+  // ✅ يُرجع boolean + شريط خطأ بدلاً من alert
   const handleSingleUpdate = async (item, latrineId) => {
     setSavingRowId(item.id);
     try {
@@ -70,8 +80,8 @@ const BulkUpdate = ({ onOpenRemarks }) => {
       const quality = qualitySelect?.value;
 
       if (isNaN(qty) || qty < 0 || qty > item.planned_qty) {
-        alert(`الكمية غير صالحة. الحد الأقصى: ${item.planned_qty}`);
-        return;
+        showError(`الكمية غير صالحة للبند ${item.boq_code}. الحد الأقصى: ${item.planned_qty}`);
+        return false;
       }
 
       await db.transaction('rw', db.boq_items, db.sync_queue, async () => {
@@ -80,44 +90,37 @@ const BulkUpdate = ({ onOpenRemarks }) => {
           id: item.id, achieved_qty: qty, status, quality_pass: quality, latrine_id: latrineId 
         });
       });
-      // تم إزالة alert المزعج هنا لتسريع العمل
+      return true;
     } catch (error) {
       console.error('Single update error:', error);
-      alert('خطأ أثناء الحفظ المحلي.');
+      showError('خطأ أثناء الحفظ المحلي.');
+      return false;
     } finally {
       setSavingRowId(null);
     }
   };
 
+  // ✅ التحقق قبل DOM + تحديث DOM بعد نجاح المعاملة
   const handleApplyBulkUpdate = async () => {
-    if (selectedLatrines.length === 0) return alert('يرجى تحديد حمام واحد على الأقل.');
-    if (bulkQty === '' || isNaN(parseFloat(bulkQty))) return alert('يرجى إدخال الكمية المنفذة.');
+    if (selectedLatrines.length === 0) return showError('يرجى تحديد حمام واحد على الأقل.');
+    if (bulkQty === '' || isNaN(parseFloat(bulkQty))) return showError('يرجى إدخال الكمية المنفذة.');
 
     if (!window.confirm(`تطبيق التحديث على ${selectedLatrines.length} حمامات؟`)) return;
 
     setIsSaving(true);
     try {
       const qty = parseFloat(bulkQty);
-      const itemsToProcess = boqItems.filter(i => selectedLatrines.includes(i.latrine_id));
+      // ✅ التحقق المسبق من المخطط
+      const itemsToProcess = boqItems.filter(i => selectedLatrines.includes(i.latrine_id) && qty <= i.planned_qty);
+      const skippedCount = selectedLatrines.length - itemsToProcess.length;
+
+      if (!itemsToProcess.length) {
+        showError('الكمية المدخلة تتجاوز المخطط لجميع البنود المحددة.');
+        return;
+      }
 
       await db.transaction('rw', db.boq_items, db.sync_queue, async () => {
         for (const item of itemsToProcess) {
-          if (qty > item.planned_qty) {
-            console.warn(`تخطي ${item.id}: الكمية تتجاوز المخطط`);
-            continue;
-          }
-
-          const qtyInput = document.getElementById(`bulk-qty-${item.id}`);
-          const statusSelect = document.getElementById(`bulk-status-${item.id}`);
-          const qualitySelect = document.getElementById(`bulk-quality-${item.id}`);
-          
-          if (qtyInput) qtyInput.value = qty;
-          if (statusSelect) statusSelect.value = bulkStatus;
-          if (qualitySelect) {
-            qualitySelect.value = bulkQuality;
-            qualitySelect.style.backgroundColor = qualityColors[bulkQuality];
-          }
-
           await db.boq_items.update(item.id, { achieved_qty: qty, status: bulkStatus, quality_pass: bulkQuality });
           await pushToSyncQueue('UPDATE_BOQ', { 
             id: item.id, achieved_qty: qty, status: bulkStatus, quality_pass: bulkQuality, latrine_id: item.latrine_id 
@@ -125,11 +128,27 @@ const BulkUpdate = ({ onOpenRemarks }) => {
         }
       });
 
+      // ✅ تحديث DOM بعد نجاح المعاملة بالكامل
+      for (const item of itemsToProcess) {
+        const qtyInput = document.getElementById(`bulk-qty-${item.id}`);
+        const statusSelect = document.getElementById(`bulk-status-${item.id}`);
+        const qualitySelect = document.getElementById(`bulk-quality-${item.id}`);
+        if (qtyInput) qtyInput.value = qty;
+        if (statusSelect) statusSelect.value = bulkStatus;
+        if (qualitySelect) {
+          qualitySelect.value = bulkQuality;
+          qualitySelect.style.backgroundColor = qualityColors[bulkQuality];
+        }
+      }
+
+      if (skippedCount > 0) {
+        showError(`تم تخطي ${skippedCount} بند لتجاوز الكمية المخطط.`);
+      }
       setSelectedLatrines([]);
       setBulkQty('');
     } catch (error) {
       console.error('Bulk update error:', error);
-      alert('حدث خطأ أثناء التحديث الجماعي.');
+      showError('حدث خطأ أثناء التحديث الجماعي.');
     } finally {
       setIsSaving(false);
     }
@@ -142,6 +161,12 @@ const BulkUpdate = ({ onOpenRemarks }) => {
 
   return (
     <div style={{ direction: 'rtl' }}>
+      {errorMsg && (
+        <div style={{ background: '#ffebee', color: '#c62828', padding: '12px 16px', borderRadius: '6px', marginBottom: '15px', border: '1px solid #ef9a9a', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <span>⚠️</span> {errorMsg}
+        </div>
+      )}
+
       <h2 style={{ color: '#1F4E78', marginBottom: '20px' }}>إدارة البند {selectedBoqCode} جماعياً</h2>
 
       <div style={{ background: '#e8f4f8', border: '1px solid #bdc3c7', padding: '15px', borderRadius: '8px', marginBottom: '20px' }}>
@@ -181,11 +206,11 @@ const BulkUpdate = ({ onOpenRemarks }) => {
       </div>
 
       <div style={{ background: 'white', borderRadius: '8px', overflow: 'hidden', boxShadow: '0 2px 8px rgba(0,0,0,0.08)', overflowX: 'auto' }}>
-        <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: '1000px' }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: '900px' }}>
           <thead style={{ background: '#1F4E78', color: 'white' }}>
             <tr>
               <th style={{ padding: '12px', textAlign: 'center', width: '50px' }}>
-                <input type="checkbox" onChange={toggleSelectAll} checked={allSelected} />
+                <input type="checkbox" onChange={toggleSelectAll} checked={allSelected} aria-label="تحديد كل الحمامات" />
               </th>
               <th style={{ padding: '12px', textAlign: 'right' }}>الحمام والمربع</th>
               <th style={{ padding: '12px', textAlign: 'center', color: '#f1c40f', whiteSpace: 'nowrap' }}>المخطط ({targetBoqInfo?.name})</th>
@@ -202,7 +227,7 @@ const BulkUpdate = ({ onOpenRemarks }) => {
               tableData.map(row => (
                 <tr key={row.id} style={{ borderBottom: '1px solid #eee', backgroundColor: selectedLatrines.includes(row.id) ? '#f1f8ff' : 'transparent' }}>
                   <td style={{ padding: '12px', textAlign: 'center' }}>
-                    <input type="checkbox" checked={selectedLatrines.includes(row.id)} onChange={() => toggleSelect(row.id)} />
+                    <input type="checkbox" checked={selectedLatrines.includes(row.id)} onChange={() => toggleSelect(row.id)} aria-label={`تحديد حمام ${row.latrine_id}`} />
                   </td>
                   <td style={{ padding: '12px', fontWeight: 'bold', color: '#1F4E78', whiteSpace: 'nowrap' }}>
                     {row.latrine_id} <br/><small style={{color:'#7f8c8d'}}>{row.block_no}</small>
@@ -230,11 +255,12 @@ const BulkUpdate = ({ onOpenRemarks }) => {
                     <div style={{ display: 'flex', gap: '5px', justifyContent: 'center', flexDirection: 'column' }}>
                       <button 
                         onClick={() => handleSingleUpdate(row.boqItem, row.id)} disabled={savingRowId === row.boqItem.id}
+                        aria-label={`حفظ بند حمام ${row.latrine_id}`}
                         style={{ padding: '4px 8px', background: savingRowId === row.boqItem.id ? '#95a5a6' : '#3498db', color: 'white', border: 'none', borderRadius: '4px', cursor: savingRowId === row.boqItem.id ? 'not-allowed' : 'pointer', fontWeight: 'bold', fontSize: '11px' }}
                       >
                         {savingRowId === row.boqItem.id ? '...' : 'حفظ السطر'}
                       </button>
-                      <button onClick={() => onOpenRemarks?.(row.id, selectedBoqCode)} style={{ padding: '4px 8px', background: '#e74c3c', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '11px' }}>
+                      <button onClick={() => onOpenRemarks?.(row.id, selectedBoqCode)} aria-label={`ملاحظة لحمام ${row.latrine_id}`} style={{ padding: '4px 8px', background: '#e74c3c', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '11px' }}>
                         + ملاحظة
                       </button>
                     </div>
