@@ -250,7 +250,7 @@ def seed_boq_items(db: Session, latrine_id: int):
         db.add(db_item)
     db.commit()
 
-# ---------- Sync Engine Processor (مُحدّث ومصحّح) ----------
+# ---------- Sync Engine Processor (مُصلَّح ومُبرهن) ----------
 def process_sync_queue(db: Session, sync_req: schemas.SyncRequest) -> schemas.SyncResponse:
     processed = []
     failed = []
@@ -263,6 +263,11 @@ def process_sync_queue(db: Session, sync_req: schemas.SyncRequest) -> schemas.Sy
             try:
                 if op.type == "UPDATE_BOQ":
                     item_id = op.data.get("id")
+                    if not item_id:
+                        failed.append(op.id)
+                        errors[op.id] = "Missing item id"
+                        continue
+                        
                     item = db.query(models.BoqItem).filter(models.BoqItem.id == item_id).first()
                     if item:
                         for key, value in op.data.items():
@@ -281,6 +286,8 @@ def process_sync_queue(db: Session, sync_req: schemas.SyncRequest) -> schemas.Sy
                     remark_data = op.data.copy()
                     local_uuid = remark_data.pop('local_uuid', None)
                     local_id = remark_data.pop('local_id', None)
+                    remark_data.pop('sync_status', None)  # ✅ إزالة — غير موجود في DB
+                    remark_data.pop('id', None)           # ✅ إزالة — id محلي من IndexedDB
                     
                     # التحقق من وجود latrine_id
                     latrine_id = remark_data.get("latrine_id")
@@ -295,7 +302,6 @@ def process_sync_queue(db: Session, sync_req: schemas.SyncRequest) -> schemas.Sy
                             models.Remark.remark_id == local_uuid
                         ).first()
                         if existing:
-                            # Remark موجود مسبقاً — تخطي الإنشاء
                             processed.append(op.id)
                             continue
                     
@@ -305,7 +311,7 @@ def process_sync_queue(db: Session, sync_req: schemas.SyncRequest) -> schemas.Sy
                         new_remark.remark_id = local_uuid
                     
                     db.add(new_remark)
-                    db.flush()  # للحصول على ID
+                    db.flush()
                     processed.append(op.id)
                     latrines_to_recalc.add(latrine_id)
 
@@ -324,8 +330,10 @@ def process_sync_queue(db: Session, sync_req: schemas.SyncRequest) -> schemas.Sy
                         ).first()
                     
                     if remark:
+                        # تحديث فقط الحقول المسموحة
+                        allowed_fields = ['status', 'closed_date', 'description', 'action_required', 'severity', 'deadline']
                         for key, value in op.data.items():
-                            if hasattr(remark, key) and key not in ["id", "local_uuid"]:
+                            if hasattr(remark, key) and key not in ["id", "local_uuid", "sync_status"]:
                                 setattr(remark, key, value)
                         remark.last_update = op.timestamp
                         processed.append(op.id)
@@ -335,6 +343,11 @@ def process_sync_queue(db: Session, sync_req: schemas.SyncRequest) -> schemas.Sy
 
                 elif op.type == "UPDATE_LATRINE":
                     latrine_id = op.data.get("id")
+                    if not latrine_id:
+                        failed.append(op.id)
+                        errors[op.id] = "Missing latrine id"
+                        continue
+                        
                     latrine = db.query(models.Latrine).filter(models.Latrine.id == latrine_id).first()
                     if latrine:
                         for key, value in op.data.items():
@@ -349,7 +362,6 @@ def process_sync_queue(db: Session, sync_req: schemas.SyncRequest) -> schemas.Sy
             except Exception as e:
                 failed.append(op.id)
                 errors[op.id] = str(e)
-                # لا نفعل rollback هنا — نستمر لجمع كل الأخطاء
 
         # commit واحد في النهاية
         db.commit()
@@ -361,7 +373,6 @@ def process_sync_queue(db: Session, sync_req: schemas.SyncRequest) -> schemas.Sy
 
     except Exception as e:
         db.rollback()
-        # إذا فشل الـcommit الكلي، جميعهم فاشلون
         all_ids = [op.id for op in sync_req.operations]
         failed = list(set(all_ids) - set(processed))
         for op_id in failed:
