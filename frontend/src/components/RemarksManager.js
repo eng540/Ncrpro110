@@ -32,6 +32,7 @@ const RemarksManager = ({ latrineId, boqCode, onBack }) => {
   const [deadline, setDeadline] = useState('');
   const [isSaving, setIsSaving] = useState(false);
   const [closingId, setClosingId] = useState(null);
+  const [syncError, setSyncError] = useState(null);  // ← جديد: خطأ المزامنة
 
   // ✅ جلب الملاحظات من IndexedDB (offline-first)
   const remarks = useLiveQuery(() => {
@@ -55,6 +56,7 @@ const RemarksManager = ({ latrineId, boqCode, onBack }) => {
     if (!description.trim()) return;
 
     setIsSaving(true);
+    setSyncError(null);  // ← مسح الخطأ السابق
     try {
       const localUuid = uuidv4();
       const newRemark = {
@@ -84,7 +86,7 @@ const RemarksManager = ({ latrineId, boqCode, onBack }) => {
       setSeverity('minor');
     } catch (error) {
       console.error('Add remark error:', error);
-      alert("خطأ في حفظ الملاحظة محلياً.");
+      setSyncError('فشل حفظ الملاحظة محلياً: ' + error.message);  // ← عرض الخطأ
     } finally {
       setIsSaving(false);
     }
@@ -93,6 +95,7 @@ const RemarksManager = ({ latrineId, boqCode, onBack }) => {
   // ✅ إغلاق الملاحظة — يعمل Offline وOnline
   const handleCloseRemark = async (remark) => {
     setClosingId(remark.id);
+    setSyncError(null);
     try {
       const closedDate = new Date().toISOString();
       
@@ -114,7 +117,7 @@ const RemarksManager = ({ latrineId, boqCode, onBack }) => {
 
     } catch (error) {
       console.error('Close remark error:', error);
-      alert('خطأ في إغلاق الملاحظة.');
+      setSyncError('فشل إغلاق الملاحظة: ' + error.message);
     } finally {
       setClosingId(null);
     }
@@ -135,6 +138,24 @@ const RemarksManager = ({ latrineId, boqCode, onBack }) => {
           &larr; العودة
         </button>
       </div>
+
+      {/* ✅ عرض أخطاء المزامنة */}
+      {syncError && (
+        <div style={{ 
+          background: '#ffebee', 
+          color: '#c62828', 
+          padding: '12px 16px', 
+          borderRadius: '6px', 
+          marginBottom: '15px', 
+          border: '1px solid #ef9a9a', 
+          fontWeight: 'bold',
+          display: 'flex',
+          alignItems: 'center',
+          gap: '8px'
+        }}>
+          <span>⚠️</span> {syncError}
+        </div>
+      )}
 
       {/* ✅ نموذج الإنشاء المُحسّن */}
       <form onSubmit={handleAddRemark} style={{ background: '#fff9e6', padding: '20px', borderRadius: '8px', marginBottom: '20px', border: '1px solid #ffeaa7' }}>
