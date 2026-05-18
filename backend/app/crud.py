@@ -281,7 +281,7 @@ def process_sync_queue(db: Session, sync_req: schemas.SyncRequest) -> schemas.Sy
                 
                 if local_uuid:
                     # 🛡️ الحماية 2: قص الـ UUID ليتناسب مع حجم 20 حرف في قاعدة البيانات
-                    new_remark.remark_id = str(local_uuid)[:20]
+                    new_remark.remark_id = str(local_uuid)
                 
                 db.add(new_remark)
                 db.flush()
@@ -295,7 +295,7 @@ def process_sync_queue(db: Session, sync_req: schemas.SyncRequest) -> schemas.Sy
                 
                 if local_uuid:
                     # 🛡️ الحماية 3: البحث باستخدام الـ UUID المقصوص
-                    short_uuid = str(local_uuid)[:20]
+                    short_uuid = str(local_uuid)
                     remark = db.query(models.Remark).filter(
                         models.Remark.remark_id == short_uuid
                     ).first()
