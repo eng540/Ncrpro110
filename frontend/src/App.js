@@ -4,23 +4,30 @@ import LatrineList from './components/LatrineList';
 import BoqUpdater from './components/BoqUpdater';
 import RemarksManager from './components/RemarksManager';
 import BulkUpdate from './components/BulkUpdate';
-import Dashboard from './components/Dashboard'; // ✅ استيراد المكون الجديد
+import Dashboard from './components/Dashboard';
 import { db, populateLocalDB } from './db';
 
 const API_BASE_URL = process.env.REACT_APP_API_URL || '/api';
 
 function App() {
-  const [currentView, setCurrentView] = useState({ name: 'LIST', id: null, boqCode: null, previousView: 'LIST' });
+  const [currentView, setCurrentView] = useState({ 
+    name: 'LIST', 
+    latrineId: null, 
+    boqCode: null, 
+    previousView: 'LIST' 
+  });
   const [isInitializing, setIsInitializing] = useState(true);
 
   const initializeData = async () => {
     try {
       const count = await db.latrines.count();
       if (count === 0 && navigator.onLine) {
-        const latrinesRes = await fetch(`${API_BASE_URL}/latrines?limit=200`);
-        const boqRes = await fetch(`${API_BASE_URL}/boq-items`);
-        const remarksRes = await fetch(`${API_BASE_URL}/remarks`);
-        
+        const [latrinesRes, boqRes, remarksRes] = await Promise.all([
+          fetch(`${API_BASE_URL}/latrines?limit=200`),
+          fetch(`${API_BASE_URL}/boq-items`),
+          fetch(`${API_BASE_URL}/remarks`)
+        ]);
+
         if (latrinesRes.ok && boqRes.ok) {
           const latrines = await latrinesRes.json();
           const boqItems = await boqRes.json();
@@ -39,58 +46,81 @@ function App() {
     initializeData();
   }, []);
 
-  if (isInitializing) return <div style={{ padding: '50px', textAlign: 'center', direction: 'rtl' }}>جاري تهيئة النظام الميداني...</div>;
+  if (isInitializing) {
+    return (
+      <div style={{ padding: '50px', textAlign: 'center', direction: 'rtl' }}>
+        جاري تهيئة النظام الميداني...
+      </div>
+    );
+  }
+
+  const navigateTo = (viewName, params = {}) => {
+    setCurrentView(prev => ({
+      name: viewName,
+      latrineId: params.latrineId ?? prev.latrineId,
+      boqCode: params.boqCode ?? null,
+      previousView: prev.name
+    }));
+  };
+
+  const goBack = () => {
+    setCurrentView(prev => ({
+      name: prev.previousView || 'LIST',
+      latrineId: prev.latrineId,
+      boqCode: null,
+      previousView: 'LIST'
+    }));
+  };
 
   return (
     <div style={{ fontFamily: 'Tahoma, sans-serif', backgroundColor: '#f5f6fa', minHeight: '100vh', direction: 'rtl' }}>
       <SyncStatus />
-      
+
       <div style={{ background: '#1F4E78', padding: '10px 20px', display: 'flex', gap: '15px', flexWrap: 'wrap' }}>
-        <button 
-          onClick={() => setCurrentView({ name: 'LIST', id: null, boqCode: null, previousView: 'LIST' })}
-          style={{ background: currentView.name === 'LIST' || currentView.name === 'BOQ' ? 'white' : 'transparent', color: currentView.name === 'LIST' || currentView.name === 'BOQ' ? '#1F4E78' : 'white', border: 'none', padding: '8px 16px', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}
-        >
-          سجل الحمامات التفصيلي
-        </button>
-        <button 
-          onClick={() => setCurrentView({ name: 'BULK', id: null, boqCode: null, previousView: 'BULK' })}
-          style={{ background: currentView.name === 'BULK' ? 'white' : 'transparent', color: currentView.name === 'BULK' ? '#1F4E78' : 'white', border: 'none', padding: '8px 16px', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}
-        >
-          الشبكة المتقدمة
-        </button>
-        <button 
-          onClick={() => setCurrentView({ name: 'DASHBOARD', id: null, boqCode: null, previousView: 'DASHBOARD' })}
-          style={{ background: currentView.name === 'DASHBOARD' ? 'white' : 'transparent', color: currentView.name === 'DASHBOARD' ? '#1F4E78' : 'white', border: 'none', padding: '8px 16px', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}
-        >
-          📊 لوحة المؤشرات (Online)
-        </button>
+        <NavButton 
+          active={['LIST', 'BOQ', 'REMARKS'].includes(currentView.name)}
+          onClick={() => navigateTo('LIST')}
+          label="سجل الحمامات التفصيلي"
+        />
+        <NavButton 
+          active={currentView.name === 'BULK'}
+          onClick={() => navigateTo('BULK')}
+          label="الشبكة المتقدمة"
+        />
+        <NavButton 
+          active={currentView.name === 'DASHBOARD'}
+          onClick={() => navigateTo('DASHBOARD')}
+          label="📊 لوحة المؤشرات (Online)"
+        />
       </div>
 
       <div style={{ maxWidth: '1200px', margin: '0 auto', padding: '20px' }}>
         
         {currentView.name === 'LIST' && (
-          <LatrineList onSelectLatrine={(id) => setCurrentView({ name: 'BOQ', id, boqCode: null, previousView: 'LIST' })} />
+          <LatrineList 
+            onSelectLatrine={(id) => navigateTo('BOQ', { latrineId: id })} 
+          />
         )}
 
         {currentView.name === 'BOQ' && (
           <BoqUpdater 
-            latrineId={currentView.id} 
-            onBack={() => setCurrentView({ name: 'LIST', id: null, boqCode: null, previousView: 'LIST' })} 
-            onOpenRemarks={(id, boqCode) => setCurrentView({ name: 'REMARKS', id, boqCode, previousView: 'BOQ' })}
+            latrineId={currentView.latrineId} 
+            onBack={goBack}
+            onOpenRemarks={(id, boqCode) => navigateTo('REMARKS', { latrineId: id, boqCode })}
           />
         )}
 
         {currentView.name === 'REMARKS' && (
           <RemarksManager 
-            latrineId={currentView.id} 
+            latrineId={currentView.latrineId} 
             boqCode={currentView.boqCode}
-            onBack={() => setCurrentView({ name: currentView.previousView, id: currentView.id, boqCode: null, previousView: currentView.previousView })} 
+            onBack={goBack}
           />
         )}
 
         {currentView.name === 'BULK' && (
           <BulkUpdate 
-            onOpenRemarks={(id, boqCode) => setCurrentView({ name: 'REMARKS', id, boqCode, previousView: 'BULK' })}
+            onOpenRemarks={(id, boqCode) => navigateTo('REMARKS', { latrineId: id, boqCode })}
           />
         )}
 
@@ -100,6 +130,26 @@ function App() {
 
       </div>
     </div>
+  );
+}
+
+function NavButton({ active, onClick, label }) {
+  return (
+    <button 
+      onClick={onClick}
+      style={{ 
+        background: active ? 'white' : 'transparent', 
+        color: active ? '#1F4E78' : 'white', 
+        border: 'none', 
+        padding: '8px 16px', 
+        borderRadius: '4px', 
+        cursor: 'pointer', 
+        fontWeight: 'bold',
+        transition: 'all 0.2s'
+      }}
+    >
+      {label}
+    </button>
   );
 }
 
