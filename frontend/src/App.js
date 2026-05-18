@@ -5,6 +5,9 @@ import BoqUpdater from './components/BoqUpdater';
 import RemarksManager from './components/RemarksManager';
 import BulkUpdate from './components/BulkUpdate';
 import Dashboard from './components/Dashboard';
+import DailyLogForm from './components/DailyLogForm';
+import DailyLogList from './components/DailyLogList';
+import ReportsPanel from './components/ReportsPanel';
 import { db, populateLocalDB } from './db';
 
 const API_BASE_URL = process.env.REACT_APP_API_URL || '/api';
@@ -49,7 +52,9 @@ function App() {
   if (isInitializing) {
     return (
       <div style={{ padding: '50px', textAlign: 'center', direction: 'rtl' }}>
-        جاري تهيئة النظام الميداني...
+        <div style={{ fontSize: '48px', marginBottom: '20px' }}>🏗️</div>
+        <h2>جاري تهيئة النظام الميداني...</h2>
+        <p style={{ color: '#7f8c8d' }}>يرجى الانتظار أثناء تحميل البيانات</p>
       </div>
     );
   }
@@ -76,21 +81,46 @@ function App() {
     <div style={{ fontFamily: 'Tahoma, sans-serif', backgroundColor: '#f5f6fa', minHeight: '100vh', direction: 'rtl' }}>
       <SyncStatus />
 
-      <div style={{ background: '#1F4E78', padding: '10px 20px', display: 'flex', gap: '15px', flexWrap: 'wrap' }}>
+      {/* شريط التنقل المُحسّن */}
+      <div style={{ 
+        background: '#1F4E78', 
+        padding: '10px 20px', 
+        display: 'flex', 
+        gap: '10px', 
+        flexWrap: 'wrap',
+        position: 'sticky',
+        top: '50px',
+        zIndex: 999
+      }}>
         <NavButton 
           active={['LIST', 'BOQ', 'REMARKS'].includes(currentView.name)}
           onClick={() => navigateTo('LIST')}
-          label="سجل الحمامات التفصيلي"
+          label="🏗️ سجل الحمامات"
         />
         <NavButton 
           active={currentView.name === 'BULK'}
           onClick={() => navigateTo('BULK')}
-          label="الشبكة المتقدمة"
+          label="⚡ الشبكة المتقدمة"
+        />
+        <NavButton 
+          active={currentView.name === 'DAILY_LOG'}
+          onClick={() => navigateTo('DAILY_LOG')}
+          label="📝 التقرير اليومي"
+        />
+        <NavButton 
+          active={currentView.name === 'DAILY_LOG_LIST'}
+          onClick={() => navigateTo('DAILY_LOG_LIST')}
+          label="📋 سجل التقارير"
         />
         <NavButton 
           active={currentView.name === 'DASHBOARD'}
           onClick={() => navigateTo('DASHBOARD')}
-          label="📊 لوحة المؤشرات (Online)"
+          label="📊 لوحة المؤشرات"
+        />
+        <NavButton 
+          active={currentView.name === 'REPORTS'}
+          onClick={() => navigateTo('REPORTS')}
+          label="📈 التقارير"
         />
       </div>
 
@@ -124,8 +154,20 @@ function App() {
           />
         )}
 
+        {currentView.name === 'DAILY_LOG' && (
+          <DailyLogForm onSaved={() => navigateTo('DAILY_LOG_LIST')} />
+        )}
+
+        {currentView.name === 'DAILY_LOG_LIST' && (
+          <DailyLogList />
+        )}
+
         {currentView.name === 'DASHBOARD' && (
           <Dashboard />
+        )}
+
+        {currentView.name === 'REPORTS' && (
+          <ReportsPanel />
         )}
 
       </div>
@@ -145,7 +187,9 @@ function NavButton({ active, onClick, label }) {
         borderRadius: '4px', 
         cursor: 'pointer', 
         fontWeight: 'bold',
-        transition: 'all 0.2s'
+        fontSize: '14px',
+        transition: 'all 0.2s',
+        whiteSpace: 'nowrap'
       }}
     >
       {label}
