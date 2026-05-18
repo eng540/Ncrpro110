@@ -4,12 +4,12 @@ import LatrineList from './components/LatrineList';
 import BoqUpdater from './components/BoqUpdater';
 import RemarksManager from './components/RemarksManager';
 import BulkUpdate from './components/BulkUpdate';
+import Dashboard from './components/Dashboard'; // ✅ استيراد المكون الجديد
 import { db, populateLocalDB } from './db';
 
 const API_BASE_URL = process.env.REACT_APP_API_URL || '/api';
 
 function App() {
-  // إضافة previousView لمعرفة مسار العودة من شاشة الملاحظات
   const [currentView, setCurrentView] = useState({ name: 'LIST', id: null, boqCode: null, previousView: 'LIST' });
   const [isInitializing, setIsInitializing] = useState(true);
 
@@ -45,7 +45,7 @@ function App() {
     <div style={{ fontFamily: 'Tahoma, sans-serif', backgroundColor: '#f5f6fa', minHeight: '100vh', direction: 'rtl' }}>
       <SyncStatus />
       
-      <div style={{ background: '#1F4E78', padding: '10px 20px', display: 'flex', gap: '15px' }}>
+      <div style={{ background: '#1F4E78', padding: '10px 20px', display: 'flex', gap: '15px', flexWrap: 'wrap' }}>
         <button 
           onClick={() => setCurrentView({ name: 'LIST', id: null, boqCode: null, previousView: 'LIST' })}
           style={{ background: currentView.name === 'LIST' || currentView.name === 'BOQ' ? 'white' : 'transparent', color: currentView.name === 'LIST' || currentView.name === 'BOQ' ? '#1F4E78' : 'white', border: 'none', padding: '8px 16px', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}
@@ -56,7 +56,13 @@ function App() {
           onClick={() => setCurrentView({ name: 'BULK', id: null, boqCode: null, previousView: 'BULK' })}
           style={{ background: currentView.name === 'BULK' ? 'white' : 'transparent', color: currentView.name === 'BULK' ? '#1F4E78' : 'white', border: 'none', padding: '8px 16px', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}
         >
-          الشبكة المتقدمة (التحديث الجماعي والمخصص)
+          الشبكة المتقدمة
+        </button>
+        <button 
+          onClick={() => setCurrentView({ name: 'DASHBOARD', id: null, boqCode: null, previousView: 'DASHBOARD' })}
+          style={{ background: currentView.name === 'DASHBOARD' ? 'white' : 'transparent', color: currentView.name === 'DASHBOARD' ? '#1F4E78' : 'white', border: 'none', padding: '8px 16px', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}
+        >
+          📊 لوحة المؤشرات (Online)
         </button>
       </div>
 
@@ -86,6 +92,10 @@ function App() {
           <BulkUpdate 
             onOpenRemarks={(id, boqCode) => setCurrentView({ name: 'REMARKS', id, boqCode, previousView: 'BULK' })}
           />
+        )}
+
+        {currentView.name === 'DASHBOARD' && (
+          <Dashboard />
         )}
 
       </div>
