@@ -1,13 +1,17 @@
 from fastapi import FastAPI, Depends, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from sqlalchemy.orm import Session
 from typing import List, Optional
 from app import models, schemas, crud
 from app.database import engine, get_db, Base
+from app import reports
+from io import BytesIO
 import os
+from datetime import datetime
 
 # Create tables on startup
+# ملاحظة: يُفضل الاعتماد على Alembic فقط في الإنتاج
 try:
     Base.metadata.create_all(bind=engine)
     print("Database tables verified/created")
@@ -17,7 +21,7 @@ except Exception as e:
 app = FastAPI(
     title="NRC Latrine Tracker",
     description="ECHO 2525 - Al-Zohra District HH Latrines Tracking System",
-    version="1.0.0",
+    version="1.1.0",
     docs_url="/api/docs",
     redoc_url="/api/redoc",
     openapi_url="/api/openapi.json"
@@ -36,7 +40,7 @@ app.add_middleware(
 
 @app.get("/api/health")
 def health_check():
-    return {"status": "healthy", "service": "running"}
+    return {"status": "healthy", "service": "running", "version": "1.1.0"}
 
 @app.get("/api/latrines", response_model=List[schemas.LatrineOut])
 def list_latrines(skip: int = 0, limit: int = 100, status: Optional[str] = None, db: Session = Depends(get_db)):
@@ -102,6 +106,27 @@ def patch_remark(remark_id: int, updates: schemas.RemarkUpdate, db: Session = De
         raise HTTPException(status_code=404, detail="Remark not found")
     return remark
 
+# ---------- Daily Log Endpoints (جديد) ----------
+@app.post("/api/daily-logs", response_model=schemas.DailyLogOut)
+def create_daily_log(log: schemas.DailyLogCreate, db: Session = Depends(get_db)):
+    return crud.create_daily_log(db, log)
+
+@app.get("/api/daily-logs", response_model=List[schemas.DailyLogOut])
+def list_daily_logs(
+    skip: int = 0, 
+    limit: int = 30,
+    from_date: Optional[datetime] = None,
+    to_date: Optional[datetime] = None,
+    db: Session = Depends(get_db)
+):
+    return crud.get_daily_logs(db, skip=skip, limit=limit, from_date=from_date, to_date=to_date)
+
+@app.get("/api/daily-logs/stats")
+def get_daily_stats(date: Optional[datetime] = None, db: Session = Depends(get_db)):
+    target_date = date or datetime.utcnow()
+    return crud.get_daily_log_stats(db, target_date)
+
+# ---------- Dashboard ----------
 @app.get("/api/dashboard/summary", response_model=schemas.DashboardSummary)
 def dashboard_summary(db: Session = Depends(get_db)):
     return crud.get_dashboard_summary(db)
@@ -131,6 +156,47 @@ def seed_latrines(count: int = 110, db: Session = Depends(get_db)):
         crud.seed_boq_items(db, db_latrine.id)
         created.append(code)
     return {"created": len(created), "codes": created[:5]}
+
+# ---------- Reports Endpoints (جديد) ----------
+@app.get("/api/reports/summary")
+def download_summary_pdf(db: Session = Depends(get_db)):
+    try:
+        pdf_bytes = reports.generate_summary_pdf(db)
+        return StreamingResponse(
+            BytesIO(pdf_bytes),
+            media_type="application/pdf",
+            headers={"Content-Disposition": "attachment; filename=summary_ech2525.pdf"}
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to generate report: {str(e)}")
+
+@app.get("/api/reports/ipc")
+def download_ipc_excel(db: Session = Depends(get_db)):
+    try:
+        excel_bytes = reports.generate_ipc_excel(db)
+        return StreamingResponse(
+            BytesIO(excel_bytes),
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": "attachment; filename=ipc_ech2525.xlsx"}
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to generate report: {str(e)}")
+
+@app.get("/api/reports/remarks")
+def download_remarks_pdf(
+    from_date: Optional[datetime] = None,
+    to_date: Optional[datetime] = None,
+    db: Session = Depends(get_db)
+):
+    try:
+        pdf_bytes = reports.generate_remarks_pdf(db, from_date, to_date)
+        return StreamingResponse(
+            BytesIO(pdf_bytes),
+            media_type="application/pdf",
+            headers={"Content-Disposition": "attachment; filename=remarks_ech2525.pdf"}
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to generate report: {str(e)}")
 
 # ---------- Sync Engine Endpoint ----------
 @app.post("/api/sync", response_model=schemas.SyncResponse)
