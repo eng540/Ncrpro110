@@ -1,16 +1,10 @@
 import Dexie from 'dexie';
 
-// إنشاء قاعدة البيانات المحلية باسم المشروع
-export const db = new Dexie('NRCLatrineTrackerDB');
+// تغيير اسم قاعدة البيانات لضمان مسح أي آثار قديمة تسبب تعارض (Nuclear Option)
+export const db = new Dexie('NRCLatrineTrackerDB_v3');
 
-// تعريف المخطط (Schema) للجداول المحلية - الإصدار 2
-// ++id يعني Auto-increment محلي
-// الإضافات:
-// - remarks: إضافة local_uuid, sync_status
-// - daily_logs: جديد
-// - sync_queue: إضافة local_uuid
-
-db.version(2).stores({
+// تعريف المخطط (Schema) - إصدار 1 (لأننا غيرنا اسم القاعدة)
+db.version(1).stores({
   latrines: 'id, latrine_id, status, site_engineer',
   boq_items: 'id, latrine_id, boq_code, category, status, quality_pass',
   remarks: '++id, local_uuid, latrine_id, boq_code, status, severity, sync_status',
@@ -20,24 +14,32 @@ db.version(2).stores({
 
 // دوال مساعدة لتفريغ وبناء قاعدة البيانات عند أول تحميل (Initial Load)
 export const populateLocalDB = async (latrines, boqItems, remarks) => {
-  await db.transaction('rw', db.latrines, db.boq_items, db.remarks, async () => {
-    await db.latrines.clear();
-    await db.boq_items.clear();
-    await db.remarks.clear();
-    
-    if (latrines?.length) await db.latrines.bulkAdd(latrines);
-    if (boqItems?.length) await db.boq_items.bulkAdd(boqItems);
-    if (remarks?.length) {
-      // إضافة sync_status للبيانات القادمة من الخادم
-      const remarksWithSync = remarks.map(r => ({...r, sync_status: 'synced'}));
-      await db.remarks.bulkAdd(remarksWithSync);
-    }
-  });
+  try {
+    await db.transaction('rw', db.latrines, db.boq_items, db.remarks, async () => {
+      await db.latrines.clear();
+      await db.boq_items.clear();
+      await db.remarks.clear();
+      
+      if (latrines && latrines.length > 0) await db.latrines.bulkAdd(latrines);
+      if (boqItems && boqItems.length > 0) await db.boq_items.bulkAdd(boqItems);
+      if (remarks && remarks.length > 0) {
+        // إضافة sync_status للبيانات القادمة من الخادم
+        const remarksWithSync = remarks.map(r => ({...r, sync_status: 'synced'}));
+        await db.remarks.bulkAdd(remarksWithSync);
+      }
+    });
+  } catch (error) {
+    console.error("فشل في تعبئة قاعدة البيانات المحلية:", error);
+  }
 };
 
 // دالة مساعدة لتحديث حالة المزامنة
 export const updateRemarkSyncStatus = async (localUuid, status) => {
-  await db.remarks.where('local_uuid').equals(localUuid).modify({ sync_status: status });
+  try {
+    await db.remarks.where('local_uuid').equals(localUuid).modify({ sync_status: status });
+  } catch (error) {
+    console.error("فشل تحديث حالة المزامنة:", error);
+  }
 };
 
 // دالة مساعدة لجلب الملاحظات حسب حالة المزامنة
