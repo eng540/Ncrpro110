@@ -56,9 +56,8 @@ export const syncWithServer = async () => {
 
     const result = await response.json();
 
-    // معالجة العمليات الناجحة
+    // حذف العمليات الناجحة فقط من الطابور
     if (result.processed_ids && result.processed_ids.length > 0) {
-      // حذف العمليات المُعالجة من الطابور
       await db.sync_queue.bulkDelete(result.processed_ids);
       
       // تحديث sync_status للملاحظات المُرسلة
@@ -71,7 +70,7 @@ export const syncWithServer = async () => {
       }
     }
 
-    // معالجة العمليات الفاشلة
+    // العمليات الفاشلة — تحديث حالتها إلى failed
     if (result.failed_ids && result.failed_ids.length > 0) {
       for (const failedId of result.failed_ids) {
         const failedOp = queue.find(q => q.id === failedId);
@@ -87,19 +86,13 @@ export const syncWithServer = async () => {
       status: 'success', 
       processed: result.processed_ids?.length || 0,
       failed: result.failed_ids?.length || 0,
-      errors: result.errors 
+      errors: result.errors || {}
     };
 
   } catch (error) {
     console.error('فشل المزامنة:', error);
-    // تحديث حالة الفشل للعمليات المعلقة
-    for (const op of queue) {
-      if (op.local_uuid) {
-        await db.remarks.where('local_uuid').equals(op.local_uuid).modify({ 
-          sync_status: 'failed' 
-        });
-      }
-    }
+    // لا تُغيّر حالة queue — ستُعاد المحاولة لاحقاً
+    // لا تُغيّر sync_status — تبقى pending
     throw error;
   }
 };
