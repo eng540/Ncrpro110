@@ -67,7 +67,6 @@ const BulkUpdate = ({ onOpenRemarks }) => {
     setSelectedLatrines(prev => prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id]);
   };
 
-  // ✅ يُرجع boolean + شريط خطأ بدلاً من alert
   const handleSingleUpdate = async (item, latrineId) => {
     setSavingRowId(item.id);
     try {
@@ -100,7 +99,6 @@ const BulkUpdate = ({ onOpenRemarks }) => {
     }
   };
 
-  // ✅ التحقق قبل DOM + تحديث DOM بعد نجاح المعاملة
   const handleApplyBulkUpdate = async () => {
     if (selectedLatrines.length === 0) return showError('يرجى تحديد حمام واحد على الأقل.');
     if (bulkQty === '' || isNaN(parseFloat(bulkQty))) return showError('يرجى إدخال الكمية المنفذة.');
@@ -110,7 +108,6 @@ const BulkUpdate = ({ onOpenRemarks }) => {
     setIsSaving(true);
     try {
       const qty = parseFloat(bulkQty);
-      // ✅ التحقق المسبق من المخطط
       const itemsToProcess = boqItems.filter(i => selectedLatrines.includes(i.latrine_id) && qty <= i.planned_qty);
       const skippedCount = selectedLatrines.length - itemsToProcess.length;
 
@@ -128,7 +125,6 @@ const BulkUpdate = ({ onOpenRemarks }) => {
         }
       });
 
-      // ✅ تحديث DOM بعد نجاح المعاملة بالكامل
       for (const item of itemsToProcess) {
         const qtyInput = document.getElementById(`bulk-qty-${item.id}`);
         const statusSelect = document.getElementById(`bulk-status-${item.id}`);
@@ -206,7 +202,7 @@ const BulkUpdate = ({ onOpenRemarks }) => {
       </div>
 
       <div style={{ background: 'white', borderRadius: '8px', overflow: 'hidden', boxShadow: '0 2px 8px rgba(0,0,0,0.08)', overflowX: 'auto' }}>
-        <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: '900px' }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: '1000px' }}>
           <thead style={{ background: '#1F4E78', color: 'white' }}>
             <tr>
               <th style={{ padding: '12px', textAlign: 'center', width: '50px' }}>
