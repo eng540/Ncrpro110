@@ -1,94 +1,126 @@
 import React, { useState, useEffect } from 'react';
+import { useLiveQuery } from 'dexie-react-hooks';
+import { db } from '../db';
+import { syncWithServer } from '../syncEngine';
 
-const cardStyle = (color) => ({ background: color, color: 'white', borderRadius: '8px', padding: '20px', flex: '1', minWidth: '200px' });
-const labelStyle = { fontSize: '12px', opacity: 0.9, marginBottom: '8px' };
-const valueStyle = { fontSize: '28px', fontWeight: 'bold', margin: 0 };
+const API_BASE_URL = process.env.REACT_APP_API_URL || '/api';
 
-function Dashboard({ apiUrl }) {
-  const [summary, setSummary] = useState(null);
-  const [categories, setCategories] = useState([]);
-  const [loading, setLoading] = useState(true);
+const Dashboard = () => {
+  const [stats, setStats] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+  const [isSyncing, setIsSyncing] = useState(false);
 
-  useEffect(() => {
-    Promise.all([
-      fetch(`${apiUrl}/dashboard/summary`).then(r => r.json()),
-      fetch(`${apiUrl}/dashboard/categories`).then(r => r.json())
-    ])
-    .then(([sum, cats]) => {
-      setSummary(sum);
-      setCategories(cats);
+  const pendingCount = useLiveQuery(() => db.sync_queue.count(), []) || 0;
+  const isOnline = navigator.onLine;
+
+  const fetchDashboardData = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const response = await fetch(`${API_BASE_URL}/dashboard/summary`);
+      if (!response.ok) throw new Error('فشل جلب البيانات من الخادم');
+      const data = await response.json();
+      setStats(data);
+    } catch (err) {
+      setError('تعذر الاتصال بالخادم. تأكد من جودة اتصالك بالإنترنت.');
+    } finally {
       setLoading(false);
-    })
-    .catch(() => setLoading(false));
-  }, [apiUrl]);
+    }
+  };
 
-  if (loading) return <div style={{textAlign:'center',padding:'40px'}}>جاري التحميل...</div>;
-  if (!summary) return <div style={{textAlign:'center',padding:'40px',color:'#C00000'}}>تعذر الاتصال بالخادم</div>;
+  // جلب البيانات فقط إذا كان متصلاً ولا توجد بيانات معلقة
+  useEffect(() => {
+    if (isOnline && pendingCount === 0) {
+      fetchDashboardData();
+    }
+  }, [isOnline, pendingCount]);
 
+  const handleForceSync = async () => {
+    setIsSyncing(true);
+    try {
+      await syncWithServer();
+      // سيتم تشغيل useEffect تلقائياً لأن pendingCount سيصبح 0
+    } catch (err) {
+      alert("فشلت المزامنة: " + err.message);
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
+  // --- حالات المنع (Blocking UI) ---
+  
+  if (!isOnline) {
+    return (
+      <div style={{ textAlign: 'center', padding: '50px', background: 'white', borderRadius: '8px', boxShadow: '0 2px 4px rgba(0,0,0,0.1)' }}>
+        <h2 style={{ color: '#e74c3c' }}>لا يوجد اتصال بالإنترنت</h2>
+        <p>لوحة المؤشرات الحية تتطلب اتصالاً بالخادم المركزي لعرض الإحصائيات الدقيقة للمشروع.</p>
+        <p>يرجى الاتصال بالشبكة والمحاولة مجدداً.</p>
+      </div>
+    );
+  }
+
+  if (pendingCount > 0) {
+    return (
+      <div style={{ textAlign: 'center', padding: '50px', background: '#fff3cd', border: '1px solid #ffe69c', borderRadius: '8px', boxShadow: '0 2px 4px rgba(0,0,0,0.1)' }}>
+        <h2 style={{ color: '#bb992f' }}>بيانات غير متزامنة</h2>
+        <p>لديك <strong>{pendingCount}</strong> عمليات إدخال مسجلة محلياً لم يتم إرسالها للخادم.</p>
+        <p>لضمان دقة الإحصائيات، يرجى إرسال بياناتك أولاً.</p>
+        <button 
+          onClick={handleForceSync} disabled={isSyncing}
+          style={{ padding: '10px 20px', background: '#27ae60', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold', marginTop: '15px' }}
+        >
+          {isSyncing ? 'جاري المزامنة...' : 'مزامنة البيانات الآن لعرض الإحصائيات'}
+        </button>
+      </div>
+    );
+  }
+
+  if (loading) return <div style={{ textAlign: 'center', padding: '40px' }}>جاري جلب إحصائيات المشروع الحية من الخادم...</div>;
+  if (error) return <div style={{ textAlign: 'center', padding: '40px', color: '#c0392b', fontWeight: 'bold' }}>{error}</div>;
+  if (!stats) return null;
+
+  // --- عرض البيانات (The Dashboard UI) ---
   return (
-    <div>
-      <h2 style={{color:'#1F4E78',marginBottom:'20px'}}>ملخص المشروع التنفيذي</h2>
-
-      <div style={{display:'flex',gap:'16px',flexWrap:'wrap',marginBottom:'24px'}}>
-        <div style={cardStyle('#1F4E78')}>
-          <div style={labelStyle}>إجمالي الحمامات</div>
-          <div style={valueStyle}>{summary.total_latrines}</div>
+    <div style={{ direction: 'rtl' }}>
+      <h2 style={{ color: '#1F4E78', marginBottom: '20px' }}>لوحة المؤشرات المباشرة (Live Dashboard)</h2>
+      
+      {/* البطاقات العلوية */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '15px', marginBottom: '20px' }}>
+        <div style={{ background: 'white', padding: '20px', borderRadius: '8px', boxShadow: '0 2px 4px rgba(0,0,0,0.05)', borderBottom: '4px solid #3498db' }}>
+          <h4 style={{ margin: '0 0 10px 0', color: '#7f8c8d' }}>إجمالي الحمامات</h4>
+          <h2 style={{ margin: 0, fontSize: '2rem', color: '#2c3e50' }}>{stats.total_latrines}</h2>
         </div>
-        <div style={cardStyle('#70AD47')}>
-          <div style={labelStyle}>مكتملة</div>
-          <div style={valueStyle}>{summary.completed}</div>
+        <div style={{ background: 'white', padding: '20px', borderRadius: '8px', boxShadow: '0 2px 4px rgba(0,0,0,0.05)', borderBottom: '4px solid #2ecc71' }}>
+          <h4 style={{ margin: '0 0 10px 0', color: '#7f8c8d' }}>الحمامات المكتملة</h4>
+          <h2 style={{ margin: 0, fontSize: '2rem', color: '#27ae60' }}>{stats.completed}</h2>
         </div>
-        <div style={cardStyle('#FFC000')}>
-          <div style={labelStyle}>جاري العمل</div>
-          <div style={valueStyle}>{summary.in_progress}</div>
+        <div style={{ background: 'white', padding: '20px', borderRadius: '8px', boxShadow: '0 2px 4px rgba(0,0,0,0.05)', borderBottom: '4px solid #f1c40f' }}>
+          <h4 style={{ margin: '0 0 10px 0', color: '#7f8c8d' }}>قيد الإنجاز</h4>
+          <h2 style={{ margin: 0, fontSize: '2rem', color: '#f39c12' }}>{stats.in_progress}</h2>
         </div>
-        <div style={cardStyle('#C55A11')}>
-          <div style={labelStyle}>لم تبدأ</div>
-          <div style={valueStyle}>{summary.not_started}</div>
-        </div>
-        <div style={cardStyle('#4472C4')}>
-          <div style={labelStyle}>نسبة الإنجاز الكلية</div>
-          <div style={valueStyle}>{summary.overall_progress_pct}%</div>
+        <div style={{ background: 'white', padding: '20px', borderRadius: '8px', boxShadow: '0 2px 4px rgba(0,0,0,0.05)', borderBottom: '4px solid #e74c3c' }}>
+          <h4 style={{ margin: '0 0 10px 0', color: '#7f8c8d' }}>ملاحظات مفتوحة</h4>
+          <h2 style={{ margin: 0, fontSize: '2rem', color: '#c0392b' }}>{stats.open_remarks}</h2>
         </div>
       </div>
 
-      <div style={{display:'flex',gap:'16px',flexWrap:'wrap',marginBottom:'24px'}}>
-        <div style={{...cardStyle('#C6EFCE'), color:'#1F4E78', border:'1px solid #70AD47'}}>
-          <div style={{...labelStyle,color:'#333'}}>بنود مقبولة (Pass)</div>
-          <div style={{...valueStyle,color:'#1F4E78'}}>{summary.accepted_items}</div>
+      {/* شريط الإنجاز الكلي للمشروع */}
+      <div style={{ background: 'white', padding: '25px', borderRadius: '8px', boxShadow: '0 2px 4px rgba(0,0,0,0.05)' }}>
+        <h3 style={{ margin: '0 0 15px 0', color: '#2c3e50' }}>نسبة الإنجاز المالية للمشروع (Earned Value)</h3>
+        <div style={{ width: '100%', background: '#ecf0f1', borderRadius: '10px', height: '30px', overflow: 'hidden', position: 'relative' }}>
+          <div style={{ width: `${stats.overall_progress_pct}%`, background: '#27ae60', height: '100%', transition: 'width 1s ease-in-out' }}></div>
+          <span style={{ position: 'absolute', top: '5px', right: '15px', color: stats.overall_progress_pct > 10 ? 'white' : '#2c3e50', fontWeight: 'bold' }}>
+            {stats.overall_progress_pct}%
+          </span>
         </div>
-        <div style={{...cardStyle('#FFC7CE'), color:'#C00000', border:'1px solid #C00000'}}>
-          <div style={{...labelStyle,color:'#333'}}>بنود مرفوضة (Fail)</div>
-          <div style={{...valueStyle,color:'#C00000'}}>{summary.rejected_items}</div>
+        <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '15px', color: '#7f8c8d', fontSize: '14px' }}>
+          <span>البنود المقبولة: {stats.accepted_items}</span>
+          <span>البنود المرفوضة: {stats.rejected_items}</span>
         </div>
-        <div style={{...cardStyle('#FFEB9C'), color:'#333', border:'1px solid #FFC000'}}>
-          <div style={{...labelStyle,color:'#333'}}>ملاحظات مفتوحة</div>
-          <div style={{...valueStyle,color:'#333'}}>{summary.open_remarks}</div>
-        </div>
-      </div>
-
-      <div style={{background:'white',borderRadius:'8px',padding:'20px',boxShadow:'0 2px 8px rgba(0,0,0,0.08)'}}>
-        <h3 style={{color:'#1F4E78',marginTop:0}}>تقدم الأعمال حسب الفئة</h3>
-        {categories.map(cat => (
-          <div key={cat.category} style={{marginBottom:'12px'}}>
-            <div style={{display:'flex',justifyContent:'space-between',marginBottom:'4px'}}>
-              <span style={{fontWeight:'bold'}}>{cat.category}</span>
-              <span>{cat.avg_achievement_pct}%</span>
-            </div>
-            <div style={{background:'#e0e0e0',borderRadius:'4px',height:'20px',overflow:'hidden'}}>
-              <div style={{
-                width: `${cat.avg_achievement_pct}%`,
-                background: cat.avg_achievement_pct >= 80 ? '#70AD47' : cat.avg_achievement_pct >= 40 ? '#FFC000' : '#C00000',
-                height: '100%',
-                borderRadius: '4px',
-                transition: 'width 0.5s'
-              }} />
-            </div>
-          </div>
-        ))}
       </div>
     </div>
   );
-}
+};
 
 export default Dashboard;
