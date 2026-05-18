@@ -2,7 +2,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func
 from typing import List
 from app import models, schemas
-from datetime import datetime
+from datetime import datetime, timedelta
 
 def get_latrine(db: Session, latrine_id: int):
     return db.query(models.Latrine).filter(models.Latrine.id == latrine_id).first()
@@ -153,6 +153,53 @@ def update_remark(db: Session, remark_id: int, updates: schemas.RemarkUpdate):
     db.refresh(remark)
     return remark
 
+# ---------- Daily Log CRUD (جديد) ----------
+def create_daily_log(db: Session, log: schemas.DailyLogCreate):
+    db_log = models.DailyLog(**log.dict())
+    db.add(db_log)
+    db.commit()
+    db.refresh(db_log)
+    return db_log
+
+def get_daily_logs(db: Session, skip: int = 0, limit: int = 30, from_date: datetime = None, to_date: datetime = None):
+    query = db.query(models.DailyLog)
+    if from_date:
+        query = query.filter(models.DailyLog.date >= from_date)
+    if to_date:
+        query = query.filter(models.DailyLog.date <= to_date)
+    return query.order_by(models.DailyLog.date.desc()).offset(skip).limit(limit).all()
+
+def get_daily_log_stats(db: Session, target_date: datetime):
+    """حساب إحصائيات تلقائية من البيانات الموجودة"""
+    start_of_day = target_date.replace(hour=0, minute=0, second=0, microsecond=0)
+    end_of_day = target_date.replace(hour=23, minute=59, second=59, microsecond=999999)
+    
+    # عدد البنود التي تم فحصها اليوم (لها inspection_date)
+    inspected = db.query(models.BoqItem).filter(
+        models.BoqItem.inspection_date >= start_of_day,
+        models.BoqItem.inspection_date <= end_of_day
+    ).count()
+    
+    # عدد البنود المقبولة اليوم
+    accepted = db.query(models.BoqItem).filter(
+        models.BoqItem.quality_pass == 'pass',
+        models.BoqItem.inspection_date >= start_of_day,
+        models.BoqItem.inspection_date <= end_of_day
+    ).count()
+    
+    # عدد الملاحظات المُنشأة اليوم
+    remarks = db.query(models.Remark).filter(
+        models.Remark.date_logged >= start_of_day,
+        models.Remark.date_logged <= end_of_day
+    ).count()
+    
+    return schemas.DailyLogStats(
+        latrines_inspected=inspected,
+        latrines_accepted=accepted,
+        remarks_issued=remarks
+    )
+
+# ---------- Dashboard ----------
 def get_dashboard_summary(db: Session):
     total = db.query(models.Latrine).count()
     completed = db.query(models.Latrine).filter(models.Latrine.status == 'completed').count()
@@ -203,7 +250,7 @@ def seed_boq_items(db: Session, latrine_id: int):
         db.add(db_item)
     db.commit()
 
-# ---------- Sync Engine Processor ----------
+# ---------- Sync Engine Processor (مُحدّث) ----------
 def process_sync_queue(db: Session, sync_req: schemas.SyncRequest) -> schemas.SyncResponse:
     processed = []
     failed = []
@@ -225,19 +272,46 @@ def process_sync_queue(db: Session, sync_req: schemas.SyncRequest) -> schemas.Sy
                     latrines_to_recalc.add(item.latrine_id)
 
             elif op.type == "CREATE_REMARK":
-                new_remark = models.Remark(**op.data)
+                # إنشاء Remark جديد
+                remark_data = op.data.copy()
+                local_uuid = remark_data.pop('local_uuid', None)
+                local_id = remark_data.pop('local_id', None)
+                
+                new_remark = models.Remark(**remark_data)
                 new_remark.date_logged = op.timestamp
+                if local_uuid:
+                    new_remark.remark_id = local_uuid  # حفظ local_uuid للربط
+                
                 db.add(new_remark)
+                db.flush()  # للحصول على ID
+                
+                processed.append(op.id)
                 latrines_to_recalc.add(op.data.get("latrine_id"))
 
             elif op.type == "UPDATE_REMARK":
-                remark_id = op.data.get("id")
-                remark = db.query(models.Remark).filter(models.Remark.id == remark_id).first()
+                # البحث بـ local_uuid أولاً، ثم بـ id
+                local_uuid = op.data.get("local_uuid")
+                remark = None
+                
+                if local_uuid:
+                    remark = db.query(models.Remark).filter(
+                        models.Remark.remark_id == local_uuid
+                    ).first()
+                
+                if not remark and op.data.get("id"):
+                    remark = db.query(models.Remark).filter(
+                        models.Remark.id == op.data.get("id")
+                    ).first()
+                
                 if remark:
                     for key, value in op.data.items():
-                        if hasattr(remark, key) and key != "id":
+                        if hasattr(remark, key) and key not in ["id", "local_uuid"]:
                             setattr(remark, key, value)
                     remark.last_update = op.timestamp
+                    processed.append(op.id)
+                else:
+                    failed.append(op.id)
+                    errors[op.id] = "Remark not found"
 
             elif op.type == "UPDATE_LATRINE":
                 latrine_id = op.data.get("id")
@@ -249,7 +323,8 @@ def process_sync_queue(db: Session, sync_req: schemas.SyncRequest) -> schemas.Sy
                     latrine.last_update = op.timestamp
 
             db.commit()
-            processed.append(op.id)
+            if op.type != "UPDATE_REMARK":  # UPDATE_REMARK يُعالج أعلاه
+                processed.append(op.id)
 
         except Exception as e:
             db.rollback()
