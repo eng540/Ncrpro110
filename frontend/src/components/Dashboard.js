@@ -1,35 +1,50 @@
 import React, { useState, useEffect } from 'react';
-import { useLiveQuery } from 'dexie-react-hooks';
-import { db } from '../db';
-import { syncWithServer, getPendingSyncCount } from '../syncEngine';
+import { getPendingSyncCount, syncWithServer } from '../syncEngine';
 
 const API_BASE_URL = process.env.REACT_APP_API_URL || '/api';
 
-const cardStyle = (color) => ({ 
-  background: color, 
-  color: 'white', 
-  borderRadius: '8px', 
-  padding: '20px', 
-  flex: '1', 
-  minWidth: '180px',
-  boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
-});
+// تم تحويل البطاقات لتكون تفاعلية (Clickable)
+const Card = ({ bgColor, title, value, onClick, textColor = 'white', borderColor = 'transparent' }) => (
+  <div 
+    onClick={onClick}
+    style={{ 
+      background: bgColor, 
+      color: textColor, 
+      border: `1px solid ${borderColor}`,
+      borderRadius: '8px', 
+      padding: '20px', 
+      flex: '1', 
+      minWidth: '180px',
+      boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
+      cursor: onClick ? 'pointer' : 'default',
+      transition: 'transform 0.2s, box-shadow 0.2s',
+      position: 'relative',
+      overflow: 'hidden'
+    }}
+    onMouseOver={(e) => {
+      if (onClick) {
+        e.currentTarget.style.transform = 'translateY(-3px)';
+        e.currentTarget.style.boxShadow = '0 4px 8px rgba(0,0,0,0.15)';
+      }
+    }}
+    onMouseOut={(e) => {
+      if (onClick) {
+        e.currentTarget.style.transform = 'translateY(0)';
+        e.currentTarget.style.boxShadow = '0 2px 4px rgba(0,0,0,0.1)';
+      }
+    }}
+  >
+    <div style={{ fontSize: '13px', opacity: 0.9, marginBottom: '8px', fontWeight: 'bold' }}>{title}</div>
+    <div style={{ fontSize: '28px', fontWeight: 'bold', margin: 0 }}>{value}</div>
+    {onClick && (
+      <div style={{ position: 'absolute', bottom: '10px', left: '15px', fontSize: '12px', opacity: 0.7 }}>
+        عرض التفاصيل ⇱
+      </div>
+    )}
+  </div>
+);
 
-const labelStyle = { fontSize: '12px', opacity: 0.9, marginBottom: '8px', fontWeight: 'bold' };
-const valueStyle = { fontSize: '28px', fontWeight: 'bold', margin: 0 };
-
-const infoCardStyle = (bgColor, textColor, borderColor) => ({
-  background: bgColor,
-  color: textColor,
-  border: `1px solid ${borderColor}`,
-  borderRadius: '8px',
-  padding: '20px',
-  flex: '1',
-  minWidth: '180px',
-  boxShadow: '0 2px 4px rgba(0,0,0,0.05)'
-});
-
-const Dashboard = () => {
+const Dashboard = ({ navigateTo }) => {
   const [summary, setSummary] = useState(null);
   const [categories, setCategories] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -39,14 +54,12 @@ const Dashboard = () => {
 
   const isOnline = navigator.onLine;
 
-  // ✅ استخدام getPendingSyncCount بدلاً من useLiveQuery المباشر
   useEffect(() => {
     const checkPending = async () => {
       const count = await getPendingSyncCount();
       setPendingCount(count);
     };
     checkPending();
-    // تحديث كل 5 ثوانٍ
     const interval = setInterval(checkPending, 5000);
     return () => clearInterval(interval);
   }, []);
@@ -86,11 +99,10 @@ const Dashboard = () => {
     setIsSyncing(true);
     try {
       const result = await syncWithServer();
-      // تحديث العدد بعد المزامنة
       const newCount = await getPendingSyncCount();
       setPendingCount(newCount);
       if (result.failed > 0) {
-        alert(`تم مزامنة ${result.processed} عملية، لكن ${result.failed} فشلت. تحقق من Console.`);
+        alert(`تم مزامنة ${result.processed} عملية، لكن ${result.failed} فشلت. تحقق من الملاحظات.`);
       }
     } catch (err) {
       console.error('Sync error:', err);
@@ -100,14 +112,11 @@ const Dashboard = () => {
     }
   };
 
-  // --- حالات المنع (Blocking UI) ---
-  
   if (!isOnline) {
     return (
       <div style={{ textAlign: 'center', padding: '50px', background: 'white', borderRadius: '8px', boxShadow: '0 2px 4px rgba(0,0,0,0.1)' }}>
         <h2 style={{ color: '#e74c3c' }}>لا يوجد اتصال بالإنترنت</h2>
         <p>لوحة المؤشرات الحية تتطلب اتصالاً بالخادم المركزي لعرض الإحصائيات الدقيقة للمشروع.</p>
-        <p>يرجى الاتصال بالشبكة والمحاولة مجدداً.</p>
       </div>
     );
   }
@@ -117,7 +126,6 @@ const Dashboard = () => {
       <div style={{ textAlign: 'center', padding: '50px', background: '#fff3cd', border: '1px solid #ffe69c', borderRadius: '8px', boxShadow: '0 2px 4px rgba(0,0,0,0.1)' }}>
         <h2 style={{ color: '#bb992f' }}>بيانات غير متزامنة</h2>
         <p>لديك <strong>{pendingCount}</strong> عمليات إدخال مسجلة محلياً لم يتم إرسالها للخادم.</p>
-        <p>لضمان دقة الإحصائيات، يرجى إرسال بياناتك أولاً.</p>
         <button 
           onClick={handleForceSync} disabled={isSyncing}
           style={{ padding: '10px 20px', background: '#27ae60', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold', marginTop: '15px' }}
@@ -132,53 +140,55 @@ const Dashboard = () => {
   if (error) return <div style={{ textAlign: 'center', padding: '40px', color: '#c0392b', fontWeight: 'bold' }}>{error}</div>;
   if (!summary) return null;
 
-  // --- عرض البيانات ---
   return (
     <div style={{ direction: 'rtl' }}>
       <h2 style={{ color: '#1F4E78', marginBottom: '20px' }}>ملخص المشروع التنفيذي (Live Dashboard)</h2>
       
-      {/* البطاقات العلوية */}
+      {/* البطاقات العلوية - قابلة للنقر وتوجه لقائمة الحمامات */}
       <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap', marginBottom: '24px' }}>
-        <div style={cardStyle('#1F4E78')}>
-          <div style={labelStyle}>إجمالي الحمامات</div>
-          <div style={valueStyle}>{summary.total_latrines}</div>
-        </div>
-        <div style={cardStyle('#70AD47')}>
-          <div style={labelStyle}>مكتملة</div>
-          <div style={valueStyle}>{summary.completed}</div>
-        </div>
-        <div style={cardStyle('#FFC000')}>
-          <div style={labelStyle}>جاري العمل</div>
-          <div style={valueStyle}>{summary.in_progress}</div>
-        </div>
-        <div style={cardStyle('#C55A11')}>
-          <div style={labelStyle}>لم تبدأ</div>
-          <div style={valueStyle}>{summary.not_started}</div>
-        </div>
-        <div style={cardStyle('#4472C4')}>
-          <div style={labelStyle}>نسبة الإنجاز الكلية</div>
-          <div style={valueStyle}>{summary.overall_progress_pct}%</div>
-        </div>
+        <Card 
+          bgColor="#1F4E78" title="إجمالي الحمامات" value={summary.total_latrines} 
+          onClick={() => navigateTo('LIST', { filterStatus: '' })} 
+        />
+        <Card 
+          bgColor="#70AD47" title="مكتملة" value={summary.completed} 
+          onClick={() => navigateTo('LIST', { filterStatus: 'completed' })} 
+        />
+        <Card 
+          bgColor="#FFC000" title="جاري العمل" value={summary.in_progress} 
+          onClick={() => navigateTo('LIST', { filterStatus: 'in_progress' })} 
+        />
+        <Card 
+          bgColor="#C55A11" title="لم تبدأ" value={summary.not_started} 
+          onClick={() => navigateTo('LIST', { filterStatus: 'not_started' })} 
+        />
+        <Card 
+          bgColor="#4472C4" title="نسبة الإنجاز الكلية" value={`${summary.overall_progress_pct}%`} 
+          // نسبة الإنجاز لا تحتاج لنقر لأنها تخص المشروع ككل
+        />
       </div>
 
-      {/* بطاقات البنود والملاحظات */}
+      {/* بطاقات الجودة والملاحظات - قابلة للنقر */}
       <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap', marginBottom: '24px' }}>
-        <div style={infoCardStyle('#C6EFCE', '#1F4E78', '#70AD47')}>
-          <div style={{...labelStyle, color: '#333'}}>بنود مقبولة (Pass)</div>
-          <div style={{...valueStyle, color: '#1F4E78'}}>{summary.accepted_items}</div>
-        </div>
-        <div style={infoCardStyle('#FFC7CE', '#C00000', '#C00000')}>
-          <div style={{...labelStyle, color: '#333'}}>بنود مرفوضة (Fail)</div>
-          <div style={{...valueStyle, color: '#C00000'}}>{summary.rejected_items}</div>
-        </div>
-        <div style={infoCardStyle('#FFEB9C', '#333', '#FFC000')}>
-          <div style={{...labelStyle, color: '#333'}}>ملاحظات مفتوحة</div>
-          <div style={{...valueStyle, color: '#333'}}>{summary.open_remarks}</div>
-        </div>
-        <div style={infoCardStyle('#FFC7CE', '#C00000', '#C00000')}>
-          <div style={{...labelStyle, color: '#333'}}>ملاحظات متأخرة</div>
-          <div style={{...valueStyle, color: '#C00000'}}>{summary.overdue_remarks}</div>
-        </div>
+        <Card 
+          bgColor="#C6EFCE" textColor="#1F4E78" borderColor="#70AD47" 
+          title="بنود مقبولة (Pass)" value={summary.accepted_items} 
+          // سيتم توجيهها للشبكة المتقدمة لاحقاً
+        />
+        <Card 
+          bgColor="#FFC7CE" textColor="#C00000" borderColor="#C00000" 
+          title="بنود مرفوضة (Fail)" value={summary.rejected_items} 
+        />
+        <Card 
+          bgColor="#FFEB9C" textColor="#333" borderColor="#FFC000" 
+          title="ملاحظات مفتوحة" value={summary.open_remarks} 
+          onClick={() => navigateTo('REMARKS', { filterStatus: 'open', latrineId: null })} 
+        />
+        <Card 
+          bgColor="#FFC7CE" textColor="#C00000" borderColor="#C00000" 
+          title="ملاحظات متأخرة" value={summary.overdue_remarks} 
+          onClick={() => navigateTo('REMARKS', { filterStatus: 'overdue', latrineId: null })} 
+        />
       </div>
 
       {/* شريط الإنجاز المالي */}
@@ -200,10 +210,6 @@ const Dashboard = () => {
           }}>
             {summary.overall_progress_pct}%
           </span>
-        </div>
-        <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '15px', color: '#7f8c8d', fontSize: '14px' }}>
-          <span>البنود المقبولة: {summary.accepted_items}</span>
-          <span>البنود المرفوضة: {summary.rejected_items}</span>
         </div>
       </div>
 
