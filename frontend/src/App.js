@@ -17,6 +17,7 @@ function App() {
     name: 'LIST', 
     latrineId: null, 
     boqCode: null, 
+    filterStatus: '', // ← جديد: تخزين الفلتر القادم من لوحة المؤشرات
     previousView: 'LIST' 
   });
   const [isInitializing, setIsInitializing] = useState(true);
@@ -59,11 +60,13 @@ function App() {
     );
   }
 
+  // ← تعديل: دالة التنقل أصبحت تقبل الفلتر وتمرره
   const navigateTo = (viewName, params = {}) => {
     setCurrentView(prev => ({
       name: viewName,
-      latrineId: params.latrineId ?? prev.latrineId,
-      boqCode: params.boqCode ?? null,
+      latrineId: params.latrineId !== undefined ? params.latrineId : prev.latrineId,
+      boqCode: params.boqCode !== undefined ? params.boqCode : null,
+      filterStatus: params.filterStatus !== undefined ? params.filterStatus : '',
       previousView: prev.name
     }));
   };
@@ -73,6 +76,7 @@ function App() {
       name: prev.previousView || 'LIST',
       latrineId: prev.latrineId,
       boqCode: null,
+      filterStatus: '',
       previousView: 'LIST'
     }));
   };
@@ -81,7 +85,6 @@ function App() {
     <div style={{ fontFamily: 'Tahoma, sans-serif', backgroundColor: '#f5f6fa', minHeight: '100vh', direction: 'rtl' }}>
       <SyncStatus />
 
-      {/* شريط التنقل المُحسّن */}
       <div style={{ 
         background: '#1F4E78', 
         padding: '10px 20px', 
@@ -94,7 +97,7 @@ function App() {
       }}>
         <NavButton 
           active={['LIST', 'BOQ', 'REMARKS'].includes(currentView.name)}
-          onClick={() => navigateTo('LIST')}
+          onClick={() => navigateTo('LIST', { filterStatus: '' })}
           label="🏗️ سجل الحمامات"
         />
         <NavButton 
@@ -128,6 +131,7 @@ function App() {
         
         {currentView.name === 'LIST' && (
           <LatrineList 
+            initialFilter={currentView.filterStatus} // ← تمرير الفلتر
             onSelectLatrine={(id) => navigateTo('BOQ', { latrineId: id })} 
           />
         )}
@@ -144,6 +148,7 @@ function App() {
           <RemarksManager 
             latrineId={currentView.latrineId} 
             boqCode={currentView.boqCode}
+            initialFilter={currentView.filterStatus} // ← تمرير الفلتر
             onBack={goBack}
           />
         )}
@@ -163,7 +168,7 @@ function App() {
         )}
 
         {currentView.name === 'DASHBOARD' && (
-          <Dashboard />
+          <Dashboard navigateTo={navigateTo} /> // ← تمرير دالة التنقل للوحة المؤشرات
         )}
 
         {currentView.name === 'REPORTS' && (
