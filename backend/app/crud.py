@@ -246,7 +246,7 @@ def seed_boq_items(db: Session, latrine_id: int):
         db.add(db_item)
     db.commit()
 
-# ---------- Sync Engine Processor (المُحدّث والمقاوم للأخطاء) ----------
+# ---------- Sync Engine Processor (النسخة النهائية المتوافقة مع تعديلك) ----------
 def process_sync_queue(db: Session, sync_req: schemas.SyncRequest) -> schemas.SyncResponse:
     processed = []
     failed = []
@@ -271,7 +271,7 @@ def process_sync_queue(db: Session, sync_req: schemas.SyncRequest) -> schemas.Sy
                 remark_data = op.data.copy()
                 local_uuid = remark_data.pop('local_uuid', None)
                 
-                # 🛡️ الحماية 1: إزالة الحقول التي ترسلها الواجهة الأمامية ولا توجد في قاعدة البيانات
+                # 🛡️ الحماية: إزالة الحقول الدخيلة التي تسبب انهيار SQLAlchemy
                 remark_data.pop('sync_status', None)
                 remark_data.pop('id', None)
                 remark_data.pop('local_id', None)
@@ -280,7 +280,7 @@ def process_sync_queue(db: Session, sync_req: schemas.SyncRequest) -> schemas.Sy
                 new_remark.date_logged = op.timestamp
                 
                 if local_uuid:
-                    # 🛡️ الحماية 2: قص الـ UUID ليتناسب مع حجم 20 حرف في قاعدة البيانات
+                    # ✅ بفضل تعديلك (الهجرة 004)، نمرر الـ UUID كاملاً (36 حرف)
                     new_remark.remark_id = str(local_uuid)
                 
                 db.add(new_remark)
@@ -294,14 +294,12 @@ def process_sync_queue(db: Session, sync_req: schemas.SyncRequest) -> schemas.Sy
                 remark = None
                 
                 if local_uuid:
-                    # 🛡️ الحماية 3: البحث باستخدام الـ UUID المقصوص
-                    short_uuid = str(local_uuid)
+                    # البحث باستخدام الـ UUID الكامل
                     remark = db.query(models.Remark).filter(
-                        models.Remark.remark_id == short_uuid
+                        models.Remark.remark_id == str(local_uuid)
                     ).first()
                 
                 if not remark and op.data.get("id"):
-                    # تجاهل الـ IDs السلبية (المحلية)
                     if int(op.data.get("id")) > 0:
                         remark = db.query(models.Remark).filter(
                             models.Remark.id == op.data.get("id")
@@ -309,7 +307,7 @@ def process_sync_queue(db: Session, sync_req: schemas.SyncRequest) -> schemas.Sy
                 
                 if remark:
                     for key, value in op.data.items():
-                        # 🛡️ الحماية 4: تحديث الحقول الصالحة فقط
+                        # 🛡️ الحماية: تجاهل الحقول الدخيلة عند التحديث أيضاً
                         if hasattr(remark, key) and key not in ["id", "local_uuid", "sync_status", "local_id"]:
                             setattr(remark, key, value)
                     remark.last_update = op.timestamp
