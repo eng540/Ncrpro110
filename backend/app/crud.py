@@ -246,15 +246,29 @@ def seed_boq_items(db: Session, latrine_id: int):
         db.add(db_item)
     db.commit()
 
-# ---------- Sync Engine Processor (النسخة النهائية المتوافقة مع تعديلك) ----------
+# ---------- Sync Engine Processor (The Bulletproof Version) ----------
 def process_sync_queue(db: Session, sync_req: schemas.SyncRequest) -> schemas.SyncResponse:
     processed = []
     failed = []
     errors = {}
     latrines_to_recalc = set()
 
+    # 🛡️ معقم التواريخ: تحويل أي نص زمني قادم من الجافاسكربت إلى كائن datetime حقيقي
+    date_fields = {'closed_date', 'deadline', 'inspection_date', 'start_date', 'expected_completion', 'date_logged', 'date'}
+
     for op in sync_req.operations:
         try:
+            # تعقيم البيانات قبل أي عملية
+            if isinstance(op.data, dict):
+                for key in list(op.data.keys()):
+                    if key in date_fields and isinstance(op.data[key], str):
+                        try:
+                            # معالجة صيغة ISO القادمة من المتصفح
+                            clean_date_str = op.data[key].replace('Z', '+00:00')
+                            op.data[key] = datetime.fromisoformat(clean_date_str)
+                        except ValueError:
+                            pass # إذا فشل التحويل، نتركه كما هو وندع SQLAlchemy تتعامل معه
+
             if op.type == "UPDATE_BOQ":
                 item_id = op.data.get("id")
                 item = db.query(models.BoqItem).filter(models.BoqItem.id == item_id).first()
@@ -271,7 +285,7 @@ def process_sync_queue(db: Session, sync_req: schemas.SyncRequest) -> schemas.Sy
                 remark_data = op.data.copy()
                 local_uuid = remark_data.pop('local_uuid', None)
                 
-                # 🛡️ الحماية: إزالة الحقول الدخيلة التي تسبب انهيار SQLAlchemy
+                # إزالة الحقول الدخيلة
                 remark_data.pop('sync_status', None)
                 remark_data.pop('id', None)
                 remark_data.pop('local_id', None)
@@ -280,11 +294,10 @@ def process_sync_queue(db: Session, sync_req: schemas.SyncRequest) -> schemas.Sy
                 new_remark.date_logged = op.timestamp
                 
                 if local_uuid:
-                    # ✅ بفضل تعديلك (الهجرة 004)، نمرر الـ UUID كاملاً (36 حرف)
                     new_remark.remark_id = str(local_uuid)
                 
                 db.add(new_remark)
-                db.flush()
+                db.flush() # الحصول على الـ ID الحقيقي فوراً
                 
                 processed.append(op.id)
                 latrines_to_recalc.add(op.data.get("latrine_id"))
@@ -293,12 +306,13 @@ def process_sync_queue(db: Session, sync_req: schemas.SyncRequest) -> schemas.Sy
                 local_uuid = op.data.get("local_uuid")
                 remark = None
                 
+                # البحث بالـ UUID أولاً (لضمان التقاط الملاحظات التي أُنشئت للتو في نفس الطابور)
                 if local_uuid:
-                    # البحث باستخدام الـ UUID الكامل
                     remark = db.query(models.Remark).filter(
                         models.Remark.remark_id == str(local_uuid)
                     ).first()
                 
+                # إذا لم نجدها بالـ UUID، نبحث بالـ ID العادي
                 if not remark and op.data.get("id"):
                     if int(op.data.get("id")) > 0:
                         remark = db.query(models.Remark).filter(
@@ -307,7 +321,7 @@ def process_sync_queue(db: Session, sync_req: schemas.SyncRequest) -> schemas.Sy
                 
                 if remark:
                     for key, value in op.data.items():
-                        # 🛡️ الحماية: تجاهل الحقول الدخيلة عند التحديث أيضاً
+                        # تحديث الحقول الصالحة فقط
                         if hasattr(remark, key) and key not in ["id", "local_uuid", "sync_status", "local_id"]:
                             setattr(remark, key, value)
                     remark.last_update = op.timestamp
@@ -335,15 +349,18 @@ def process_sync_queue(db: Session, sync_req: schemas.SyncRequest) -> schemas.Sy
                     new_log.date = op.timestamp
                 db.add(new_log)
 
+            # حفظ التغييرات لكل عملية لضمان أن العملية التالية في الطابور تراها
             db.commit()
+            
             if op.type not in ["UPDATE_REMARK", "CREATE_REMARK"]: 
                 processed.append(op.id)
 
         except Exception as e:
             db.rollback()
             failed.append(op.id)
-            errors[op.id] = str(e)
+            errors[op.id] = f"Error processing {op.type}: {str(e)}"
 
+    # إعادة حساب نسب الإنجاز للحمامات المتأثرة
     for lid in latrines_to_recalc:
         if lid:
             recalc_latrine_progress(db, lid)
