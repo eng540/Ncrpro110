@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '../db';
 
@@ -18,20 +18,22 @@ const statusLabels = {
   rejected: 'مرفوض'
 };
 
-function LatrineList({ onSelectLatrine }) {
+// ← تعديل: استقبال initialFilter
+function LatrineList({ onSelectLatrine, initialFilter = '' }) {
   const [filter, setFilter] = useState('');
-  const [statusFilter, setStatusFilter] = useState('');
+  const [statusFilter, setStatusFilter] = useState(initialFilter);
 
-  // ARCHITECTURE FIX: جلب البيانات من قاعدة البيانات المحلية بدلاً من الخادم
-  // هذا يجعل البحث والفلترة فوريين (Instant) وبدون شاشة تحميل
+  // ← تعديل: تحديث الفلتر إذا تغير من الخارج (عبر لوحة المؤشرات)
+  useEffect(() => {
+    setStatusFilter(initialFilter);
+  }, [initialFilter]);
+
   const latrines = useLiveQuery(() => db.latrines.toArray(), []);
 
-  // إذا كانت البيانات لم تُحمل بعد من الذاكرة المحلية
   if (latrines === undefined) {
     return <div style={{textAlign:'center',padding:'40px'}}>جاري قراءة البيانات المحلية...</div>;
   }
 
-  // فلترة البيانات محلياً بلمح البصر
   const safeLatrines = Array.isArray(latrines) ? latrines : [];
   const filtered = safeLatrines.filter(l => {
     const idMatch = (l.latrine_id || '').toLowerCase().includes(filter.toLowerCase());
