@@ -8,6 +8,7 @@ import Dashboard from './components/Dashboard';
 import DailyLogForm from './components/DailyLogForm';
 import DailyLogList from './components/DailyLogList';
 import ReportsPanel from './components/ReportsPanel';
+import AdminPanel from './components/AdminPanel'; // ← جديد
 import { db, populateLocalDB } from './db';
 
 const API_BASE_URL = process.env.REACT_APP_API_URL || '/api';
@@ -17,7 +18,7 @@ function App() {
     name: 'LIST', 
     latrineId: null, 
     boqCode: null, 
-    filterStatus: '', // ← جديد: تخزين الفلتر القادم من لوحة المؤشرات
+    filterStatus: '',
     previousView: 'LIST' 
   });
   const [isInitializing, setIsInitializing] = useState(true);
@@ -60,7 +61,6 @@ function App() {
     );
   }
 
-  // ← تعديل: دالة التنقل أصبحت تقبل الفلتر وتمرره
   const navigateTo = (viewName, params = {}) => {
     setCurrentView(prev => ({
       name: viewName,
@@ -125,13 +125,20 @@ function App() {
           onClick={() => navigateTo('REPORTS')}
           label="📈 التقارير"
         />
+        {/* ← زر لوحة التحكم الإدارية الجديد */}
+        <NavButton 
+          active={currentView.name === 'ADMIN'}
+          onClick={() => navigateTo('ADMIN')}
+          label="⚙️ الإدارة"
+          style={{ marginRight: 'auto', background: 'rgba(255,255,255,0.15)' }}
+        />
       </div>
 
       <div style={{ maxWidth: '1200px', margin: '0 auto', padding: '20px' }}>
-        
+
         {currentView.name === 'LIST' && (
           <LatrineList 
-            initialFilter={currentView.filterStatus} // ← تمرير الفلتر
+            initialFilter={currentView.filterStatus}
             onSelectLatrine={(id) => navigateTo('BOQ', { latrineId: id })} 
           />
         )}
@@ -148,7 +155,7 @@ function App() {
           <RemarksManager 
             latrineId={currentView.latrineId} 
             boqCode={currentView.boqCode}
-            initialFilter={currentView.filterStatus} // ← تمرير الفلتر
+            initialFilter={currentView.filterStatus}
             onBack={goBack}
           />
         )}
@@ -168,11 +175,16 @@ function App() {
         )}
 
         {currentView.name === 'DASHBOARD' && (
-          <Dashboard navigateTo={navigateTo} /> // ← تمرير دالة التنقل للوحة المؤشرات
+          <Dashboard navigateTo={navigateTo} />
         )}
 
         {currentView.name === 'REPORTS' && (
           <ReportsPanel />
+        )}
+
+        {/* ← لوحة التحكم الإدارية */}
+        {currentView.name === 'ADMIN' && (
+          <AdminPanel onBack={() => navigateTo('LIST')} />
         )}
 
       </div>
@@ -180,7 +192,7 @@ function App() {
   );
 }
 
-function NavButton({ active, onClick, label }) {
+function NavButton({ active, onClick, label, style = {} }) {
   return (
     <button 
       onClick={onClick}
@@ -194,7 +206,8 @@ function NavButton({ active, onClick, label }) {
         fontWeight: 'bold',
         fontSize: '14px',
         transition: 'all 0.2s',
-        whiteSpace: 'nowrap'
+        whiteSpace: 'nowrap',
+        ...style
       }}
     >
       {label}
