@@ -103,7 +103,7 @@ class RemarkOut(RemarkBase):
     class Config:
         from_attributes = True
 
-# ---------- Daily Log Schemas (جديد) ----------
+# ---------- Daily Log Schemas ----------
 class DailyLogBase(BaseModel):
     date: datetime
     engineer: Optional[str] = None
@@ -149,6 +149,35 @@ class EngineerPerformance(BaseModel):
     engineer: str
     inspected_today: int
     accepted_today: int
+
+# ---------- BoQ Dictionary Schemas (جديد) ----------
+class BoqDictionaryBase(BaseModel):
+    boq_code: str
+    category: Optional[str] = None
+    description_ar: Optional[str] = None
+    description_en: Optional[str] = None
+    unit: Optional[str] = None
+    default_qty: float = 0.0
+    unit_price: float = 0.0
+    is_active: bool = True
+
+class BoqDictionaryCreate(BoqDictionaryBase):
+    pass
+
+class BoqDictionaryUpdate(BaseModel):
+    category: Optional[str] = None
+    description_ar: Optional[str] = None
+    description_en: Optional[str] = None
+    unit: Optional[str] = None
+    default_qty: Optional[float] = None
+    unit_price: Optional[float] = None
+    is_active: Optional[bool] = None
+
+class BoqDictionaryOut(BoqDictionaryBase):
+    id: int
+
+    class Config:
+        from_attributes = True
 
 # ---------- Sync Engine Schemas ----------
 class SyncOperation(BaseModel):
