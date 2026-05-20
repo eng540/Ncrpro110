@@ -40,7 +40,7 @@ const SyncStatus = () => {
     }
   };
 
-  // دالة تحميل البيانات من الخادم للهاتف (Pull)
+  // دالة تحميل البيانات من الخادم للهاتف (Pull) - تم إصلاحها لجلب الملاحظات
   const handleDownloadData = async () => {
     if (!isOnline) {
       alert("يجب أن تكون متصلاً بالإنترنت لتحميل البيانات.");
@@ -53,18 +53,22 @@ const SyncStatus = () => {
 
     setIsDownloading(true);
     try {
-      // جلب البيانات من الخادم
-      const latrinesRes = await fetch(`${API_BASE_URL}/latrines?limit=200`);
-      const boqRes = await fetch(`${API_BASE_URL}/boq-items`);
+      // ✅ تم الإصلاح: جلب الحمامات، البنود، والملاحظات معاً
+      const [latrinesRes, boqRes, remarksRes] = await Promise.all([
+        fetch(`${API_BASE_URL}/latrines?limit=200`),
+        fetch(`${API_BASE_URL}/boq-items`),
+        fetch(`${API_BASE_URL}/remarks`)
+      ]);
       
-      if (!latrinesRes.ok) throw new Error("فشل الاتصال بالخادم");
+      if (!latrinesRes.ok || !boqRes.ok) throw new Error("فشل الاتصال بالخادم");
 
       const latrines = await latrinesRes.json();
       const boqItems = await boqRes.json();
+      const remarks = remarksRes.ok ? await remarksRes.json() : []; // ✅ استخراج الملاحظات
 
-      // تفريغ وتعبئة قاعدة البيانات المحلية
-      await populateLocalDB(latrines, boqItems, []);
-      alert("تم تحميل أحدث البيانات من الخادم إلى هاتفك بنجاح!");
+      // ✅ تم الإصلاح: تمرير الملاحظات لقاعدة البيانات المحلية
+      await populateLocalDB(latrines, boqItems, remarks);
+      alert("تم تحميل أحدث البيانات (بما فيها الملاحظات) من الخادم إلى هاتفك بنجاح!");
       
     } catch (error) {
       console.error(error);
