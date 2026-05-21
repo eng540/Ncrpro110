@@ -2,8 +2,6 @@ import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '../db';
 import { pushToSyncQueue } from '../syncEngine';
-import { FixedSizeList as List } from 'react-window';
-import AutoSizer from 'react-virtualized-auto-sizer';
 
 // ==========================================
 // Constants & Configuration
@@ -27,7 +25,7 @@ const GROUPS = {
 };
 
 // ==========================================
-// Undo/Redo Manager (Best Practice)
+// Undo/Redo Manager
 // ==========================================
 class HistoryManager {
   constructor(limit = 50) {
@@ -37,17 +35,10 @@ class HistoryManager {
   }
 
   push(action) {
-    // إزالة العمليات المستقبلية إذا كنا في منتصف الـ stack
     if (this.index < this.stack.length - 1) {
       this.stack = this.stack.slice(0, this.index + 1);
     }
-
-    this.stack.push({
-      ...action,
-      timestamp: Date.now()
-    });
-
-    // الحفاظ على الحد الأقصى
+    this.stack.push({ ...action, timestamp: Date.now() });
     if (this.stack.length > this.limit) {
       this.stack.shift();
     } else {
@@ -56,16 +47,12 @@ class HistoryManager {
   }
 
   undo() {
-    if (this.index >= 0) {
-      return this.stack[this.index--];
-    }
+    if (this.index >= 0) return this.stack[this.index--];
     return null;
   }
 
   redo() {
-    if (this.index < this.stack.length - 1) {
-      return this.stack[++this.index];
-    }
+    if (this.index < this.stack.length - 1) return this.stack[++this.index];
     return null;
   }
 
@@ -109,25 +96,6 @@ const StatusCell = React.memo(({ item, onToggle, isSelected }) => {
   );
 });
 
-const GroupHeader = ({ groupKey, group, onToggleAll, allCompleted }) => (
-  <div style={{
-    background: group.color,
-    color: 'white',
-    padding: '8px 4px',
-    textAlign: 'center',
-    fontSize: '12px',
-    fontWeight: 'bold',
-    cursor: 'pointer',
-    userSelect: 'none',
-    position: 'relative'
-  }} onClick={() => onToggleAll(groupKey)}>
-    <div>{group.label}</div>
-    <div style={{ fontSize: '10px', opacity: 0.8 }}>
-      {allCompleted ? '✓ الكل' : 'تأشير الكل'}
-    </div>
-  </div>
-);
-
 // ==========================================
 // Main Component
 // ==========================================
@@ -142,29 +110,22 @@ const SpeedEntryMatrix = ({ onBack }) => {
   const [showConfirmModal, setShowConfirmModal] = useState(false);
 
   const historyRef = useRef(new HistoryManager());
-  const listRef = useRef(null);
+  const tableContainerRef = useRef(null);
 
-  // --- Live Queries (Optimized) ---
+  // --- Live Queries ---
   const latrines = useLiveQuery(() => db.latrines.toArray(), []);
   const boqItems = useLiveQuery(() => db.boq_items.toArray(), []);
 
   // --- Build Matrix Data ---
   const matrixData = useMemo(() => {
     if (!latrines || !boqItems) return [];
-
     return latrines.map(latrine => {
       const items = boqItems.filter(item => item.latrine_id === latrine.id);
       const itemMap = {};
-
-      // تجميع البنود حسب الكود
-      items.forEach(item => {
-        itemMap[item.boq_code] = item;
-      });
-
+      items.forEach(item => { itemMap[item.boq_code] = item; });
       return {
         latrine,
         items: itemMap,
-        // حساب نسبة إنجاز الحمام
         progress: latrine.overall_pct || 0
       };
     });
@@ -173,7 +134,6 @@ const SpeedEntryMatrix = ({ onBack }) => {
   // --- Filtering ---
   const filteredData = useMemo(() => {
     let data = matrixData;
-
     if (searchQuery) {
       const q = searchQuery.toLowerCase();
       data = data.filter(row => 
@@ -181,15 +141,13 @@ const SpeedEntryMatrix = ({ onBack }) => {
         (row.latrine.beneficiary_hh || '').toLowerCase().includes(q)
       );
     }
-
     if (filterBlock) {
       data = data.filter(row => row.latrine.block_no === filterBlock);
     }
-
     return data;
   }, [matrixData, searchQuery, filterBlock]);
 
-  // --- Unique Blocks for Filter ---
+  // --- Unique Blocks ---
   const blocks = useMemo(() => {
     if (!latrines) return [];
     return [...new Set(latrines.map(l => l.block_no).filter(Boolean))].sort();
@@ -201,7 +159,6 @@ const SpeedEntryMatrix = ({ onBack }) => {
     const completed = filteredData.filter(r => r.progress >= 99.9).length;
     const inProgress = filteredData.filter(r => r.progress > 0 && r.progress < 99.9).length;
     const notStarted = filteredData.filter(r => r.progress === 0).length;
-
     return { total, completed, inProgress, notStarted };
   }, [filteredData]);
 
@@ -209,7 +166,6 @@ const SpeedEntryMatrix = ({ onBack }) => {
   const handleToggle = useCallback((latrineId, boqCode, direction = 'forward') => {
     const key = `${latrineId}-${boqCode}`;
     const currentItem = matrixData.find(r => r.latrine.id === latrineId)?.items[boqCode];
-
     if (!currentItem) return;
 
     const currentStatus = localChanges.get(key)?.status || currentItem.status || 'not_started';
@@ -217,7 +173,6 @@ const SpeedEntryMatrix = ({ onBack }) => {
 
     let newStatus;
     if (direction === 'right') {
-      // Right-click = reverse cycle
       const reverseMap = {
         'not_started': 'pending_inspection',
         'pending_inspection': 'completed',
@@ -231,7 +186,6 @@ const SpeedEntryMatrix = ({ onBack }) => {
 
     const newPct = STATUS_CYCLE[newStatus].pct;
 
-    // Save to history
     historyRef.current.push({
       type: 'toggle',
       latrineId,
@@ -242,7 +196,6 @@ const SpeedEntryMatrix = ({ onBack }) => {
       toPct: newPct
     });
 
-    // Update local changes
     setLocalChanges(prev => new Map(prev).set(key, {
       status: newStatus,
       achieved_qty: newPct === 100 ? currentItem.planned_qty : 
@@ -254,13 +207,12 @@ const SpeedEntryMatrix = ({ onBack }) => {
     }));
   }, [matrixData, localChanges]);
 
-  // --- Group Toggle (Toggle All in A/B/C) ---
+  // --- Group Toggle ---
   const handleGroupToggle = useCallback((latrineId, groupKey) => {
     const group = GROUPS[groupKey];
     const row = matrixData.find(r => r.latrine.id === latrineId);
     if (!row) return;
 
-    // هل جميع البنود في هذه المجموعة مكتملة؟
     const allCompleted = group.codes.every(code => {
       const item = row.items[code];
       if (!item) return true;
@@ -269,16 +221,13 @@ const SpeedEntryMatrix = ({ onBack }) => {
       return currentStatus === 'completed';
     });
 
-    // إذا الكل مكتمل → نُعيد للصفر، وإلا → نُكمل الكل
     const targetStatus = allCompleted ? 'not_started' : 'completed';
     const targetPct = allCompleted ? 0 : 100;
-
     const newChanges = new Map(localChanges);
 
     group.codes.forEach(code => {
       const item = row.items[code];
       if (!item) return;
-
       const key = `${latrineId}-${code}`;
       newChanges.set(key, {
         status: targetStatus,
@@ -300,7 +249,7 @@ const SpeedEntryMatrix = ({ onBack }) => {
     setLocalChanges(newChanges);
   }, [matrixData, localChanges]);
 
-  // --- Undo/Redo ---
+  // --- Undo ---
   const handleUndo = useCallback(() => {
     const action = historyRef.current.undo();
     if (!action) return;
@@ -310,7 +259,6 @@ const SpeedEntryMatrix = ({ onBack }) => {
       const currentItem = matrixData.find(r => r.latrine.id === action.latrineId)?.items[action.boqCode];
 
       if (action.from === currentItem?.status) {
-        // Remove local change if it matches original
         const newChanges = new Map(localChanges);
         newChanges.delete(key);
         setLocalChanges(newChanges);
@@ -328,15 +276,17 @@ const SpeedEntryMatrix = ({ onBack }) => {
     }
   }, [matrixData, localChanges]);
 
-  // --- Save Draft (Local IndexedDB) ---
+  // --- Save Draft ---
   const handleSaveDraft = useCallback(async () => {
     if (localChanges.size === 0) return;
 
+    // ✅ FIX: Capture size before clearing
+    const changesCount = localChanges.size;
     setIsSaving(true);
+
     try {
       await db.transaction('rw', db.boq_items, db.sync_queue, async () => {
         for (const [key, change] of localChanges) {
-          // تحديث boq_items محلياً
           await db.boq_items.update(change.itemId, {
             achieved_qty: change.achieved_qty,
             status: change.status,
@@ -344,7 +294,6 @@ const SpeedEntryMatrix = ({ onBack }) => {
             quality_pass: change.quality_pass
           });
 
-          // إضافة لطابور المزامنة
           await pushToSyncQueue('UPDATE_BOQ', {
             id: change.itemId,
             achieved_qty: change.achieved_qty,
@@ -357,7 +306,7 @@ const SpeedEntryMatrix = ({ onBack }) => {
 
       setLocalChanges(new Map());
       historyRef.current = new HistoryManager();
-      setSaveMessage({ type: 'success', text: `تم حفظ ${localChanges.size} تعديل في المسودة` });
+      setSaveMessage({ type: 'success', text: `تم حفظ ${changesCount} تعديل في المسودة` });
     } catch (err) {
       setSaveMessage({ type: 'error', text: 'فشل الحفظ: ' + err.message });
     } finally {
@@ -366,7 +315,7 @@ const SpeedEntryMatrix = ({ onBack }) => {
     }
   }, [localChanges]);
 
-  // --- Keyboard Navigation (Best Practice) ---
+  // --- Keyboard Navigation ---
   useEffect(() => {
     const handleKeyDown = (e) => {
       if (e.ctrlKey || e.metaKey) {
@@ -380,111 +329,9 @@ const SpeedEntryMatrix = ({ onBack }) => {
         }
       }
     };
-
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [handleUndo, handleSaveDraft]);
-
-  // --- Row Renderer for Virtualization ---
-  const RowRenderer = useCallback(({ index, style }) => {
-    const row = filteredData[index];
-    if (!row) return null;
-
-    const latrine = row.latrine;
-
-    return (
-      <div style={{
-        ...style,
-        display: 'flex',
-        alignItems: 'center',
-        borderBottom: '1px solid #e0e0e0',
-        background: index % 2 === 0 ? '#fafafa' : 'white'
-      }}>
-        {/* Sticky Column: Latrine Info */}
-        <div style={{
-          width: STICKY_COL_WIDTH,
-          minWidth: STICKY_COL_WIDTH,
-          padding: '8px 12px',
-          borderLeft: '2px solid #e0e0e0',
-          background: 'inherit',
-          position: 'sticky',
-          right: 0,
-          zIndex: 2
-        }}>
-          <div style={{ fontWeight: 'bold', color: '#1F4E78', fontSize: '13px' }}>
-            {latrine.latrine_id}
-          </div>
-          <div style={{ fontSize: '11px', color: '#666', marginTop: '2px' }}>
-            {latrine.beneficiary_hh || '—'}
-          </div>
-          <div style={{ fontSize: '10px', color: '#999' }}>
-            {latrine.block_no} | {row.progress.toFixed(0)}%
-          </div>
-        </div>
-
-        {/* Group Columns */}
-        {Object.entries(GROUPS).map(([groupKey, group]) => (
-          <div key={groupKey} style={{ display: 'flex' }}>
-            {/* Group Toggle Header */}
-            <div style={{
-              width: '30px',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              background: group.color + '10'
-            }}>
-              <button
-                onClick={() => handleGroupToggle(latrine.id, groupKey)}
-                style={{
-                  width: '24px',
-                  height: '24px',
-                  border: `2px solid ${group.color}`,
-                  borderRadius: '4px',
-                  background: 'white',
-                  cursor: 'pointer',
-                  fontSize: '12px',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center'
-                }}
-                title={`تأشير مجموعة ${group.label}`}
-              >
-                {group.codes.every(code => {
-                  const item = row.items[code];
-                  if (!item) return true;
-                  const key = `${latrine.id}-${code}`;
-                  const status = localChanges.get(key)?.status || item.status || 'not_started';
-                  return status === 'completed';
-                }) ? '✓' : '+'}
-              </button>
-            </div>
-
-            {/* Individual Items */}
-            {group.codes.map(code => {
-              const item = row.items[code];
-              const key = `${latrine.id}-${code}`;
-              const isModified = localChanges.has(key);
-
-              if (!item) return <div key={code} style={{ width: CELL_WIDTH }} />;
-
-              return (
-                <div key={code} style={{ width: CELL_WIDTH, padding: '2px' }}>
-                  <StatusCell
-                    item={{
-                      ...item,
-                      status: localChanges.get(key)?.status || item.status
-                    }}
-                    onToggle={() => handleToggle(latrine.id, code)}
-                    isSelected={isModified}
-                  />
-                </div>
-              );
-            })}
-          </div>
-        ))}
-      </div>
-    );
-  }, [filteredData, localChanges, handleToggle, handleGroupToggle]);
 
   // --- Loading State ---
   if (!latrines || !boqItems) {
@@ -518,7 +365,6 @@ const SpeedEntryMatrix = ({ onBack }) => {
         </div>
 
         <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
-          {/* Search */}
           <input
             type="text"
             placeholder="🔍 بحث برقم أو اسم..."
@@ -533,22 +379,15 @@ const SpeedEntryMatrix = ({ onBack }) => {
             }}
           />
 
-          {/* Block Filter */}
           <select
             value={filterBlock}
             onChange={e => setFilterBlock(e.target.value)}
-            style={{
-              padding: '8px',
-              borderRadius: '4px',
-              border: 'none',
-              fontSize: '13px'
-            }}
+            style={{ padding: '8px', borderRadius: '4px', border: 'none', fontSize: '13px' }}
           >
             <option value="">كل المربعات</option>
             {blocks.map(b => <option key={b} value={b}>{b}</option>)}
           </select>
 
-          {/* Undo */}
           <button
             onClick={handleUndo}
             disabled={!historyRef.current.canUndo()}
@@ -566,7 +405,6 @@ const SpeedEntryMatrix = ({ onBack }) => {
             ↩️ تراجع
           </button>
 
-          {/* Save Draft */}
           <button
             onClick={() => localChanges.size > 0 ? setShowConfirmModal(true) : null}
             disabled={localChanges.size === 0 || isSaving}
@@ -614,55 +452,197 @@ const SpeedEntryMatrix = ({ onBack }) => {
         </div>
       )}
 
-      {/* Column Headers */}
-      <div style={{
-        display: 'flex',
-        background: '#f8f9fa',
-        borderBottom: '2px solid #dee2e6',
-        height: HEADER_HEIGHT,
-        alignItems: 'center',
-        fontSize: '12px',
-        fontWeight: 'bold',
-        color: '#495057'
-      }}>
-        <div style={{ width: STICKY_COL_WIDTH, padding: '0 12px', textAlign: 'right' }}>
-          الحمام / المستفيد
+      {/* 
+        ==========================================
+        TABLE AREA - THE FIX
+        ==========================================
+        - overflow: auto allows both x and y scrolling
+        - position: sticky works natively (no react-window)
+        - direction: rtl makes flex start from right (A on right, C on left)
+      */}
+      <div 
+        ref={tableContainerRef}
+        style={{ 
+          flex: 1, 
+          overflow: 'auto', 
+          background: 'white',
+          position: 'relative'
+        }}
+      >
+        {/* Sticky Table Header */}
+        <div style={{
+          display: 'flex',
+          alignItems: 'center',
+          position: 'sticky',
+          top: 0,
+          zIndex: 20,
+          background: '#f8f9fa',
+          borderBottom: '2px solid #dee2e6',
+          height: HEADER_HEIGHT,
+          fontSize: '12px',
+          fontWeight: 'bold',
+          color: '#495057',
+          minWidth: 'fit-content'
+        }}>
+          {/* Sticky Column Header - Beneficiary */}
+          <div style={{ 
+            width: STICKY_COL_WIDTH, 
+            minWidth: STICKY_COL_WIDTH,
+            padding: '0 12px', 
+            textAlign: 'right',
+            position: 'sticky',
+            right: 0,
+            background: '#f8f9fa',
+            zIndex: 21,
+            height: '100%',
+            display: 'flex',
+            alignItems: 'center',
+            borderLeft: '2px solid #dee2e6',
+            boxSizing: 'border-box'
+          }}>
+            الحمام / المستفيد
+          </div>
+
+          {/* Group Headers - A, B, C will flow right-to-left naturally in RTL */}
+          {Object.entries(GROUPS).map(([groupKey, group]) => (
+            <div key={groupKey} style={{ display: 'flex', flexShrink: 0 }}>
+              <div style={{ 
+                width: '30px', 
+                textAlign: 'center', 
+                color: group.color,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center'
+              }}>
+                {groupKey}
+              </div>
+              {group.codes.map(code => (
+                <div key={code} style={{ 
+                  width: CELL_WIDTH, 
+                  textAlign: 'center',
+                  fontSize: '11px',
+                  color: group.color,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center'
+                }}>
+                  {code}
+                </div>
+              ))}
+            </div>
+          ))}
         </div>
 
-        {Object.entries(GROUPS).map(([groupKey, group]) => (
-          <div key={groupKey} style={{ display: 'flex' }}>
-            <div style={{ width: '30px', textAlign: 'center', color: group.color }}>
-              {groupKey}
-            </div>
-            {group.codes.map(code => (
-              <div key={code} style={{ 
-                width: CELL_WIDTH, 
-                textAlign: 'center',
-                fontSize: '11px',
-                color: group.color
-              }}>
-                {code}
-              </div>
-            ))}
-          </div>
-        ))}
-      </div>
+        {/* Table Body */}
+        <div style={{ minWidth: 'fit-content' }}>
+          {filteredData.map((row, index) => {
+            const latrine = row.latrine;
+            const rowBg = index % 2 === 0 ? '#fafafa' : 'white';
 
-      {/* Virtualized List */}
-      <div style={{ flex: 1, overflow: 'hidden' }}>
-        <AutoSizer>
-          {({ height, width }) => (
-            <List
-              ref={listRef}
-              height={height}
-              itemCount={filteredData.length}
-              itemSize={ITEM_HEIGHT}
-              width={width}
-            >
-              {RowRenderer}
-            </List>
-          )}
-        </AutoSizer>
+            return (
+              <div 
+                key={latrine.id} 
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  borderBottom: '1px solid #e0e0e0',
+                  background: rowBg,
+                  minHeight: ITEM_HEIGHT
+                }}
+              >
+                {/* ✅ FIX 1 & 2: Sticky Beneficiary Column - pinned to right (start of RTL) */}
+                <div style={{
+                  width: STICKY_COL_WIDTH,
+                  minWidth: STICKY_COL_WIDTH,
+                  padding: '8px 12px',
+                  borderLeft: '2px solid #e0e0e0',
+                  background: rowBg, // Must be explicit, not 'inherit'
+                  position: 'sticky',
+                  right: 0,
+                  zIndex: 10,
+                  flexShrink: 0,
+                  boxSizing: 'border-box',
+                  alignSelf: 'stretch',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  justifyContent: 'center'
+                }}>
+                  <div style={{ fontWeight: 'bold', color: '#1F4E78', fontSize: '13px' }}>
+                    {latrine.latrine_id}
+                  </div>
+                  <div style={{ fontSize: '11px', color: '#666', marginTop: '2px' }}>
+                    {latrine.beneficiary_hh || '—'}
+                  </div>
+                  <div style={{ fontSize: '10px', color: '#999' }}>
+                    {latrine.block_no} | {row.progress.toFixed(0)}%
+                  </div>
+                </div>
+
+                {/* ✅ FIX 4: Groups A→B→C flow naturally in RTL (A on right, C on left) */}
+                {Object.entries(GROUPS).map(([groupKey, group]) => (
+                  <div key={groupKey} style={{ display: 'flex', flexShrink: 0 }}>
+                    {/* Group Toggle */}
+                    <div style={{
+                      width: '30px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      background: group.color + '10',
+                      flexShrink: 0
+                    }}>
+                      <button
+                        onClick={() => handleGroupToggle(latrine.id, groupKey)}
+                        style={{
+                          width: '24px',
+                          height: '24px',
+                          border: `2px solid ${group.color}`,
+                          borderRadius: '4px',
+                          background: 'white',
+                          cursor: 'pointer',
+                          fontSize: '12px',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center'
+                        }}
+                        title={`تأشير مجموعة ${group.label}`}
+                      >
+                        {group.codes.every(code => {
+                          const item = row.items[code];
+                          if (!item) return true;
+                          const key = `${latrine.id}-${code}`;
+                          const status = localChanges.get(key)?.status || item.status || 'not_started';
+                          return status === 'completed';
+                        }) ? '✓' : '+'}
+                      </button>
+                    </div>
+
+                    {/* Individual Items - A1, A2... are adjacent */}
+                    {group.codes.map(code => {
+                      const item = row.items[code];
+                      const key = `${latrine.id}-${code}`;
+                      const isModified = localChanges.has(key);
+
+                      if (!item) return <div key={code} style={{ width: CELL_WIDTH, flexShrink: 0 }} />;
+
+                      return (
+                        <div key={code} style={{ width: CELL_WIDTH, padding: '2px', flexShrink: 0 }}>
+                          <StatusCell
+                            item={{
+                              ...item,
+                              status: localChanges.get(key)?.status || item.status
+                            }}
+                            onToggle={() => handleToggle(latrine.id, code)}
+                            isSelected={isModified}
+                          />
+                        </div>
+                      );
+                    })}
+                  </div>
+                ))}
+              </div>
+            );
+          })}
+        </div>
       </div>
 
       {/* Footer Legend */}
