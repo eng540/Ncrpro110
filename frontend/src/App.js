@@ -8,7 +8,8 @@ import Dashboard from './components/Dashboard';
 import DailyLogForm from './components/DailyLogForm';
 import DailyLogList from './components/DailyLogList';
 import ReportsPanel from './components/ReportsPanel';
-import AdminPanel from './components/AdminPanel'; // ← جديد
+import AdminPanel from './components/AdminPanel';
+import SpeedEntryMatrix from './components/SpeedEntryMatrix'; // ← جديد
 import { db, populateLocalDB } from './db';
 
 const API_BASE_URL = process.env.REACT_APP_API_URL || '/api';
@@ -105,6 +106,13 @@ function App() {
           onClick={() => navigateTo('BULK')}
           label="⚡ الشبكة المتقدمة"
         />
+        {/* ← زر الإدخال السريع الجديد */}
+        <NavButton 
+          active={currentView.name === 'SPEED_ENTRY'}
+          onClick={() => navigateTo('SPEED_ENTRY')}
+          label="🚀 الإدخال السريع"
+          style={{ background: currentView.name === 'SPEED_ENTRY' ? '#fff' : 'rgba(255,215,0,0.2)', color: currentView.name === 'SPEED_ENTRY' ? '#1F4E78' : '#ffd700' }}
+        />
         <NavButton 
           active={currentView.name === 'DAILY_LOG'}
           onClick={() => navigateTo('DAILY_LOG')}
@@ -125,7 +133,6 @@ function App() {
           onClick={() => navigateTo('REPORTS')}
           label="📈 التقارير"
         />
-        {/* ← زر لوحة التحكم الإدارية الجديد */}
         <NavButton 
           active={currentView.name === 'ADMIN'}
           onClick={() => navigateTo('ADMIN')}
@@ -166,6 +173,11 @@ function App() {
           />
         )}
 
+        {/* ← الإدخال السريع */}
+        {currentView.name === 'SPEED_ENTRY' && (
+          <SpeedEntryMatrix onBack={() => navigateTo('LIST')} />
+        )}
+
         {currentView.name === 'DAILY_LOG' && (
           <DailyLogForm onSaved={() => navigateTo('DAILY_LOG_LIST')} />
         )}
@@ -182,7 +194,6 @@ function App() {
           <ReportsPanel />
         )}
 
-        {/* ← لوحة التحكم الإدارية */}
         {currentView.name === 'ADMIN' && (
           <AdminPanel onBack={() => navigateTo('LIST')} />
         )}
