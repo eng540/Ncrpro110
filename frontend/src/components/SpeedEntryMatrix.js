@@ -7,9 +7,26 @@ import { pushToSyncQueue } from '../syncEngine';
 // Constants & Configuration
 // ==========================================
 const ITEM_HEIGHT = 60;
-const HEADER_HEIGHT = 50;
+const HEADER_HEIGHT = 72; // ← زيادة لاستيعاب صفين
 const STICKY_COL_WIDTH = 200;
-const CELL_WIDTH = 80;
+const CELL_WIDTH = 100; // ← زيادة طفيفة لاستيعاب النص
+
+// ✅ NEW: قاموس البنود الوصفي — يُربط بالرمز
+const BOQ_LABELS = {
+  'A1': { name: 'حفر وتسوية + أساس حجر', short: 'حفر/أساس', unit: 'م³' },
+  'A2': { name: 'جدران بلك مفرغ 15سم', short: 'جدران بلك', unit: 'م²' },
+  'A3': { name: 'لياسة داخلية وخارجية', short: 'لياسة', unit: 'م²' },
+  'A4': { name: 'سقف خرسانة مسلحة', short: 'سقف خرساني', unit: 'ل.م' },
+  'A5': { name: 'كرسي عربي + كوع ريحة', short: 'كرسي/كوع', unit: 'عدد' },
+  'A6': { name: 'بلاط موزايكو', short: 'بلاط', unit: 'م²' },
+  'B1': { name: 'حفر بيارة قطر 1م', short: 'حفر بيارة', unit: 'م³' },
+  'B2': { name: 'تمديد UPVC 4 انش + تهوية', short: 'تمديد صرف', unit: 'ل.م' },
+  'B3': { name: 'غطاء بيارة خرساني', short: 'غطاء بيارة', unit: 'عدد' },
+  'C1': { name: 'باب حديد صاج', short: 'باب حديد', unit: 'عدد' },
+  'C2': { name: 'نافذة ألمنيوم', short: 'نافذة', unit: 'عدد' },
+  'C3': { name: 'إضاءة شمسية 10واط', short: 'إضاءة شمسية', unit: 'عدد' },
+  'C4': { name: 'لوحة معدنية + شعار', short: 'لوحة/شعار', unit: 'عدد' }
+};
 
 const STATUS_CYCLE = {
   'not_started': { next: 'in_progress', icon: '⬜', label: 'لم يبدأ', color: '#e0e0e0', pct: 0 },
@@ -96,6 +113,60 @@ const StatusCell = React.memo(({ item, onToggle, isSelected }) => {
   );
 });
 
+// ✅ NEW: مكون Header خلية ثنائية الطبقات
+const DualHeaderCell = ({ code, groupColor }) => {
+  const info = BOQ_LABELS[code] || { name: code, short: code, unit: '' };
+  
+  return (
+    <div style={{
+      width: CELL_WIDTH,
+      display: 'flex',
+      flexDirection: 'column',
+      alignItems: 'center',
+      justifyContent: 'center',
+      height: '100%',
+      padding: '2px',
+      boxSizing: 'border-box'
+    }}>
+      {/* الصف العلوي: اسم البند الوصفي — مصغر */}
+      <div style={{
+        fontSize: '9px',
+        color: '#555',
+        textAlign: 'center',
+        lineHeight: '1.2',
+        maxHeight: '22px',
+        overflow: 'hidden',
+        textOverflow: 'ellipsis',
+        whiteSpace: 'nowrap',
+        width: '100%',
+        direction: 'rtl'
+      }} title={info.name}>
+        {info.short}
+      </div>
+      
+      {/* الصف السفلي: الرمز — بارز */}
+      <div style={{
+        fontSize: '13px',
+        fontWeight: 'bold',
+        color: groupColor,
+        textAlign: 'center',
+        lineHeight: '1.1'
+      }}>
+        {code}
+      </div>
+      
+      {/* الوحدة — مصغرة جداً */}
+      <div style={{
+        fontSize: '8px',
+        color: '#999',
+        textAlign: 'center'
+      }}>
+        {info.unit}
+      </div>
+    </div>
+  );
+};
+
 // ==========================================
 // Main Component
 // ==========================================
@@ -108,6 +179,7 @@ const SpeedEntryMatrix = ({ onBack }) => {
   const [isSaving, setIsSaving] = useState(false);
   const [saveMessage, setSaveMessage] = useState(null);
   const [showConfirmModal, setShowConfirmModal] = useState(false);
+  const [showLabels, setShowLabels] = useState(true); // ✅ toggle لإظهار/إخفاء الأسماء
 
   const historyRef = useRef(new HistoryManager());
   const tableContainerRef = useRef(null);
@@ -280,7 +352,6 @@ const SpeedEntryMatrix = ({ onBack }) => {
   const handleSaveDraft = useCallback(async () => {
     if (localChanges.size === 0) return;
 
-    // ✅ FIX: Capture size before clearing
     const changesCount = localChanges.size;
     setIsSaving(true);
 
@@ -388,6 +459,24 @@ const SpeedEntryMatrix = ({ onBack }) => {
             {blocks.map(b => <option key={b} value={b}>{b}</option>)}
           </select>
 
+          {/* ✅ NEW: زر إظهار/إخفاء الأسماء */}
+          <button
+            onClick={() => setShowLabels(!showLabels)}
+            style={{
+              padding: '8px 12px',
+              background: showLabels ? 'rgba(255,215,0,0.3)' : 'rgba(255,255,255,0.1)',
+              color: 'white',
+              border: '1px solid rgba(255,255,255,0.3)',
+              borderRadius: '4px',
+              cursor: 'pointer',
+              fontSize: '12px',
+              fontWeight: 'bold'
+            }}
+            title={showLabels ? 'إخفاء أسماء البنود' : 'إظهار أسماء البنود'}
+          >
+            {showLabels ? '🏷️ الأسماء: ON' : '🏷️ الأسماء: OFF'}
+          </button>
+
           <button
             onClick={handleUndo}
             disabled={!historyRef.current.canUndo()}
@@ -454,11 +543,8 @@ const SpeedEntryMatrix = ({ onBack }) => {
 
       {/* 
         ==========================================
-        TABLE AREA - THE FIX
+        TABLE AREA - DUAL-HEADER FIX
         ==========================================
-        - overflow: auto allows both x and y scrolling
-        - position: sticky works natively (no react-window)
-        - direction: rtl makes flex start from right (A on right, C on left)
       */}
       <div 
         ref={tableContainerRef}
@@ -469,10 +555,10 @@ const SpeedEntryMatrix = ({ onBack }) => {
           position: 'relative'
         }}
       >
-        {/* Sticky Table Header */}
+        {/* ✅ DUAL-HEADER: صفين — وصفي + رمزي */}
         <div style={{
           display: 'flex',
-          alignItems: 'center',
+          alignItems: 'stretch', // ← مهم للتمدد العمودي
           position: 'sticky',
           top: 0,
           zIndex: 20,
@@ -484,7 +570,7 @@ const SpeedEntryMatrix = ({ onBack }) => {
           color: '#495057',
           minWidth: 'fit-content'
         }}>
-          {/* Sticky Column Header - Beneficiary */}
+          {/* Sticky Column Header */}
           <div style={{ 
             width: STICKY_COL_WIDTH, 
             minWidth: STICKY_COL_WIDTH,
@@ -498,35 +584,53 @@ const SpeedEntryMatrix = ({ onBack }) => {
             display: 'flex',
             alignItems: 'center',
             borderLeft: '2px solid #dee2e6',
-            boxSizing: 'border-box'
+            boxSizing: 'border-box',
+            fontSize: '13px'
           }}>
             الحمام / المستفيد
           </div>
 
-          {/* Group Headers - A, B, C will flow right-to-left naturally in RTL */}
+          {/* Group Headers with Dual-Layer Cells */}
           {Object.entries(GROUPS).map(([groupKey, group]) => (
             <div key={groupKey} style={{ display: 'flex', flexShrink: 0 }}>
+              {/* Group Toggle Column */}
               <div style={{ 
                 width: '30px', 
-                textAlign: 'center', 
-                color: group.color,
                 display: 'flex',
+                flexDirection: 'column',
                 alignItems: 'center',
-                justifyContent: 'center'
+                justifyContent: 'center',
+                background: group.color + '08',
+                borderLeft: `1px solid ${group.color}20`
               }}>
-                {groupKey}
+                <div style={{ fontSize: '9px', color: group.color, fontWeight: 'bold' }}>مجموعة</div>
+                <div style={{ fontSize: '14px', color: group.color, fontWeight: 'bold' }}>{groupKey}</div>
               </div>
+              
+              {/* Individual BoQ Codes — DUAL HEADER */}
               {group.codes.map(code => (
                 <div key={code} style={{ 
                   width: CELL_WIDTH, 
-                  textAlign: 'center',
-                  fontSize: '11px',
-                  color: group.color,
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center'
+                  borderLeft: '1px solid #e0e0e0',
+                  height: '100%'
                 }}>
-                  {code}
+                  {showLabels ? (
+                    <DualHeaderCell code={code} groupColor={group.color} />
+                  ) : (
+                    /* إذا تم إخفاء الأسماء — عرض الرمز فقط بحجم أكبر */
+                    <div style={{
+                      width: '100%',
+                      height: '100%',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      fontSize: '16px',
+                      fontWeight: 'bold',
+                      color: group.color
+                    }}>
+                      {code}
+                    </div>
+                  )}
                 </div>
               ))}
             </div>
@@ -550,13 +654,13 @@ const SpeedEntryMatrix = ({ onBack }) => {
                   minHeight: ITEM_HEIGHT
                 }}
               >
-                {/* ✅ FIX 1 & 2: Sticky Beneficiary Column - pinned to right (start of RTL) */}
+                {/* Sticky Beneficiary Column */}
                 <div style={{
                   width: STICKY_COL_WIDTH,
                   minWidth: STICKY_COL_WIDTH,
                   padding: '8px 12px',
                   borderLeft: '2px solid #e0e0e0',
-                  background: rowBg, // Must be explicit, not 'inherit'
+                  background: rowBg,
                   position: 'sticky',
                   right: 0,
                   zIndex: 10,
@@ -578,7 +682,7 @@ const SpeedEntryMatrix = ({ onBack }) => {
                   </div>
                 </div>
 
-                {/* ✅ FIX 4: Groups A→B→C flow naturally in RTL (A on right, C on left) */}
+                {/* Groups A→B→C */}
                 {Object.entries(GROUPS).map(([groupKey, group]) => (
                   <div key={groupKey} style={{ display: 'flex', flexShrink: 0 }}>
                     {/* Group Toggle */}
@@ -616,7 +720,7 @@ const SpeedEntryMatrix = ({ onBack }) => {
                       </button>
                     </div>
 
-                    {/* Individual Items - A1, A2... are adjacent */}
+                    {/* Individual Items */}
                     {group.codes.map(code => {
                       const item = row.items[code];
                       const key = `${latrine.id}-${code}`;
@@ -645,29 +749,53 @@ const SpeedEntryMatrix = ({ onBack }) => {
         </div>
       </div>
 
-      {/* Footer Legend */}
+      {/* ✅ NEW: Legend مُحسَّن يوضح البنود */}
       <div style={{
         background: '#f8f9fa',
         padding: '10px 20px',
         borderTop: '1px solid #dee2e6',
         display: 'flex',
-        gap: '20px',
-        fontSize: '12px',
+        gap: '15px',
+        fontSize: '11px',
         color: '#666',
-        flexWrap: 'wrap'
+        flexWrap: 'wrap',
+        alignItems: 'center'
       }}>
         <span><strong>الاختصارات:</strong></span>
         <span>🖱️ نقرة = تبديل الحالة</span>
         <span>🖱️🖱️ نقرة يمين = عكس الاتجاه</span>
         <span>⌨️ Ctrl+Z = تراجع</span>
         <span>⌨️ Ctrl+S = حفظ</span>
-        <span style={{ marginRight: 'auto' }}>
-          <strong>المفتاح:</strong>
-          <span style={{ margin: '0 5px' }}>⬜ لم يبدأ</span>
-          <span style={{ margin: '0 5px' }}>🔄 قيد العمل</span>
-          <span style={{ margin: '0 5px' }}>✅ مكتمل</span>
-          <span style={{ margin: '0 5px' }}>🔍 بانتظار الفحص</span>
-        </span>
+        
+        {/* ✅ NEW: معرض البنود الوصفية */}
+        <div style={{ 
+          marginRight: 'auto', 
+          display: 'flex', 
+          gap: '8px', 
+          flexWrap: 'wrap',
+          alignItems: 'center',
+          borderRight: '2px solid #dee2e6',
+          paddingRight: '15px'
+        }}>
+          <span style={{ fontWeight: 'bold', color: '#333' }}>البنود:</span>
+          {Object.entries(BOQ_LABELS).map(([code, info]) => (
+            <span 
+              key={code} 
+              style={{ 
+                background: GROUPS[code[0]]?.color + '15',
+                color: GROUPS[code[0]]?.color,
+                padding: '2px 6px',
+                borderRadius: '3px',
+                fontSize: '10px',
+                whiteSpace: 'nowrap',
+                border: `1px solid ${GROUPS[code[0]]?.color}30`
+              }}
+              title={info.name}
+            >
+              <strong>{code}</strong> {info.short}
+            </span>
+          ))}
+        </div>
       </div>
 
       {/* Confirm Modal */}
