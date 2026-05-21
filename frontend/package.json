@@ -1,6 +1,6 @@
 {
   "name": "nrc-latrine-frontend",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "private": true,
   "dependencies": {
     "react": "^18.2.0",
@@ -9,6 +9,8 @@
     "dexie": "^3.2.4",
     "dexie-react-hooks": "^1.1.7",
     "uuid": "^9.0.1",
+    "react-window": "^1.8.10",
+    "react-virtualized-auto-sizer": "^1.0.24",
     "workbox-background-sync": "^6.5.4",
     "workbox-broadcast-update": "^6.5.4",
     "workbox-cacheable-response": "^6.5.4",
