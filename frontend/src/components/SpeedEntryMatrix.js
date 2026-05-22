@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
+import { FixedSizeList as List } from 'react-window';
+import AutoSizer from 'react-virtualized-auto-sizer';
 import { db } from '../db';
 import { pushToSyncQueue } from '../syncEngine';
 
@@ -7,11 +9,10 @@ import { pushToSyncQueue } from '../syncEngine';
 // Constants & Configuration
 // ==========================================
 const ITEM_HEIGHT = 60;
-const HEADER_HEIGHT = 72; // ← زيادة لاستيعاب صفين
+const HEADER_HEIGHT = 72;
 const STICKY_COL_WIDTH = 200;
-const CELL_WIDTH = 100; // ← زيادة طفيفة لاستيعاب النص
+const CELL_WIDTH = 100;
 
-// ✅ NEW: قاموس البنود الوصفي — يُربط بالرمز
 const BOQ_LABELS = {
   'A1': { name: 'حفر وتسوية + أساس حجر', short: 'حفر/أساس', unit: 'م³' },
   'A2': { name: 'جدران بلك مفرغ 15سم', short: 'جدران بلك', unit: 'م²' },
@@ -68,13 +69,7 @@ class HistoryManager {
     return null;
   }
 
-  redo() {
-    if (this.index < this.stack.length - 1) return this.stack[++this.index];
-    return null;
-  }
-
   canUndo() { return this.index >= 0; }
-  canRedo() { return this.index < this.stack.length - 1; }
 }
 
 // ==========================================
@@ -113,54 +108,20 @@ const StatusCell = React.memo(({ item, onToggle, isSelected }) => {
   );
 });
 
-// ✅ NEW: مكون Header خلية ثنائية الطبقات
 const DualHeaderCell = ({ code, groupColor }) => {
   const info = BOQ_LABELS[code] || { name: code, short: code, unit: '' };
-  
   return (
     <div style={{
-      width: CELL_WIDTH,
-      display: 'flex',
-      flexDirection: 'column',
-      alignItems: 'center',
-      justifyContent: 'center',
-      height: '100%',
-      padding: '2px',
-      boxSizing: 'border-box'
+      width: CELL_WIDTH, display: 'flex', flexDirection: 'column', alignItems: 'center',
+      justifyContent: 'center', height: '100%', padding: '2px', boxSizing: 'border-box'
     }}>
-      {/* الصف العلوي: اسم البند الوصفي — مصغر */}
-      <div style={{
-        fontSize: '9px',
-        color: '#555',
-        textAlign: 'center',
-        lineHeight: '1.2',
-        maxHeight: '22px',
-        overflow: 'hidden',
-        textOverflow: 'ellipsis',
-        whiteSpace: 'nowrap',
-        width: '100%',
-        direction: 'rtl'
-      }} title={info.name}>
+      <div style={{ fontSize: '9px', color: '#555', textAlign: 'center', lineHeight: '1.2', maxHeight: '22px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', width: '100%', direction: 'rtl' }} title={info.name}>
         {info.short}
       </div>
-      
-      {/* الصف السفلي: الرمز — بارز */}
-      <div style={{
-        fontSize: '13px',
-        fontWeight: 'bold',
-        color: groupColor,
-        textAlign: 'center',
-        lineHeight: '1.1'
-      }}>
+      <div style={{ fontSize: '13px', fontWeight: 'bold', color: groupColor, textAlign: 'center', lineHeight: '1.1' }}>
         {code}
       </div>
-      
-      {/* الوحدة — مصغرة جداً */}
-      <div style={{
-        fontSize: '8px',
-        color: '#999',
-        textAlign: 'center'
-      }}>
+      <div style={{ fontSize: '8px', color: '#999', textAlign: 'center' }}>
         {info.unit}
       </div>
     </div>
@@ -171,47 +132,34 @@ const DualHeaderCell = ({ code, groupColor }) => {
 // Main Component
 // ==========================================
 const SpeedEntryMatrix = ({ onBack }) => {
-  // --- State Management ---
   const [localChanges, setLocalChanges] = useState(new Map());
-  const [selectedCell, setSelectedCell] = useState(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [filterBlock, setFilterBlock] = useState('');
   const [isSaving, setIsSaving] = useState(false);
   const [saveMessage, setSaveMessage] = useState(null);
   const [showConfirmModal, setShowConfirmModal] = useState(false);
-  const [showLabels, setShowLabels] = useState(true); // ✅ toggle لإظهار/إخفاء الأسماء
+  const [showLabels, setShowLabels] = useState(true);
 
   const historyRef = useRef(new HistoryManager());
-  const tableContainerRef = useRef(null);
 
-  // --- Live Queries ---
   const latrines = useLiveQuery(() => db.latrines.toArray(), []);
   const boqItems = useLiveQuery(() => db.boq_items.toArray(), []);
 
-  // --- Build Matrix Data ---
   const matrixData = useMemo(() => {
     if (!latrines || !boqItems) return [];
     return latrines.map(latrine => {
       const items = boqItems.filter(item => item.latrine_id === latrine.id);
       const itemMap = {};
       items.forEach(item => { itemMap[item.boq_code] = item; });
-      return {
-        latrine,
-        items: itemMap,
-        progress: latrine.overall_pct || 0
-      };
+      return { latrine, items: itemMap, progress: latrine.overall_pct || 0 };
     });
   }, [latrines, boqItems]);
 
-  // --- Filtering ---
   const filteredData = useMemo(() => {
     let data = matrixData;
     if (searchQuery) {
       const q = searchQuery.toLowerCase();
-      data = data.filter(row => 
-        row.latrine.latrine_id.toLowerCase().includes(q) ||
-        (row.latrine.beneficiary_hh || '').toLowerCase().includes(q)
-      );
+      data = data.filter(row => row.latrine.latrine_id.toLowerCase().includes(q) || (row.latrine.beneficiary_hh || '').toLowerCase().includes(q));
     }
     if (filterBlock) {
       data = data.filter(row => row.latrine.block_no === filterBlock);
@@ -219,13 +167,11 @@ const SpeedEntryMatrix = ({ onBack }) => {
     return data;
   }, [matrixData, searchQuery, filterBlock]);
 
-  // --- Unique Blocks ---
   const blocks = useMemo(() => {
     if (!latrines) return [];
     return [...new Set(latrines.map(l => l.block_no).filter(Boolean))].sort();
   }, [latrines]);
 
-  // --- Statistics ---
   const stats = useMemo(() => {
     const total = filteredData.length;
     const completed = filteredData.filter(r => r.progress >= 99.9).length;
@@ -234,7 +180,6 @@ const SpeedEntryMatrix = ({ onBack }) => {
     return { total, completed, inProgress, notStarted };
   }, [filteredData]);
 
-  // --- Toggle Logic ---
   const handleToggle = useCallback((latrineId, boqCode, direction = 'forward') => {
     const key = `${latrineId}-${boqCode}`;
     const currentItem = matrixData.find(r => r.latrine.id === latrineId)?.items[boqCode];
@@ -245,12 +190,7 @@ const SpeedEntryMatrix = ({ onBack }) => {
 
     let newStatus;
     if (direction === 'right') {
-      const reverseMap = {
-        'not_started': 'pending_inspection',
-        'pending_inspection': 'completed',
-        'completed': 'in_progress',
-        'in_progress': 'not_started'
-      };
+      const reverseMap = { 'not_started': 'pending_inspection', 'pending_inspection': 'completed', 'completed': 'in_progress', 'in_progress': 'not_started' };
       newStatus = reverseMap[currentStatus];
     } else {
       newStatus = config.next;
@@ -258,20 +198,11 @@ const SpeedEntryMatrix = ({ onBack }) => {
 
     const newPct = STATUS_CYCLE[newStatus].pct;
 
-    historyRef.current.push({
-      type: 'toggle',
-      latrineId,
-      boqCode,
-      from: currentStatus,
-      to: newStatus,
-      fromPct: currentItem.achievement_pct || 0,
-      toPct: newPct
-    });
+    historyRef.current.push({ type: 'toggle', latrineId, boqCode, from: currentStatus, to: newStatus, fromPct: currentItem.achievement_pct || 0, toPct: newPct });
 
     setLocalChanges(prev => new Map(prev).set(key, {
       status: newStatus,
-      achieved_qty: newPct === 100 ? currentItem.planned_qty : 
-                    newPct === 50 ? (currentItem.planned_qty * 0.5) : 0,
+      achieved_qty: newPct === 100 ? currentItem.planned_qty : newPct === 50 ? (currentItem.planned_qty * 0.5) : 0,
       achievement_pct: newPct,
       quality_pass: newStatus === 'completed' ? 'pass' : 'pending',
       itemId: currentItem.id,
@@ -279,7 +210,6 @@ const SpeedEntryMatrix = ({ onBack }) => {
     }));
   }, [matrixData, localChanges]);
 
-  // --- Group Toggle ---
   const handleGroupToggle = useCallback((latrineId, groupKey) => {
     const group = GROUPS[groupKey];
     const row = matrixData.find(r => r.latrine.id === latrineId);
@@ -311,17 +241,10 @@ const SpeedEntryMatrix = ({ onBack }) => {
       });
     });
 
-    historyRef.current.push({
-      type: 'group_toggle',
-      latrineId,
-      groupKey,
-      to: targetStatus
-    });
-
+    historyRef.current.push({ type: 'group_toggle', latrineId, groupKey, to: targetStatus });
     setLocalChanges(newChanges);
   }, [matrixData, localChanges]);
 
-  // --- Undo ---
   const handleUndo = useCallback(() => {
     const action = historyRef.current.undo();
     if (!action) return;
@@ -337,8 +260,7 @@ const SpeedEntryMatrix = ({ onBack }) => {
       } else {
         setLocalChanges(prev => new Map(prev).set(key, {
           status: action.from,
-          achieved_qty: action.fromPct === 100 ? currentItem.planned_qty : 
-                        action.fromPct === 50 ? (currentItem.planned_qty * 0.5) : 0,
+          achieved_qty: action.fromPct === 100 ? currentItem.planned_qty : action.fromPct === 50 ? (currentItem.planned_qty * 0.5) : 0,
           achievement_pct: action.fromPct,
           quality_pass: action.from === 'completed' ? 'pass' : 'pending',
           itemId: currentItem.id,
@@ -348,10 +270,8 @@ const SpeedEntryMatrix = ({ onBack }) => {
     }
   }, [matrixData, localChanges]);
 
-  // --- Save Draft ---
   const handleSaveDraft = useCallback(async () => {
     if (localChanges.size === 0) return;
-
     const changesCount = localChanges.size;
     setIsSaving(true);
 
@@ -359,18 +279,12 @@ const SpeedEntryMatrix = ({ onBack }) => {
       await db.transaction('rw', db.boq_items, db.sync_queue, async () => {
         for (const [key, change] of localChanges) {
           await db.boq_items.update(change.itemId, {
-            achieved_qty: change.achieved_qty,
-            status: change.status,
-            achievement_pct: change.achievement_pct,
-            quality_pass: change.quality_pass
+            achieved_qty: change.achieved_qty, status: change.status,
+            achievement_pct: change.achievement_pct, quality_pass: change.quality_pass
           });
-
           await pushToSyncQueue('UPDATE_BOQ', {
-            id: change.itemId,
-            achieved_qty: change.achieved_qty,
-            status: change.status,
-            quality_pass: change.quality_pass,
-            latrine_id: change.latrineId
+            id: change.itemId, achieved_qty: change.achieved_qty,
+            status: change.status, quality_pass: change.quality_pass, latrine_id: change.latrineId
           });
         }
       });
@@ -386,471 +300,188 @@ const SpeedEntryMatrix = ({ onBack }) => {
     }
   }, [localChanges]);
 
-  // --- Keyboard Navigation ---
   useEffect(() => {
     const handleKeyDown = (e) => {
       if (e.ctrlKey || e.metaKey) {
-        if (e.key === 'z') {
-          e.preventDefault();
-          handleUndo();
-        }
-        if (e.key === 's') {
-          e.preventDefault();
-          handleSaveDraft();
-        }
+        if (e.key === 'z') { e.preventDefault(); handleUndo(); }
+        if (e.key === 's') { e.preventDefault(); handleSaveDraft(); }
       }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [handleUndo, handleSaveDraft]);
 
-  // --- Loading State ---
+  // ==========================================
+  // 🚀 Virtualized Row Component
+  // ==========================================
+  const VirtualRow = useCallback(({ index, style }) => {
+    const row = filteredData[index];
+    const latrine = row.latrine;
+    const rowBg = index % 2 === 0 ? '#fafafa' : 'white';
+
+    return (
+      <div style={{ ...style, display: 'flex', alignItems: 'center', borderBottom: '1px solid #e0e0e0', background: rowBg }}>
+        {/* Sticky Beneficiary Column */}
+        <div style={{
+          width: STICKY_COL_WIDTH, minWidth: STICKY_COL_WIDTH, padding: '8px 12px', borderLeft: '2px solid #e0e0e0',
+          background: rowBg, position: 'sticky', right: 0, zIndex: 10, flexShrink: 0, boxSizing: 'border-box',
+          alignSelf: 'stretch', display: 'flex', flexDirection: 'column', justifyContent: 'center'
+        }}>
+          <div style={{ fontWeight: 'bold', color: '#1F4E78', fontSize: '13px' }}>{latrine.latrine_id}</div>
+          <div style={{ fontSize: '11px', color: '#666', marginTop: '2px' }}>{latrine.beneficiary_hh || '—'}</div>
+          <div style={{ fontSize: '10px', color: '#999' }}>{latrine.block_no} | {row.progress.toFixed(0)}%</div>
+        </div>
+
+        {/* Groups A→B→C */}
+        {Object.entries(GROUPS).map(([groupKey, group]) => (
+          <div key={groupKey} style={{ display: 'flex', flexShrink: 0 }}>
+            {/* Group Toggle */}
+            <div style={{ width: '30px', display: 'flex', alignItems: 'center', justifyContent: 'center', background: group.color + '10', flexShrink: 0 }}>
+              <button
+                onClick={() => handleGroupToggle(latrine.id, groupKey)}
+                style={{ width: '24px', height: '24px', border: `2px solid ${group.color}`, borderRadius: '4px', background: 'white', cursor: 'pointer', fontSize: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+              >
+                {group.codes.every(code => {
+                  const item = row.items[code];
+                  if (!item) return true;
+                  const key = `${latrine.id}-${code}`;
+                  const status = localChanges.get(key)?.status || item.status || 'not_started';
+                  return status === 'completed';
+                }) ? '✓' : '+'}
+              </button>
+            </div>
+
+            {/* Individual Items */}
+            {group.codes.map(code => {
+              const item = row.items[code];
+              const key = `${latrine.id}-${code}`;
+              const isModified = localChanges.has(key);
+
+              if (!item) return <div key={code} style={{ width: CELL_WIDTH, flexShrink: 0 }} />;
+
+              return (
+                <div key={code} style={{ width: CELL_WIDTH, padding: '2px', flexShrink: 0 }}>
+                  <StatusCell
+                    item={{ ...item, status: localChanges.get(key)?.status || item.status }}
+                    onToggle={() => handleToggle(latrine.id, code)}
+                    isSelected={isModified}
+                  />
+                </div>
+              );
+            })}
+          </div>
+        ))}
+      </div>
+    );
+  }, [filteredData, localChanges, handleToggle, handleGroupToggle]);
+
   if (!latrines || !boqItems) {
     return (
       <div style={{ textAlign: 'center', padding: '60px', direction: 'rtl' }}>
         <div style={{ fontSize: '48px', marginBottom: '20px' }}>⏳</div>
         <h3>جاري بناء مصفوفة الإدخال السريع...</h3>
-        <p style={{ color: '#7f8c8d' }}>يتم تحميل {latrines?.length || 0} حمام و {boqItems?.length || 0} بند</p>
       </div>
     );
   }
 
   return (
-    <div style={{ direction: 'rtl', height: '100vh', display: 'flex', flexDirection: 'column' }}>
-      {/* Header */}
-      <div style={{
-        background: '#1F4E78',
-        color: 'white',
-        padding: '15px 20px',
-        display: 'flex',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-        flexWrap: 'wrap',
-        gap: '10px'
-      }}>
+    <div style={{ direction: 'rtl', height: 'calc(100vh - 60px)', display: 'flex', flexDirection: 'column' }}>
+      {/* Header Area */}
+      <div style={{ background: '#1F4E78', color: 'white', padding: '15px 20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
         <div>
           <h2 style={{ margin: 0, fontSize: '20px' }}>⚡ الإدخال السريع (Speed Entry)</h2>
           <p style={{ margin: '5px 0 0 0', fontSize: '12px', opacity: 0.8 }}>
             {stats.total} حمام | {stats.completed} مكتمل | {stats.inProgress} قيد العمل | {stats.notStarted} لم يبدأ
           </p>
         </div>
-
         <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
-          <input
-            type="text"
-            placeholder="🔍 بحث برقم أو اسم..."
-            value={searchQuery}
-            onChange={e => setSearchQuery(e.target.value)}
-            style={{
-              padding: '8px 12px',
-              borderRadius: '4px',
-              border: 'none',
-              width: '200px',
-              fontSize: '13px'
-            }}
-          />
-
-          <select
-            value={filterBlock}
-            onChange={e => setFilterBlock(e.target.value)}
-            style={{ padding: '8px', borderRadius: '4px', border: 'none', fontSize: '13px' }}
-          >
+          <input type="text" placeholder="🔍 بحث برقم أو اسم..." value={searchQuery} onChange={e => setSearchQuery(e.target.value)} style={{ padding: '8px 12px', borderRadius: '4px', border: 'none', width: '200px', fontSize: '13px' }} />
+          <select value={filterBlock} onChange={e => setFilterBlock(e.target.value)} style={{ padding: '8px', borderRadius: '4px', border: 'none', fontSize: '13px' }}>
             <option value="">كل المربعات</option>
             {blocks.map(b => <option key={b} value={b}>{b}</option>)}
           </select>
-
-          {/* ✅ NEW: زر إظهار/إخفاء الأسماء */}
-          <button
-            onClick={() => setShowLabels(!showLabels)}
-            style={{
-              padding: '8px 12px',
-              background: showLabels ? 'rgba(255,215,0,0.3)' : 'rgba(255,255,255,0.1)',
-              color: 'white',
-              border: '1px solid rgba(255,255,255,0.3)',
-              borderRadius: '4px',
-              cursor: 'pointer',
-              fontSize: '12px',
-              fontWeight: 'bold'
-            }}
-            title={showLabels ? 'إخفاء أسماء البنود' : 'إظهار أسماء البنود'}
-          >
+          <button onClick={() => setShowLabels(!showLabels)} style={{ padding: '8px 12px', background: showLabels ? 'rgba(255,215,0,0.3)' : 'rgba(255,255,255,0.1)', color: 'white', border: '1px solid rgba(255,255,255,0.3)', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold' }}>
             {showLabels ? '🏷️ الأسماء: ON' : '🏷️ الأسماء: OFF'}
           </button>
-
-          <button
-            onClick={handleUndo}
-            disabled={!historyRef.current.canUndo()}
-            style={{
-              padding: '8px 16px',
-              background: historyRef.current.canUndo() ? 'rgba(255,255,255,0.2)' : 'rgba(255,255,255,0.05)',
-              color: 'white',
-              border: '1px solid rgba(255,255,255,0.3)',
-              borderRadius: '4px',
-              cursor: historyRef.current.canUndo() ? 'pointer' : 'not-allowed',
-              fontSize: '13px'
-            }}
-            title="تراجع (Ctrl+Z)"
-          >
+          <button onClick={handleUndo} disabled={!historyRef.current.canUndo()} style={{ padding: '8px 16px', background: historyRef.current.canUndo() ? 'rgba(255,255,255,0.2)' : 'rgba(255,255,255,0.05)', color: 'white', border: '1px solid rgba(255,255,255,0.3)', borderRadius: '4px', cursor: historyRef.current.canUndo() ? 'pointer' : 'not-allowed', fontSize: '13px' }}>
             ↩️ تراجع
           </button>
-
-          <button
-            onClick={() => localChanges.size > 0 ? setShowConfirmModal(true) : null}
-            disabled={localChanges.size === 0 || isSaving}
-            style={{
-              padding: '8px 20px',
-              background: localChanges.size > 0 ? '#27ae60' : '#95a5a6',
-              color: 'white',
-              border: 'none',
-              borderRadius: '4px',
-              cursor: localChanges.size > 0 ? 'pointer' : 'not-allowed',
-              fontWeight: 'bold',
-              fontSize: '14px',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '5px'
-            }}
-          >
-            {isSaving ? '⏳' : '💾'} 
-            حفظ ({localChanges.size})
+          <button onClick={() => localChanges.size > 0 ? setShowConfirmModal(true) : null} disabled={localChanges.size === 0 || isSaving} style={{ padding: '8px 20px', background: localChanges.size > 0 ? '#27ae60' : '#95a5a6', color: 'white', border: 'none', borderRadius: '4px', cursor: localChanges.size > 0 ? 'pointer' : 'not-allowed', fontWeight: 'bold', fontSize: '14px', display: 'flex', alignItems: 'center', gap: '5px' }}>
+            {isSaving ? '⏳' : '💾'} حفظ ({localChanges.size})
           </button>
-
-          <button onClick={onBack} style={{
-            padding: '8px 16px',
-            background: 'rgba(255,255,255,0.1)',
-            color: 'white',
-            border: '1px solid rgba(255,255,255,0.3)',
-            borderRadius: '4px',
-            cursor: 'pointer'
-          }}>
-            ← عودة
-          </button>
+          <button onClick={onBack} style={{ padding: '8px 16px', background: 'rgba(255,255,255,0.1)', color: 'white', border: '1px solid rgba(255,255,255,0.3)', borderRadius: '4px', cursor: 'pointer' }}>← عودة</button>
         </div>
       </div>
 
-      {/* Save Message */}
       {saveMessage && (
-        <div style={{
-          padding: '10px 20px',
-          background: saveMessage.type === 'success' ? '#d4edda' : '#f8d7da',
-          color: saveMessage.type === 'success' ? '#155724' : '#721c24',
-          fontWeight: 'bold',
-          textAlign: 'center'
-        }}>
+        <div style={{ padding: '10px 20px', background: saveMessage.type === 'success' ? '#d4edda' : '#f8d7da', color: saveMessage.type === 'success' ? '#155724' : '#721c24', fontWeight: 'bold', textAlign: 'center' }}>
           {saveMessage.type === 'success' ? '✅' : '❌'} {saveMessage.text}
         </div>
       )}
 
-      {/* 
-        ==========================================
-        TABLE AREA - DUAL-HEADER FIX
-        ==========================================
-      */}
-      <div 
-        ref={tableContainerRef}
-        style={{ 
-          flex: 1, 
-          overflow: 'auto', 
-          background: 'white',
-          position: 'relative'
-        }}
-      >
-        {/* ✅ DUAL-HEADER: صفين — وصفي + رمزي */}
-        <div style={{
-          display: 'flex',
-          alignItems: 'stretch', // ← مهم للتمدد العمودي
-          position: 'sticky',
-          top: 0,
-          zIndex: 20,
-          background: '#f8f9fa',
-          borderBottom: '2px solid #dee2e6',
-          height: HEADER_HEIGHT,
-          fontSize: '12px',
-          fontWeight: 'bold',
-          color: '#495057',
-          minWidth: 'fit-content'
-        }}>
-          {/* Sticky Column Header */}
-          <div style={{ 
-            width: STICKY_COL_WIDTH, 
-            minWidth: STICKY_COL_WIDTH,
-            padding: '0 12px', 
-            textAlign: 'right',
-            position: 'sticky',
-            right: 0,
-            background: '#f8f9fa',
-            zIndex: 21,
-            height: '100%',
-            display: 'flex',
-            alignItems: 'center',
-            borderLeft: '2px solid #dee2e6',
-            boxSizing: 'border-box',
-            fontSize: '13px'
-          }}>
-            الحمام / المستفيد
-          </div>
-
-          {/* Group Headers with Dual-Layer Cells */}
-          {Object.entries(GROUPS).map(([groupKey, group]) => (
-            <div key={groupKey} style={{ display: 'flex', flexShrink: 0 }}>
-              {/* Group Toggle Column */}
-              <div style={{ 
-                width: '30px', 
-                display: 'flex',
-                flexDirection: 'column',
-                alignItems: 'center',
-                justifyContent: 'center',
-                background: group.color + '08',
-                borderLeft: `1px solid ${group.color}20`
-              }}>
-                <div style={{ fontSize: '9px', color: group.color, fontWeight: 'bold' }}>مجموعة</div>
-                <div style={{ fontSize: '14px', color: group.color, fontWeight: 'bold' }}>{groupKey}</div>
-              </div>
-              
-              {/* Individual BoQ Codes — DUAL HEADER */}
-              {group.codes.map(code => (
-                <div key={code} style={{ 
-                  width: CELL_WIDTH, 
-                  borderLeft: '1px solid #e0e0e0',
-                  height: '100%'
-                }}>
-                  {showLabels ? (
-                    <DualHeaderCell code={code} groupColor={group.color} />
-                  ) : (
-                    /* إذا تم إخفاء الأسماء — عرض الرمز فقط بحجم أكبر */
-                    <div style={{
-                      width: '100%',
-                      height: '100%',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      fontSize: '16px',
-                      fontWeight: 'bold',
-                      color: group.color
-                    }}>
-                      {code}
-                    </div>
-                  )}
-                </div>
-              ))}
+      {/* 🚀 Virtualized Table Area */}
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', background: 'white', overflowX: 'auto' }}>
+        <div style={{ minWidth: 'fit-content', height: '100%', display: 'flex', flexDirection: 'column' }}>
+          
+          {/* Sticky Header */}
+          <div style={{ display: 'flex', alignItems: 'stretch', position: 'sticky', top: 0, zIndex: 20, background: '#f8f9fa', borderBottom: '2px solid #dee2e6', height: HEADER_HEIGHT, fontSize: '12px', fontWeight: 'bold', color: '#495057' }}>
+            <div style={{ width: STICKY_COL_WIDTH, minWidth: STICKY_COL_WIDTH, padding: '0 12px', textAlign: 'right', position: 'sticky', right: 0, background: '#f8f9fa', zIndex: 21, display: 'flex', alignItems: 'center', borderLeft: '2px solid #dee2e6', boxSizing: 'border-box', fontSize: '13px' }}>
+              الحمام / المستفيد
             </div>
-          ))}
-        </div>
-
-        {/* Table Body */}
-        <div style={{ minWidth: 'fit-content' }}>
-          {filteredData.map((row, index) => {
-            const latrine = row.latrine;
-            const rowBg = index % 2 === 0 ? '#fafafa' : 'white';
-
-            return (
-              <div 
-                key={latrine.id} 
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  borderBottom: '1px solid #e0e0e0',
-                  background: rowBg,
-                  minHeight: ITEM_HEIGHT
-                }}
-              >
-                {/* Sticky Beneficiary Column */}
-                <div style={{
-                  width: STICKY_COL_WIDTH,
-                  minWidth: STICKY_COL_WIDTH,
-                  padding: '8px 12px',
-                  borderLeft: '2px solid #e0e0e0',
-                  background: rowBg,
-                  position: 'sticky',
-                  right: 0,
-                  zIndex: 10,
-                  flexShrink: 0,
-                  boxSizing: 'border-box',
-                  alignSelf: 'stretch',
-                  display: 'flex',
-                  flexDirection: 'column',
-                  justifyContent: 'center'
-                }}>
-                  <div style={{ fontWeight: 'bold', color: '#1F4E78', fontSize: '13px' }}>
-                    {latrine.latrine_id}
-                  </div>
-                  <div style={{ fontSize: '11px', color: '#666', marginTop: '2px' }}>
-                    {latrine.beneficiary_hh || '—'}
-                  </div>
-                  <div style={{ fontSize: '10px', color: '#999' }}>
-                    {latrine.block_no} | {row.progress.toFixed(0)}%
-                  </div>
+            {Object.entries(GROUPS).map(([groupKey, group]) => (
+              <div key={groupKey} style={{ display: 'flex', flexShrink: 0 }}>
+                <div style={{ width: '30px', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', background: group.color + '08', borderLeft: `1px solid ${group.color}20` }}>
+                  <div style={{ fontSize: '9px', color: group.color, fontWeight: 'bold' }}>مجموعة</div>
+                  <div style={{ fontSize: '14px', color: group.color, fontWeight: 'bold' }}>{groupKey}</div>
                 </div>
-
-                {/* Groups A→B→C */}
-                {Object.entries(GROUPS).map(([groupKey, group]) => (
-                  <div key={groupKey} style={{ display: 'flex', flexShrink: 0 }}>
-                    {/* Group Toggle */}
-                    <div style={{
-                      width: '30px',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      background: group.color + '10',
-                      flexShrink: 0
-                    }}>
-                      <button
-                        onClick={() => handleGroupToggle(latrine.id, groupKey)}
-                        style={{
-                          width: '24px',
-                          height: '24px',
-                          border: `2px solid ${group.color}`,
-                          borderRadius: '4px',
-                          background: 'white',
-                          cursor: 'pointer',
-                          fontSize: '12px',
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'center'
-                        }}
-                        title={`تأشير مجموعة ${group.label}`}
-                      >
-                        {group.codes.every(code => {
-                          const item = row.items[code];
-                          if (!item) return true;
-                          const key = `${latrine.id}-${code}`;
-                          const status = localChanges.get(key)?.status || item.status || 'not_started';
-                          return status === 'completed';
-                        }) ? '✓' : '+'}
-                      </button>
-                    </div>
-
-                    {/* Individual Items */}
-                    {group.codes.map(code => {
-                      const item = row.items[code];
-                      const key = `${latrine.id}-${code}`;
-                      const isModified = localChanges.has(key);
-
-                      if (!item) return <div key={code} style={{ width: CELL_WIDTH, flexShrink: 0 }} />;
-
-                      return (
-                        <div key={code} style={{ width: CELL_WIDTH, padding: '2px', flexShrink: 0 }}>
-                          <StatusCell
-                            item={{
-                              ...item,
-                              status: localChanges.get(key)?.status || item.status
-                            }}
-                            onToggle={() => handleToggle(latrine.id, code)}
-                            isSelected={isModified}
-                          />
-                        </div>
-                      );
-                    })}
+                {group.codes.map(code => (
+                  <div key={code} style={{ width: CELL_WIDTH, borderLeft: '1px solid #e0e0e0', height: '100%' }}>
+                    {showLabels ? <DualHeaderCell code={code} groupColor={group.color} /> : <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '16px', fontWeight: 'bold', color: group.color }}>{code}</div>}
                   </div>
                 ))}
               </div>
-            );
-          })}
+            ))}
+          </div>
+
+          {/* 🚀 react-window AutoSizer & List */}
+          <div style={{ flex: 1, position: 'relative' }}>
+            <AutoSizer>
+              {({ height, width }) => (
+                <List
+                  height={height}
+                  itemCount={filteredData.length}
+                  itemSize={ITEM_HEIGHT}
+                  width={width}
+                  direction="rtl"
+                  overscanCount={5}
+                >
+                  {VirtualRow}
+                </List>
+              )}
+            </AutoSizer>
+          </div>
+
         </div>
       </div>
 
-      {/* ✅ NEW: Legend مُحسَّن يوضح البنود */}
-      <div style={{
-        background: '#f8f9fa',
-        padding: '10px 20px',
-        borderTop: '1px solid #dee2e6',
-        display: 'flex',
-        gap: '15px',
-        fontSize: '11px',
-        color: '#666',
-        flexWrap: 'wrap',
-        alignItems: 'center'
-      }}>
+      {/* Legend */}
+      <div style={{ background: '#f8f9fa', padding: '10px 20px', borderTop: '1px solid #dee2e6', display: 'flex', gap: '15px', fontSize: '11px', color: '#666', flexWrap: 'wrap', alignItems: 'center' }}>
         <span><strong>الاختصارات:</strong></span>
         <span>🖱️ نقرة = تبديل الحالة</span>
         <span>🖱️🖱️ نقرة يمين = عكس الاتجاه</span>
         <span>⌨️ Ctrl+Z = تراجع</span>
         <span>⌨️ Ctrl+S = حفظ</span>
-        
-        {/* ✅ NEW: معرض البنود الوصفية */}
-        <div style={{ 
-          marginRight: 'auto', 
-          display: 'flex', 
-          gap: '8px', 
-          flexWrap: 'wrap',
-          alignItems: 'center',
-          borderRight: '2px solid #dee2e6',
-          paddingRight: '15px'
-        }}>
-          <span style={{ fontWeight: 'bold', color: '#333' }}>البنود:</span>
-          {Object.entries(BOQ_LABELS).map(([code, info]) => (
-            <span 
-              key={code} 
-              style={{ 
-                background: GROUPS[code[0]]?.color + '15',
-                color: GROUPS[code[0]]?.color,
-                padding: '2px 6px',
-                borderRadius: '3px',
-                fontSize: '10px',
-                whiteSpace: 'nowrap',
-                border: `1px solid ${GROUPS[code[0]]?.color}30`
-              }}
-              title={info.name}
-            >
-              <strong>{code}</strong> {info.short}
-            </span>
-          ))}
-        </div>
       </div>
 
       {/* Confirm Modal */}
       {showConfirmModal && (
-        <div style={{
-          position: 'fixed',
-          top: 0, left: 0, right: 0, bottom: 0,
-          background: 'rgba(0,0,0,0.5)',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          zIndex: 1000
-        }}>
-          <div style={{
-            background: 'white',
-            padding: '30px',
-            borderRadius: '8px',
-            maxWidth: '400px',
-            textAlign: 'center'
-          }}>
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
+          <div style={{ background: 'white', padding: '30px', borderRadius: '8px', maxWidth: '400px', textAlign: 'center' }}>
             <h3 style={{ margin: '0 0 15px 0', color: '#1F4E78' }}>💾 حفظ التعديلات</h3>
             <p>هل أنت متأكد من حفظ {localChanges.size} تعديل؟</p>
-            <p style={{ fontSize: '12px', color: '#7f8c8d' }}>
-              سيتم حفظها محلياً وإضافتها لطابور المزامنة
-            </p>
             <div style={{ display: 'flex', gap: '10px', justifyContent: 'center', marginTop: '20px' }}>
-              <button
-                onClick={() => setShowConfirmModal(false)}
-                style={{
-                  padding: '10px 20px',
-                  background: '#ecf0f1',
-                  border: 'none',
-                  borderRadius: '4px',
-                  cursor: 'pointer'
-                }}
-              >
-                إلغاء
-              </button>
-              <button
-                onClick={() => {
-                  setShowConfirmModal(false);
-                  handleSaveDraft();
-                }}
-                style={{
-                  padding: '10px 20px',
-                  background: '#27ae60',
-                  color: 'white',
-                  border: 'none',
-                  borderRadius: '4px',
-                  cursor: 'pointer',
-                  fontWeight: 'bold'
-                }}
-              >
-                ✅ تأكيد الحفظ
-              </button>
+              <button onClick={() => setShowConfirmModal(false)} style={{ padding: '10px 20px', background: '#ecf0f1', border: 'none', borderRadius: '4px', cursor: 'pointer' }}>إلغاء</button>
+              <button onClick={() => { setShowConfirmModal(false); handleSaveDraft(); }} style={{ padding: '10px 20px', background: '#27ae60', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>✅ تأكيد الحفظ</button>
             </div>
           </div>
         </div>
