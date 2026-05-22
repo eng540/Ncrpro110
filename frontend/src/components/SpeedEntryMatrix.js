@@ -12,6 +12,9 @@ const ITEM_HEIGHT = 60;
 const HEADER_HEIGHT = 72;
 const STICKY_COL_WIDTH = 200;
 const CELL_WIDTH = 100;
+const GROUP_TOGGLE_WIDTH = 30;
+// العرض الإجمالي الدقيق للجدول = 200 + (3 * 30) + (13 * 100) = 1590
+const ROW_WIDTH = 1590; 
 
 const BOQ_LABELS = {
   'A1': { name: 'حفر وتسوية + أساس حجر', short: 'حفر/أساس', unit: 'م³' },
@@ -51,55 +54,33 @@ class HistoryManager {
     this.index = -1;
     this.limit = limit;
   }
-
   push(action) {
-    if (this.index < this.stack.length - 1) {
-      this.stack = this.stack.slice(0, this.index + 1);
-    }
+    if (this.index < this.stack.length - 1) this.stack = this.stack.slice(0, this.index + 1);
     this.stack.push({ ...action, timestamp: Date.now() });
-    if (this.stack.length > this.limit) {
-      this.stack.shift();
-    } else {
-      this.index++;
-    }
+    if (this.stack.length > this.limit) this.stack.shift();
+    else this.index++;
   }
-
   undo() {
     if (this.index >= 0) return this.stack[this.index--];
     return null;
   }
-
   canUndo() { return this.index >= 0; }
 }
 
 // ==========================================
 // Sub-Components
 // ==========================================
-
 const StatusCell = React.memo(({ item, onToggle, isSelected }) => {
   const status = item?.status || 'not_started';
   const config = STATUS_CYCLE[status];
-
   return (
     <button
       onClick={() => onToggle(item?.id)}
-      onContextMenu={(e) => {
-        e.preventDefault();
-        onToggle(item?.id, 'right');
-      }}
+      onContextMenu={(e) => { e.preventDefault(); onToggle(item?.id, 'right'); }}
       style={{
-        width: '100%',
-        height: '100%',
-        border: 'none',
-        background: isSelected ? '#e3f2fd' : config.color + '20',
-        cursor: 'pointer',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        fontSize: '20px',
-        transition: 'all 0.15s',
-        borderRadius: '4px',
-        margin: '2px'
+        width: '100%', height: '100%', border: 'none', background: isSelected ? '#e3f2fd' : config.color + '20',
+        cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
+        fontSize: '20px', transition: 'all 0.15s', borderRadius: '4px', margin: '2px'
       }}
       title={`${config.label} (${config.pct}%)`}
     >
@@ -111,22 +92,74 @@ const StatusCell = React.memo(({ item, onToggle, isSelected }) => {
 const DualHeaderCell = ({ code, groupColor }) => {
   const info = BOQ_LABELS[code] || { name: code, short: code, unit: '' };
   return (
-    <div style={{
-      width: CELL_WIDTH, display: 'flex', flexDirection: 'column', alignItems: 'center',
-      justifyContent: 'center', height: '100%', padding: '2px', boxSizing: 'border-box'
-    }}>
+    <div style={{ width: CELL_WIDTH, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', padding: '2px', boxSizing: 'border-box' }}>
       <div style={{ fontSize: '9px', color: '#555', textAlign: 'center', lineHeight: '1.2', maxHeight: '22px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', width: '100%', direction: 'rtl' }} title={info.name}>
         {info.short}
       </div>
-      <div style={{ fontSize: '13px', fontWeight: 'bold', color: groupColor, textAlign: 'center', lineHeight: '1.1' }}>
-        {code}
-      </div>
-      <div style={{ fontSize: '8px', color: '#999', textAlign: 'center' }}>
-        {info.unit}
-      </div>
+      <div style={{ fontSize: '13px', fontWeight: 'bold', color: groupColor, textAlign: 'center', lineHeight: '1.1' }}>{code}</div>
+      <div style={{ fontSize: '8px', color: '#999', textAlign: 'center' }}>{info.unit}</div>
     </div>
   );
 };
+
+// 🚀 المكون الداخلي للقائمة الافتراضية (يُجبر الصفوف على التمدد للعرض الكامل)
+const InnerElement = React.forwardRef(({ style, ...rest }, ref) => (
+  <div ref={ref} style={{ ...style, width: `${ROW_WIDTH}px`, direction: 'rtl' }} {...rest} />
+));
+
+// 🚀 الصف الافتراضي (مُحسّن للأداء العالي)
+const VirtualRow = React.memo(({ index, style, data }) => {
+  const { filteredData, localChanges, handleToggle, handleGroupToggle, showLabels } = data;
+  const row = filteredData[index];
+  const latrine = row.latrine;
+  const rowBg = index % 2 === 0 ? '#fafafa' : 'white';
+
+  return (
+    <div style={{ ...style, width: `${ROW_WIDTH}px`, display: 'flex', alignItems: 'center', borderBottom: '1px solid #e0e0e0', background: rowBg, boxSizing: 'border-box' }}>
+      {/* 🛡️ العمود المثبت (Sticky Column) */}
+      <div style={{
+        width: STICKY_COL_WIDTH, minWidth: STICKY_COL_WIDTH, padding: '8px 12px', borderLeft: '2px solid #e0e0e0',
+        background: rowBg, position: 'sticky', right: 0, zIndex: 10, flexShrink: 0, boxSizing: 'border-box',
+        alignSelf: 'stretch', display: 'flex', flexDirection: 'column', justifyContent: 'center'
+      }}>
+        <div style={{ fontWeight: 'bold', color: '#1F4E78', fontSize: '13px' }}>{latrine.latrine_id}</div>
+        <div style={{ fontSize: '11px', color: '#666', marginTop: '2px' }}>{latrine.beneficiary_hh || '—'}</div>
+        <div style={{ fontSize: '10px', color: '#999' }}>{latrine.block_no} | {row.progress.toFixed(0)}%</div>
+      </div>
+
+      {/* الأعمدة المنزلقة */}
+      {Object.entries(GROUPS).map(([groupKey, group]) => (
+        <div key={groupKey} style={{ display: 'flex', flexShrink: 0 }}>
+          <div style={{ width: `${GROUP_TOGGLE_WIDTH}px`, display: 'flex', alignItems: 'center', justifyContent: 'center', background: group.color + '10', flexShrink: 0 }}>
+            <button
+              onClick={() => handleGroupToggle(latrine.id, groupKey)}
+              style={{ width: '24px', height: '24px', border: `2px solid ${group.color}`, borderRadius: '4px', background: 'white', cursor: 'pointer', fontSize: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+            >
+              {group.codes.every(code => {
+                const item = row.items[code];
+                if (!item) return true;
+                const key = `${latrine.id}-${code}`;
+                const status = localChanges.get(key)?.status || item.status || 'not_started';
+                return status === 'completed';
+              }) ? '✓' : '+'}
+            </button>
+          </div>
+          {group.codes.map(code => {
+            const item = row.items[code];
+            const key = `${latrine.id}-${code}`;
+            const isModified = localChanges.has(key);
+            if (!item) return <div key={code} style={{ width: CELL_WIDTH, flexShrink: 0 }} />;
+            return (
+              <div key={code} style={{ width: CELL_WIDTH, padding: '2px', flexShrink: 0, boxSizing: 'border-box' }}>
+                <StatusCell item={{ ...item, status: localChanges.get(key)?.status || item.status }} onToggle={() => handleToggle(latrine.id, code)} isSelected={isModified} />
+              </div>
+            );
+          })}
+        </div>
+      ))}
+    </div>
+  );
+});
 
 // ==========================================
 // Main Component
@@ -141,9 +174,24 @@ const SpeedEntryMatrix = ({ onBack }) => {
   const [showLabels, setShowLabels] = useState(true);
 
   const historyRef = useRef(new HistoryManager());
+  const headerRef = useRef(null);
+  const listOuterRef = useRef(null);
 
   const latrines = useLiveQuery(() => db.latrines.toArray(), []);
   const boqItems = useLiveQuery(() => db.boq_items.toArray(), []);
+
+  // 🔄 المزامنة الأفقية بين الرأس والجدول (The Magic Sync)
+  useEffect(() => {
+    const outer = listOuterRef.current;
+    if (!outer) return;
+    const handleScroll = () => {
+      if (headerRef.current) {
+        headerRef.current.scrollLeft = outer.scrollLeft;
+      }
+    };
+    outer.addEventListener('scroll', handleScroll);
+    return () => outer.removeEventListener('scroll', handleScroll);
+  }, [latrines, boqItems]); // Re-bind if data loads
 
   const matrixData = useMemo(() => {
     if (!latrines || !boqItems) return [];
@@ -161,9 +209,7 @@ const SpeedEntryMatrix = ({ onBack }) => {
       const q = searchQuery.toLowerCase();
       data = data.filter(row => row.latrine.latrine_id.toLowerCase().includes(q) || (row.latrine.beneficiary_hh || '').toLowerCase().includes(q));
     }
-    if (filterBlock) {
-      data = data.filter(row => row.latrine.block_no === filterBlock);
-    }
+    if (filterBlock) data = data.filter(row => row.latrine.block_no === filterBlock);
     return data;
   }, [matrixData, searchQuery, filterBlock]);
 
@@ -197,16 +243,11 @@ const SpeedEntryMatrix = ({ onBack }) => {
     }
 
     const newPct = STATUS_CYCLE[newStatus].pct;
-
     historyRef.current.push({ type: 'toggle', latrineId, boqCode, from: currentStatus, to: newStatus, fromPct: currentItem.achievement_pct || 0, toPct: newPct });
 
     setLocalChanges(prev => new Map(prev).set(key, {
-      status: newStatus,
-      achieved_qty: newPct === 100 ? currentItem.planned_qty : newPct === 50 ? (currentItem.planned_qty * 0.5) : 0,
-      achievement_pct: newPct,
-      quality_pass: newStatus === 'completed' ? 'pass' : 'pending',
-      itemId: currentItem.id,
-      latrineId
+      status: newStatus, achieved_qty: newPct === 100 ? currentItem.planned_qty : newPct === 50 ? (currentItem.planned_qty * 0.5) : 0,
+      achievement_pct: newPct, quality_pass: newStatus === 'completed' ? 'pass' : 'pending', itemId: currentItem.id, latrineId
     }));
   }, [matrixData, localChanges]);
 
@@ -232,12 +273,8 @@ const SpeedEntryMatrix = ({ onBack }) => {
       if (!item) return;
       const key = `${latrineId}-${code}`;
       newChanges.set(key, {
-        status: targetStatus,
-        achieved_qty: targetPct === 100 ? item.planned_qty : 0,
-        achievement_pct: targetPct,
-        quality_pass: targetStatus === 'completed' ? 'pass' : 'pending',
-        itemId: item.id,
-        latrineId
+        status: targetStatus, achieved_qty: targetPct === 100 ? item.planned_qty : 0,
+        achievement_pct: targetPct, quality_pass: targetStatus === 'completed' ? 'pass' : 'pending', itemId: item.id, latrineId
       });
     });
 
@@ -259,12 +296,8 @@ const SpeedEntryMatrix = ({ onBack }) => {
         setLocalChanges(newChanges);
       } else {
         setLocalChanges(prev => new Map(prev).set(key, {
-          status: action.from,
-          achieved_qty: action.fromPct === 100 ? currentItem.planned_qty : action.fromPct === 50 ? (currentItem.planned_qty * 0.5) : 0,
-          achievement_pct: action.fromPct,
-          quality_pass: action.from === 'completed' ? 'pass' : 'pending',
-          itemId: currentItem.id,
-          latrineId: action.latrineId
+          status: action.from, achieved_qty: action.fromPct === 100 ? currentItem.planned_qty : action.fromPct === 50 ? (currentItem.planned_qty * 0.5) : 0,
+          achievement_pct: action.fromPct, quality_pass: action.from === 'completed' ? 'pass' : 'pending', itemId: currentItem.id, latrineId: action.latrineId
         }));
       }
     }
@@ -311,69 +344,10 @@ const SpeedEntryMatrix = ({ onBack }) => {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [handleUndo, handleSaveDraft]);
 
-  // ==========================================
-  // 🚀 Virtualized Row Component
-  // ==========================================
-  const VirtualRow = useCallback(({ index, style }) => {
-    const row = filteredData[index];
-    const latrine = row.latrine;
-    const rowBg = index % 2 === 0 ? '#fafafa' : 'white';
-
-    return (
-      <div style={{ ...style, display: 'flex', alignItems: 'center', borderBottom: '1px solid #e0e0e0', background: rowBg }}>
-        {/* Sticky Beneficiary Column */}
-        <div style={{
-          width: STICKY_COL_WIDTH, minWidth: STICKY_COL_WIDTH, padding: '8px 12px', borderLeft: '2px solid #e0e0e0',
-          background: rowBg, position: 'sticky', right: 0, zIndex: 10, flexShrink: 0, boxSizing: 'border-box',
-          alignSelf: 'stretch', display: 'flex', flexDirection: 'column', justifyContent: 'center'
-        }}>
-          <div style={{ fontWeight: 'bold', color: '#1F4E78', fontSize: '13px' }}>{latrine.latrine_id}</div>
-          <div style={{ fontSize: '11px', color: '#666', marginTop: '2px' }}>{latrine.beneficiary_hh || '—'}</div>
-          <div style={{ fontSize: '10px', color: '#999' }}>{latrine.block_no} | {row.progress.toFixed(0)}%</div>
-        </div>
-
-        {/* Groups A→B→C */}
-        {Object.entries(GROUPS).map(([groupKey, group]) => (
-          <div key={groupKey} style={{ display: 'flex', flexShrink: 0 }}>
-            {/* Group Toggle */}
-            <div style={{ width: '30px', display: 'flex', alignItems: 'center', justifyContent: 'center', background: group.color + '10', flexShrink: 0 }}>
-              <button
-                onClick={() => handleGroupToggle(latrine.id, groupKey)}
-                style={{ width: '24px', height: '24px', border: `2px solid ${group.color}`, borderRadius: '4px', background: 'white', cursor: 'pointer', fontSize: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
-              >
-                {group.codes.every(code => {
-                  const item = row.items[code];
-                  if (!item) return true;
-                  const key = `${latrine.id}-${code}`;
-                  const status = localChanges.get(key)?.status || item.status || 'not_started';
-                  return status === 'completed';
-                }) ? '✓' : '+'}
-              </button>
-            </div>
-
-            {/* Individual Items */}
-            {group.codes.map(code => {
-              const item = row.items[code];
-              const key = `${latrine.id}-${code}`;
-              const isModified = localChanges.has(key);
-
-              if (!item) return <div key={code} style={{ width: CELL_WIDTH, flexShrink: 0 }} />;
-
-              return (
-                <div key={code} style={{ width: CELL_WIDTH, padding: '2px', flexShrink: 0 }}>
-                  <StatusCell
-                    item={{ ...item, status: localChanges.get(key)?.status || item.status }}
-                    onToggle={() => handleToggle(latrine.id, code)}
-                    isSelected={isModified}
-                  />
-                </div>
-              );
-            })}
-          </div>
-        ))}
-      </div>
-    );
-  }, [filteredData, localChanges, handleToggle, handleGroupToggle]);
+  // 🚀 تجميع البيانات لتمريرها للصف الافتراضي بأداء عالي
+  const itemData = useMemo(() => ({
+    filteredData, localChanges, handleToggle, handleGroupToggle, showLabels
+  }), [filteredData, localChanges, handleToggle, handleGroupToggle, showLabels]);
 
   if (!latrines || !boqItems) {
     return (
@@ -419,18 +393,21 @@ const SpeedEntryMatrix = ({ onBack }) => {
         </div>
       )}
 
-      {/* 🚀 Virtualized Table Area */}
-      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', background: 'white', overflowX: 'auto' }}>
-        <div style={{ minWidth: 'fit-content', height: '100%', display: 'flex', flexDirection: 'column' }}>
-          
-          {/* Sticky Header */}
-          <div style={{ display: 'flex', alignItems: 'stretch', position: 'sticky', top: 0, zIndex: 20, background: '#f8f9fa', borderBottom: '2px solid #dee2e6', height: HEADER_HEIGHT, fontSize: '12px', fontWeight: 'bold', color: '#495057' }}>
-            <div style={{ width: STICKY_COL_WIDTH, minWidth: STICKY_COL_WIDTH, padding: '0 12px', textAlign: 'right', position: 'sticky', right: 0, background: '#f8f9fa', zIndex: 21, display: 'flex', alignItems: 'center', borderLeft: '2px solid #dee2e6', boxSizing: 'border-box', fontSize: '13px' }}>
+      {/* 🚀 Virtualized Table Area with Dual-Sync Architecture */}
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', background: 'white' }}>
+        
+        {/* 🛡️ Header Container (Hidden Scroll - Synced via JS) */}
+        <div 
+          ref={headerRef} 
+          style={{ overflow: 'hidden', width: '100%', height: HEADER_HEIGHT, background: '#f8f9fa', borderBottom: '2px solid #dee2e6', direction: 'rtl' }}
+        >
+          <div style={{ width: `${ROW_WIDTH}px`, display: 'flex', height: '100%' }}>
+            <div style={{ position: 'sticky', right: 0, width: STICKY_COL_WIDTH, minWidth: STICKY_COL_WIDTH, padding: '0 12px', textAlign: 'right', background: '#f8f9fa', zIndex: 21, display: 'flex', alignItems: 'center', borderLeft: '2px solid #dee2e6', boxSizing: 'border-box', fontSize: '13px', fontWeight: 'bold', color: '#495057' }}>
               الحمام / المستفيد
             </div>
             {Object.entries(GROUPS).map(([groupKey, group]) => (
               <div key={groupKey} style={{ display: 'flex', flexShrink: 0 }}>
-                <div style={{ width: '30px', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', background: group.color + '08', borderLeft: `1px solid ${group.color}20` }}>
+                <div style={{ width: `${GROUP_TOGGLE_WIDTH}px`, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', background: group.color + '08', borderLeft: `1px solid ${group.color}20` }}>
                   <div style={{ fontSize: '9px', color: group.color, fontWeight: 'bold' }}>مجموعة</div>
                   <div style={{ fontSize: '14px', color: group.color, fontWeight: 'bold' }}>{groupKey}</div>
                 </div>
@@ -442,26 +419,29 @@ const SpeedEntryMatrix = ({ onBack }) => {
               </div>
             ))}
           </div>
-
-          {/* 🚀 react-window AutoSizer & List */}
-          <div style={{ flex: 1, position: 'relative' }}>
-            <AutoSizer>
-              {({ height, width }) => (
-                <List
-                  height={height}
-                  itemCount={filteredData.length}
-                  itemSize={ITEM_HEIGHT}
-                  width={width}
-                  direction="rtl"
-                  overscanCount={5}
-                >
-                  {VirtualRow}
-                </List>
-              )}
-            </AutoSizer>
-          </div>
-
         </div>
+
+        {/* 🚀 List Container (Handles X and Y Scroll) */}
+        <div style={{ flex: 1, position: 'relative' }}>
+          <AutoSizer>
+            {({ height, width }) => (
+              <List
+                outerRef={listOuterRef}
+                height={height}
+                itemCount={filteredData.length}
+                itemSize={ITEM_HEIGHT}
+                width={width}
+                direction="rtl"
+                overscanCount={5}
+                innerElementType={InnerElement}
+                itemData={itemData}
+              >
+                {VirtualRow}
+              </List>
+            )}
+          </AutoSizer>
+        </div>
+
       </div>
 
       {/* Legend */}
@@ -471,6 +451,15 @@ const SpeedEntryMatrix = ({ onBack }) => {
         <span>🖱️🖱️ نقرة يمين = عكس الاتجاه</span>
         <span>⌨️ Ctrl+Z = تراجع</span>
         <span>⌨️ Ctrl+S = حفظ</span>
+        
+        <div style={{ marginRight: 'auto', display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center', borderRight: '2px solid #dee2e6', paddingRight: '15px' }}>
+          <span style={{ fontWeight: 'bold', color: '#333' }}>البنود:</span>
+          {Object.entries(BOQ_LABELS).map(([code, info]) => (
+            <span key={code} style={{ background: GROUPS[code[0]]?.color + '15', color: GROUPS[code[0]]?.color, padding: '2px 6px', borderRadius: '3px', fontSize: '10px', whiteSpace: 'nowrap', border: `1px solid ${GROUPS[code[0]]?.color}30` }} title={info.name}>
+              <strong>{code}</strong> {info.short}
+            </span>
+          ))}
+        </div>
       </div>
 
       {/* Confirm Modal */}
