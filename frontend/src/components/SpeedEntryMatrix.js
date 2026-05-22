@@ -13,7 +13,7 @@ const HEADER_HEIGHT = 72;
 const STICKY_COL_WIDTH = 200;
 const CELL_WIDTH = 100;
 const GROUP_TOGGLE_WIDTH = 30;
-// العرض الإجمالي الدقيق للجدول = 200 + (3 * 30) + (13 * 100) = 1590
+// العرض الإجمالي الدقيق = 200 + (3 * 30) + (13 * 100) = 1590
 const ROW_WIDTH = 1590; 
 
 const BOQ_LABELS = {
@@ -102,65 +102,6 @@ const DualHeaderCell = ({ code, groupColor }) => {
   );
 };
 
-// 🚀 المكون الداخلي للقائمة الافتراضية (يُجبر الصفوف على التمدد للعرض الكامل)
-const InnerElement = React.forwardRef(({ style, ...rest }, ref) => (
-  <div ref={ref} style={{ ...style, width: `${ROW_WIDTH}px`, direction: 'rtl' }} {...rest} />
-));
-
-// 🚀 الصف الافتراضي (مُحسّن للأداء العالي)
-const VirtualRow = React.memo(({ index, style, data }) => {
-  const { filteredData, localChanges, handleToggle, handleGroupToggle, showLabels } = data;
-  const row = filteredData[index];
-  const latrine = row.latrine;
-  const rowBg = index % 2 === 0 ? '#fafafa' : 'white';
-
-  return (
-    <div style={{ ...style, width: `${ROW_WIDTH}px`, display: 'flex', alignItems: 'center', borderBottom: '1px solid #e0e0e0', background: rowBg, boxSizing: 'border-box' }}>
-      {/* 🛡️ العمود المثبت (Sticky Column) */}
-      <div style={{
-        width: STICKY_COL_WIDTH, minWidth: STICKY_COL_WIDTH, padding: '8px 12px', borderLeft: '2px solid #e0e0e0',
-        background: rowBg, position: 'sticky', right: 0, zIndex: 10, flexShrink: 0, boxSizing: 'border-box',
-        alignSelf: 'stretch', display: 'flex', flexDirection: 'column', justifyContent: 'center'
-      }}>
-        <div style={{ fontWeight: 'bold', color: '#1F4E78', fontSize: '13px' }}>{latrine.latrine_id}</div>
-        <div style={{ fontSize: '11px', color: '#666', marginTop: '2px' }}>{latrine.beneficiary_hh || '—'}</div>
-        <div style={{ fontSize: '10px', color: '#999' }}>{latrine.block_no} | {row.progress.toFixed(0)}%</div>
-      </div>
-
-      {/* الأعمدة المنزلقة */}
-      {Object.entries(GROUPS).map(([groupKey, group]) => (
-        <div key={groupKey} style={{ display: 'flex', flexShrink: 0 }}>
-          <div style={{ width: `${GROUP_TOGGLE_WIDTH}px`, display: 'flex', alignItems: 'center', justifyContent: 'center', background: group.color + '10', flexShrink: 0 }}>
-            <button
-              onClick={() => handleGroupToggle(latrine.id, groupKey)}
-              style={{ width: '24px', height: '24px', border: `2px solid ${group.color}`, borderRadius: '4px', background: 'white', cursor: 'pointer', fontSize: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
-            >
-              {group.codes.every(code => {
-                const item = row.items[code];
-                if (!item) return true;
-                const key = `${latrine.id}-${code}`;
-                const status = localChanges.get(key)?.status || item.status || 'not_started';
-                return status === 'completed';
-              }) ? '✓' : '+'}
-            </button>
-          </div>
-          {group.codes.map(code => {
-            const item = row.items[code];
-            const key = `${latrine.id}-${code}`;
-            const isModified = localChanges.has(key);
-            if (!item) return <div key={code} style={{ width: CELL_WIDTH, flexShrink: 0 }} />;
-            return (
-              <div key={code} style={{ width: CELL_WIDTH, padding: '2px', flexShrink: 0, boxSizing: 'border-box' }}>
-                <StatusCell item={{ ...item, status: localChanges.get(key)?.status || item.status }} onToggle={() => handleToggle(latrine.id, code)} isSelected={isModified} />
-              </div>
-            );
-          })}
-        </div>
-      ))}
-    </div>
-  );
-});
-
 // ==========================================
 // Main Component
 // ==========================================
@@ -174,24 +115,9 @@ const SpeedEntryMatrix = ({ onBack }) => {
   const [showLabels, setShowLabels] = useState(true);
 
   const historyRef = useRef(new HistoryManager());
-  const headerRef = useRef(null);
-  const listOuterRef = useRef(null);
 
   const latrines = useLiveQuery(() => db.latrines.toArray(), []);
   const boqItems = useLiveQuery(() => db.boq_items.toArray(), []);
-
-  // 🔄 المزامنة الأفقية بين الرأس والجدول (The Magic Sync)
-  useEffect(() => {
-    const outer = listOuterRef.current;
-    if (!outer) return;
-    const handleScroll = () => {
-      if (headerRef.current) {
-        headerRef.current.scrollLeft = outer.scrollLeft;
-      }
-    };
-    outer.addEventListener('scroll', handleScroll);
-    return () => outer.removeEventListener('scroll', handleScroll);
-  }, [latrines, boqItems]); // Re-bind if data loads
 
   const matrixData = useMemo(() => {
     if (!latrines || !boqItems) return [];
@@ -344,10 +270,102 @@ const SpeedEntryMatrix = ({ onBack }) => {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [handleUndo, handleSaveDraft]);
 
-  // 🚀 تجميع البيانات لتمريرها للصف الافتراضي بأداء عالي
-  const itemData = useMemo(() => ({
-    filteredData, localChanges, handleToggle, handleGroupToggle, showLabels
-  }), [filteredData, localChanges, handleToggle, handleGroupToggle, showLabels]);
+  // ==========================================
+  // 🚀 The Magic: Custom Inner Element
+  // ==========================================
+  // هذا المكون يدمج "رأس الجدول" داخل الحاوية الافتراضية لضمان تزامن التمرير 100%
+  const InnerElement = useMemo(() => React.forwardRef(({ children, ...rest }, ref) => {
+    return (
+      <div ref={ref} {...rest} style={{ ...rest.style, width: `${ROW_WIDTH}px`, height: `${parseFloat(rest.style.height) + HEADER_HEIGHT}px`, direction: 'rtl' }}>
+        
+        {/* 🛡️ Sticky Header (Inside the scrolling container) */}
+        <div style={{ position: 'sticky', top: 0, zIndex: 20, height: HEADER_HEIGHT, display: 'flex', background: '#f8f9fa', borderBottom: '2px solid #dee2e6', width: '100%' }}>
+          
+          {/* Sticky Beneficiary Header */}
+          <div style={{ width: STICKY_COL_WIDTH, minWidth: STICKY_COL_WIDTH, position: 'sticky', right: 0, zIndex: 21, background: '#f8f9fa', display: 'flex', alignItems: 'center', padding: '0 12px', borderLeft: '2px solid #dee2e6', boxSizing: 'border-box', fontSize: '13px', fontWeight: 'bold', color: '#495057' }}>
+            الحمام / المستفيد
+          </div>
+          
+          {/* Group Headers */}
+          {Object.entries(GROUPS).map(([groupKey, group]) => (
+            <div key={groupKey} style={{ display: 'flex', flexShrink: 0 }}>
+              <div style={{ width: `${GROUP_TOGGLE_WIDTH}px`, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', background: group.color + '08', borderLeft: `1px solid ${group.color}20` }}>
+                <div style={{ fontSize: '9px', color: group.color, fontWeight: 'bold' }}>مجموعة</div>
+                <div style={{ fontSize: '14px', color: group.color, fontWeight: 'bold' }}>{groupKey}</div>
+              </div>
+              {group.codes.map(code => (
+                <div key={code} style={{ width: CELL_WIDTH, borderLeft: '1px solid #e0e0e0', height: '100%' }}>
+                  {showLabels ? <DualHeaderCell code={code} groupColor={group.color} /> : <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '16px', fontWeight: 'bold', color: group.color }}>{code}</div>}
+                </div>
+              ))}
+            </div>
+          ))}
+        </div>
+
+        {/* 🚀 Virtualized Rows (Pushed down by HEADER_HEIGHT) */}
+        {React.Children.map(children, child => {
+          if (!child) return null;
+          return React.cloneElement(child, {
+            style: { ...child.props.style, top: parseFloat(child.props.style.top) + HEADER_HEIGHT }
+          });
+        })}
+      </div>
+    );
+  }), [showLabels]);
+
+  // 🚀 Virtualized Row Component
+  const VirtualRow = useCallback(({ index, style }) => {
+    const row = filteredData[index];
+    const latrine = row.latrine;
+    const rowBg = index % 2 === 0 ? '#fafafa' : 'white';
+
+    return (
+      <div style={{ ...style, width: `${ROW_WIDTH}px`, display: 'flex', alignItems: 'center', borderBottom: '1px solid #e0e0e0', background: rowBg, boxSizing: 'border-box' }}>
+        
+        {/* 🛡️ Sticky Beneficiary Column */}
+        <div style={{
+          width: STICKY_COL_WIDTH, minWidth: STICKY_COL_WIDTH, padding: '8px 12px', borderLeft: '2px solid #e0e0e0',
+          background: rowBg, position: 'sticky', right: 0, zIndex: 10, flexShrink: 0, boxSizing: 'border-box',
+          alignSelf: 'stretch', display: 'flex', flexDirection: 'column', justifyContent: 'center'
+        }}>
+          <div style={{ fontWeight: 'bold', color: '#1F4E78', fontSize: '13px' }}>{latrine.latrine_id}</div>
+          <div style={{ fontSize: '11px', color: '#666', marginTop: '2px' }}>{latrine.beneficiary_hh || '—'}</div>
+          <div style={{ fontSize: '10px', color: '#999' }}>{latrine.block_no} | {row.progress.toFixed(0)}%</div>
+        </div>
+
+        {/* Groups A→B→C */}
+        {Object.entries(GROUPS).map(([groupKey, group]) => (
+          <div key={groupKey} style={{ display: 'flex', flexShrink: 0 }}>
+            <div style={{ width: `${GROUP_TOGGLE_WIDTH}px`, display: 'flex', alignItems: 'center', justifyContent: 'center', background: group.color + '10', flexShrink: 0 }}>
+              <button
+                onClick={() => handleGroupToggle(latrine.id, groupKey)}
+                style={{ width: '24px', height: '24px', border: `2px solid ${group.color}`, borderRadius: '4px', background: 'white', cursor: 'pointer', fontSize: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+              >
+                {group.codes.every(code => {
+                  const item = row.items[code];
+                  if (!item) return true;
+                  const key = `${latrine.id}-${code}`;
+                  const status = localChanges.get(key)?.status || item.status || 'not_started';
+                  return status === 'completed';
+                }) ? '✓' : '+'}
+              </button>
+            </div>
+            {group.codes.map(code => {
+              const item = row.items[code];
+              const key = `${latrine.id}-${code}`;
+              const isModified = localChanges.has(key);
+              if (!item) return <div key={code} style={{ width: CELL_WIDTH, flexShrink: 0 }} />;
+              return (
+                <div key={code} style={{ width: CELL_WIDTH, padding: '2px', flexShrink: 0, boxSizing: 'border-box' }}>
+                  <StatusCell item={{ ...item, status: localChanges.get(key)?.status || item.status }} onToggle={() => handleToggle(latrine.id, code)} isSelected={isModified} />
+                </div>
+              );
+            })}
+          </div>
+        ))}
+      </div>
+    );
+  }, [filteredData, localChanges, handleToggle, handleGroupToggle]);
 
   if (!latrines || !boqItems) {
     return (
@@ -393,55 +411,23 @@ const SpeedEntryMatrix = ({ onBack }) => {
         </div>
       )}
 
-      {/* 🚀 Virtualized Table Area with Dual-Sync Architecture */}
-      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', background: 'white' }}>
-        
-        {/* 🛡️ Header Container (Hidden Scroll - Synced via JS) */}
-        <div 
-          ref={headerRef} 
-          style={{ overflow: 'hidden', width: '100%', height: HEADER_HEIGHT, background: '#f8f9fa', borderBottom: '2px solid #dee2e6', direction: 'rtl' }}
-        >
-          <div style={{ width: `${ROW_WIDTH}px`, display: 'flex', height: '100%' }}>
-            <div style={{ position: 'sticky', right: 0, width: STICKY_COL_WIDTH, minWidth: STICKY_COL_WIDTH, padding: '0 12px', textAlign: 'right', background: '#f8f9fa', zIndex: 21, display: 'flex', alignItems: 'center', borderLeft: '2px solid #dee2e6', boxSizing: 'border-box', fontSize: '13px', fontWeight: 'bold', color: '#495057' }}>
-              الحمام / المستفيد
-            </div>
-            {Object.entries(GROUPS).map(([groupKey, group]) => (
-              <div key={groupKey} style={{ display: 'flex', flexShrink: 0 }}>
-                <div style={{ width: `${GROUP_TOGGLE_WIDTH}px`, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', background: group.color + '08', borderLeft: `1px solid ${group.color}20` }}>
-                  <div style={{ fontSize: '9px', color: group.color, fontWeight: 'bold' }}>مجموعة</div>
-                  <div style={{ fontSize: '14px', color: group.color, fontWeight: 'bold' }}>{groupKey}</div>
-                </div>
-                {group.codes.map(code => (
-                  <div key={code} style={{ width: CELL_WIDTH, borderLeft: '1px solid #e0e0e0', height: '100%' }}>
-                    {showLabels ? <DualHeaderCell code={code} groupColor={group.color} /> : <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '16px', fontWeight: 'bold', color: group.color }}>{code}</div>}
-                  </div>
-                ))}
-              </div>
-            ))}
-          </div>
-        </div>
-
-        {/* 🚀 List Container (Handles X and Y Scroll) */}
-        <div style={{ flex: 1, position: 'relative' }}>
-          <AutoSizer>
-            {({ height, width }) => (
-              <List
-                outerRef={listOuterRef}
-                height={height}
-                itemCount={filteredData.length}
-                itemSize={ITEM_HEIGHT}
-                width={width}
-                direction="rtl"
-                overscanCount={5}
-                innerElementType={InnerElement}
-                itemData={itemData}
-              >
-                {VirtualRow}
-              </List>
-            )}
-          </AutoSizer>
-        </div>
-
+      {/* 🚀 Virtualized Table Area with Native CSS Sync */}
+      <div style={{ flex: 1, position: 'relative', background: 'white' }}>
+        <AutoSizer>
+          {({ height, width }) => (
+            <List
+              height={height}
+              itemCount={filteredData.length}
+              itemSize={ITEM_HEIGHT}
+              width={width}
+              direction="rtl"
+              overscanCount={5}
+              innerElementType={InnerElement}
+            >
+              {VirtualRow}
+            </List>
+          )}
+        </AutoSizer>
       </div>
 
       {/* Legend */}
