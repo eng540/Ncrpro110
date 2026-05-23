@@ -1,14 +1,13 @@
 from reportlab.lib import colors
-from reportlab.lib.pagesizes import A4
+from reportlab.lib.pagesizes import A4, landscape
 from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, PageBreak
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import cm
-from reportlab.pdfgen import canvas
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
-from openpyxl.utils import get_column_letter
 from io import BytesIO
 from sqlalchemy.orm import Session
+from sqlalchemy import func
 from app import models
 from datetime import datetime
 from typing import Optional
@@ -23,286 +22,240 @@ def reshape_arabic(text: str) -> str:
         reshaped = arabic_reshaper.reshape(str(text))
         return get_display(reshaped)
     except ImportError:
-        # إذا لم تكن المكتبات مثبتة، أعد النص كما هو
         return str(text)
 
 def generate_summary_pdf(db: Session, from_date: datetime = None, to_date: datetime = None) -> bytes:
-    """تقرير ملخص تنفيذي PDF"""
+    """تقرير ملخص تنفيذي PDF (مُحدّث ليعكس الإنجاز المالي والهندسي)"""
     buffer = BytesIO()
-    doc = SimpleDocTemplate(
-        buffer, 
-        pagesize=A4, 
-        rightMargin=2*cm, 
-        leftMargin=2*cm, 
-        topMargin=2*cm, 
-        bottomMargin=2*cm
-    )
-    
+    doc = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=2*cm, leftMargin=2*cm, topMargin=2*cm, bottomMargin=2*cm)
     elements = []
     styles = getSampleStyleSheet()
     
-    # إنشاء أنماط مخصصة
-    title_style = ParagraphStyle(
-        'CustomTitle',
-        parent=styles['Heading1'],
-        alignment=1,
-        fontSize=20,
-        textColor=colors.HexColor('#1F4E78'),
-        spaceAfter=20,
-        fontName='Helvetica-Bold'
-    )
+    title_style = ParagraphStyle('CustomTitle', parent=styles['Heading1'], alignment=1, fontSize=20, textColor=colors.HexColor('#1F4E78'), spaceAfter=20, fontName='Helvetica-Bold')
+    subtitle_style = ParagraphStyle('CustomSubtitle', parent=styles['Normal'], alignment=1, fontSize=12, textColor=colors.HexColor('#7f8c8d'), spaceAfter=30)
+    section_style = ParagraphStyle('SectionTitle', parent=styles['Heading2'], fontSize=14, textColor=colors.HexColor('#2c3e50'), spaceAfter=10, spaceBefore=15, fontName='Helvetica-Bold')
     
-    subtitle_style = ParagraphStyle(
-        'CustomSubtitle',
-        parent=styles['Normal'],
-        alignment=1,
-        fontSize=12,
-        textColor=colors.HexColor('#7f8c8d'),
-        spaceAfter=30
-    )
-    
-    section_style = ParagraphStyle(
-        'SectionTitle',
-        parent=styles['Heading2'],
-        fontSize=14,
-        textColor=colors.HexColor('#2c3e50'),
-        spaceAfter=10,
-        spaceBefore=15,
-        fontName='Helvetica-Bold'
-    )
-    
-    # العنوان الرئيسي
     elements.append(Paragraph("NRC Latrine Tracker", title_style))
-    elements.append(Paragraph("ECHO 2525 - Al-Zohra District, Hodeidah", subtitle_style))
-    elements.append(Paragraph(f"Report Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}", subtitle_style))
+    elements.append(Paragraph("Project Executive Summary & Governance Report", subtitle_style))
+    elements.append(Paragraph(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}", subtitle_style))
     elements.append(Spacer(1, 20))
     
-    # جلب الإحصائيات
+    # 1. إحصائيات الحمامات
     total = db.query(models.Latrine).count()
     completed = db.query(models.Latrine).filter(models.Latrine.status == 'completed').count()
     in_progress = db.query(models.Latrine).filter(models.Latrine.status == 'in_progress').count()
     not_started = db.query(models.Latrine).filter(models.Latrine.status == 'not_started').count()
-    on_hold = db.query(models.Latrine).filter(models.Latrine.status == 'on_hold').count()
     
+    # 2. إحصائيات الجودة
     accepted_items = db.query(models.BoqItem).filter(models.BoqItem.quality_pass == 'pass').count()
     rejected_items = db.query(models.BoqItem).filter(models.BoqItem.quality_pass == 'fail').count()
     pending_items = db.query(models.BoqItem).filter(models.BoqItem.quality_pass == 'pending').count()
     
-    open_remarks = db.query(models.Remark).filter(models.Remark.status == 'open').count()
-    closed_remarks = db.query(models.Remark).filter(models.Remark.status == 'closed').count()
+    # 3. إحصائيات القرارات (Governance Stats)
+    decisions = db.query(models.DecisionRecord).all()
+    approved_count = sum(1 for d in decisions if (d.human_decision_code or d.system_recommendation_code) in ['APPROVE', 'APPROVE_WITH_NOTE'])
+    hold_count = sum(1 for d in decisions if (d.human_decision_code or d.system_recommendation_code) == 'HOLD')
+    rework_count = sum(1 for d in decisions if (d.human_decision_code or d.system_recommendation_code) == 'REWORK')
+    stop_count = sum(1 for d in decisions if (d.human_decision_code or d.system_recommendation_code) == 'STOP')
+
+    # 4. حساب الإنجاز الكلي
+    avg_progress = round(float(db.query(func.avg(models.Latrine.overall_pct)).scalar() or 0), 2)
     
-    # حساب نسبة الإنجاز
-    avg_progress = 0
-    if total > 0:
-        from sqlalchemy import func
-        avg_result = db.query(func.avg(models.Latrine.overall_pct)).scalar()
-        avg_progress = round(float(avg_result or 0), 2)
-    
-    # جدول الملخص التنفيذي
-    elements.append(Paragraph("Executive Summary", section_style))
-    
+    # --- الجدول الأول: حالة المشروع ---
+    elements.append(Paragraph("1. Project Status", section_style))
     summary_data = [
-        ['Indicator', 'Value', 'Status'],
-        ['Total Latrines', str(total), ''],
+        ['Indicator', 'Value', 'Percentage'],
+        ['Total Latrines', str(total), '100%'],
         ['Completed', str(completed), f'{round(completed/total*100,1)}%' if total else '0%'],
         ['In Progress', str(in_progress), f'{round(in_progress/total*100,1)}%' if total else '0%'],
         ['Not Started', str(not_started), f'{round(not_started/total*100,1)}%' if total else '0%'],
-        ['On Hold', str(on_hold), f'{round(on_hold/total*100,1)}%' if total else '0%'],
-        ['Overall Progress', f'{avg_progress}%', ''],
+        ['Overall Financial Progress', f'{avg_progress}%', 'Based on Approved Payments'],
     ]
-    
-    summary_table = Table(summary_data, colWidths=[6*cm, 4*cm, 4*cm])
-    summary_table.setStyle(TableStyle([
+    t1 = Table(summary_data, colWidths=[7*cm, 4*cm, 5*cm])
+    t1.setStyle(TableStyle([
         ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1F4E78')),
         ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
         ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
         ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-        ('FONTSIZE', (0, 0), (-1, 0), 12),
-        ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
-        ('BACKGROUND', (0, 1), (-1, -1), colors.HexColor('#f8f9fa')),
         ('GRID', (0, 0), (-1, -1), 1, colors.grey),
-        ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
-        ('FONTSIZE', (0, 1), (-1, -1), 11),
         ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#f8f9fa')]),
-        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
     ]))
-    elements.append(summary_table)
+    elements.append(t1)
     elements.append(Spacer(1, 20))
-    
-    # جدول الجودة
-    elements.append(Paragraph("Quality Control Summary", section_style))
-    
-    quality_data = [
-        ['Quality Status', 'Count', 'Percentage'],
-        ['Accepted (Pass)', str(accepted_items), f'{round(accepted_items/(accepted_items+rejected_items+pending_items)*100,1)}%' if (accepted_items+rejected_items+pending_items) > 0 else '0%'],
-        ['Rejected (Fail)', str(rejected_items), f'{round(rejected_items/(accepted_items+rejected_items+pending_items)*100,1)}%' if (accepted_items+rejected_items+pending_items) > 0 else '0%'],
-        ['Pending Inspection', str(pending_items), f'{round(pending_items/(accepted_items+rejected_items+pending_items)*100,1)}%' if (accepted_items+rejected_items+pending_items) > 0 else '0%'],
+
+    # --- الجدول الثاني: حوكمة القرارات ---
+    elements.append(Paragraph("2. Decision & Governance Engine", section_style))
+    gov_data = [
+        ['Decision Status', 'Item Count', 'Action Required'],
+        ['Approved for Payment', str(approved_count), 'None'],
+        ['On Hold (Pending/Minor Issues)', str(hold_count), 'Review & Inspect'],
+        ['Rework Required (Failed Quality)', str(rework_count), 'Contractor Action'],
+        ['Stopped (Critical Safety/Quality)', str(stop_count), 'Urgent PM Intervention'],
     ]
-    
-    quality_table = Table(quality_data, colWidths=[6*cm, 4*cm, 4*cm])
-    quality_table.setStyle(TableStyle([
-        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#27ae60')),
+    t2 = Table(gov_data, colWidths=[7*cm, 3*cm, 6*cm])
+    t2.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#8e44ad')),
         ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
         ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
         ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-        ('FONTSIZE', (0, 0), (-1, 0), 12),
-        ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
         ('GRID', (0, 0), (-1, -1), 1, colors.grey),
-        ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
-        ('FONTSIZE', (0, 1), (-1, -1), 11),
         ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#f8f9fa')]),
-        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
     ]))
-    elements.append(quality_table)
-    elements.append(Spacer(1, 20))
-    
-    # جدول الملاحظات
-    elements.append(Paragraph("Remarks Summary", section_style))
-    
-    remarks_data = [
-        ['Status', 'Count'],
-        ['Open', str(open_remarks)],
-        ['Closed', str(closed_remarks)],
-        ['Total', str(open_remarks + closed_remarks)],
-    ]
-    
-    remarks_table = Table(remarks_data, colWidths=[7*cm, 7*cm])
-    remarks_table.setStyle(TableStyle([
-        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#e74c3c')),
-        ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
-        ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-        ('FONTSIZE', (0, 0), (-1, 0), 12),
-        ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
-        ('GRID', (0, 0), (-1, -1), 1, colors.grey),
-        ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
-        ('FONTSIZE', (0, 1), (-1, -1), 11),
-        ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#f8f9fa')]),
-        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-    ]))
-    elements.append(remarks_table)
-    
-    # تذييل
-    elements.append(Spacer(1, 40))
-    footer_style = ParagraphStyle(
-        'Footer',
-        parent=styles['Normal'],
-        alignment=1,
-        fontSize=9,
-        textColor=colors.HexColor('#95a5a6')
-    )
-    elements.append(Paragraph("NRC WASH & Shelter Department - Internal Use Only", footer_style))
-    
+    elements.append(t2)
+
     doc.build(elements)
     buffer.seek(0)
     return buffer.getvalue()
 
 def generate_ipc_excel(db: Session) -> bytes:
-    """شهادة دفع مؤقتة Excel"""
+    """
+    شهادة دفع مؤقتة Excel (IPC)
+    مبنية بالكامل على طبقة القرارات (Decision Governance Layer).
+    لا يتم الدفع إلا للنسب المعتمدة من النظام أو المدير.
+    """
     buffer = BytesIO()
     wb = Workbook()
     ws = wb.active
-    ws.title = "IPC - Interim Payment"
+    ws.title = "IPC - Master Aggregation"
     ws.sheet_view.rightToLeft = True
     
-    # العنوان الرئيسي
-    ws['A1'] = "NRC Latrine Tracker - ECHO 2525"
+    # --- الترويسة ---
+    ws['A1'] = "NRC Latrine Tracker - Governance IPC"
     ws['A1'].font = Font(size=16, bold=True, color="1F4E78")
-    ws.merge_cells('A1:H1')
+    ws.merge_cells('A1:I1')
     ws['A1'].alignment = Alignment(horizontal='center', vertical='center')
     ws.row_dimensions[1].height = 30
     
-    ws['A2'] = "Interim Payment Certificate (IPC)"
-    ws['A2'].font = Font(size=14, bold=True, color="27ae60")
-    ws.merge_cells('A2:H2')
+    ws['A2'] = "Interim Payment Certificate (Aggregated by BoQ)"
+    ws['A2'].font = Font(size=12, bold=True, color="27ae60")
+    ws.merge_cells('A2:I2')
     ws['A2'].alignment = Alignment(horizontal='center', vertical='center')
-    ws.row_dimensions[2].height = 25
     
     ws['A3'] = f"Date: {datetime.now().strftime('%Y-%m-%d')}"
-    ws['A3'].font = Font(size=11, italic=True)
-    ws.merge_cells('A3:H3')
+    ws.merge_cells('A3:I3')
     ws['A3'].alignment = Alignment(horizontal='center')
     
-    # الرأس
-    headers = ['BoQ Code', 'Category', 'Description (AR)', 'Description (EN)', 'Unit', 'Planned Qty', 'Achieved Qty', 'Achievement %']
+    # --- رؤوس الأعمدة ---
+    headers = [
+        'BoQ Code', 'Description (AR)', 'Unit', 'Unit Price ($)', 
+        'Total Planned Qty', 'Total Executed Qty', 
+        'Approved Qty (Passed)', 'Payable Amount ($)', 'Blocked Amount ($)'
+    ]
     for col, header in enumerate(headers, 1):
         cell = ws.cell(row=5, column=col, value=header)
-        cell.font = Font(bold=True, color="FFFFFF", size=11)
+        cell.font = Font(bold=True, color="FFFFFF")
         cell.fill = PatternFill(start_color="1F4E78", end_color="1F4E78", fill_type="solid")
         cell.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
-        cell.border = Border(
-            left=Side(style='thin'), right=Side(style='thin'),
-            top=Side(style='thin'), bottom=Side(style='thin')
-        )
+        cell.border = Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
     
-    ws.row_dimensions[5].height = 30
+    ws.row_dimensions[5].height = 35
     
-    # البيانات
-    items = db.query(models.BoqItem).join(models.Latrine).all()
-    row = 6
+    # --- تجميع البيانات ---
+    # جلب القاموس للأسعار
+    dictionary = {d.boq_code: d for d in db.query(models.BoqDictionary).filter(models.BoqDictionary.is_active == True).all()}
     
-    # تجميع حسب الفئة
-    categories = {}
+    # جلب كل البنود مع قراراتها
+    items = db.query(models.BoqItem).all()
+    decisions = {d.boq_item_id: d for d in db.query(models.DecisionRecord).all()}
+    
+    # تجميع حسب كود البند
+    aggregation = {}
     for item in items:
-        cat = item.category or 'Uncategorized'
-        if cat not in categories:
-            categories[cat] = []
-        categories[cat].append(item)
-    
-    for category, cat_items in sorted(categories.items()):
-        # صف الفئة
-        cat_cell = ws.cell(row=row, column=1, value=category)
-        cat_cell.font = Font(bold=True, size=12, color="FFFFFF")
-        cat_cell.fill = PatternFill(start_color="3498db", end_color="3498db", fill_type="solid")
-        ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=8)
-        cat_cell.alignment = Alignment(horizontal='center', vertical='center')
-        ws.row_dimensions[row].height = 25
-        row += 1
+        code = item.boq_code
+        if code not in aggregation:
+            aggregation[code] = {
+                'planned': 0.0, 'executed': 0.0, 'approved_qty': 0.0, 
+                'payable_usd': 0.0, 'blocked_usd': 0.0
+            }
         
-        for item in cat_items:
-            ws.cell(row=row, column=1, value=item.boq_code).alignment = Alignment(horizontal='center')
-            ws.cell(row=row, column=2, value=item.category).alignment = Alignment(horizontal='center')
-            ws.cell(row=row, column=3, value=item.description_ar).alignment = Alignment(horizontal='right', wrap_text=True)
-            ws.cell(row=row, column=4, value=item.description_en).alignment = Alignment(horizontal='left', wrap_text=True)
-            ws.cell(row=row, column=5, value=item.unit).alignment = Alignment(horizontal='center')
-            ws.cell(row=row, column=6, value=item.planned_qty).alignment = Alignment(horizontal='center')
-            ws.cell(row=row, column=7, value=item.achieved_qty).alignment = Alignment(horizontal='center')
-            
-            pct_cell = ws.cell(row=row, column=8, value=f"{item.achievement_pct}%")
-            pct_cell.alignment = Alignment(horizontal='center')
-            
-            # تلوين حسب النسبة
-            if item.achievement_pct >= 100:
-                pct_cell.fill = PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid")
-                pct_cell.font = Font(color="006100")
-            elif item.achievement_pct >= 50:
-                pct_cell.fill = PatternFill(start_color="FFEB9C", end_color="FFEB9C", fill_type="solid")
-                pct_cell.font = Font(color="9C5700")
-            else:
-                pct_cell.fill = PatternFill(start_color="FFC7CE", end_color="FFC7CE", fill_type="solid")
-                pct_cell.font = Font(color="9C0006")
-            
-            # حدود
-            for col in range(1, 9):
-                ws.cell(row=row, column=col).border = Border(
-                    left=Side(style='thin'), right=Side(style='thin'),
-                    top=Side(style='thin'), bottom=Side(style='thin')
-                )
-            
-            row += 1
+        dict_item = dictionary.get(code)
+        price = dict_item.unit_price if dict_item else 0.0
+        planned = item.planned_qty or 0.0
+        executed = item.achieved_qty or 0.0
+        
+        aggregation[code]['planned'] += planned
+        aggregation[code]['executed'] += executed
+        
+        # 🌟 حساب الدفع بناءً على القرار
+        decision = decisions.get(item.id)
+        payment_pct = 0.0
+        if decision:
+            payment_pct = decision.human_payment_pct if decision.human_payment_pct is not None else decision.system_payment_pct
+        
+        payable_qty = planned * (payment_pct / 100.0)
+        aggregation[code]['approved_qty'] += payable_qty
+        aggregation[code]['payable_usd'] += (payable_qty * price)
+        
+        # حساب المبالغ المحتجزة (المنفذة ولكن لم تُعتمد بسبب الجودة/الملاحظات)
+        if executed > payable_qty:
+            aggregation[code]['blocked_usd'] += ((executed - payable_qty) * price)
+
+    # --- كتابة البيانات في الإكسل ---
+    row = 6
+    total_project_payable = 0.0
+    total_project_blocked = 0.0
+
+    for code in sorted(aggregation.keys()):
+        data = aggregation[code]
+        dict_item = dictionary.get(code)
+        
+        ws.cell(row=row, column=1, value=code).alignment = Alignment(horizontal='center')
+        ws.cell(row=row, column=2, value=dict_item.description_ar if dict_item else '').alignment = Alignment(horizontal='right')
+        ws.cell(row=row, column=3, value=dict_item.unit if dict_item else '').alignment = Alignment(horizontal='center')
+        ws.cell(row=row, column=4, value=dict_item.unit_price if dict_item else 0.0).alignment = Alignment(horizontal='center')
+        
+        ws.cell(row=row, column=5, value=data['planned']).alignment = Alignment(horizontal='center')
+        ws.cell(row=row, column=6, value=data['executed']).alignment = Alignment(horizontal='center')
+        
+        # الكمية المعتمدة
+        app_cell = ws.cell(row=row, column=7, value=round(data['approved_qty'], 2))
+        app_cell.alignment = Alignment(horizontal='center')
+        app_cell.font = Font(color="006100" if data['approved_qty'] == data['planned'] else "9C5700")
+        
+        # المبلغ المستحق
+        pay_cell = ws.cell(row=row, column=8, value=round(data['payable_usd'], 2))
+        pay_cell.alignment = Alignment(horizontal='center')
+        pay_cell.font = Font(bold=True)
+        
+        # المبلغ المحتجز
+        block_cell = ws.cell(row=row, column=9, value=round(data['blocked_usd'], 2))
+        block_cell.alignment = Alignment(horizontal='center')
+        if data['blocked_usd'] > 0:
+            block_cell.font = Font(color="9C0006", bold=True)
+            block_cell.fill = PatternFill(start_color="FFC7CE", end_color="FFC7CE", fill_type="solid")
+        
+        total_project_payable += data['payable_usd']
+        total_project_blocked += data['blocked_usd']
+        
+        for col in range(1, 10):
+            ws.cell(row=row, column=col).border = Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
+        row += 1
+
+    # --- صف الإجماليات ---
+    ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=7)
+    tot_label = ws.cell(row=row, column=1, value="GRAND TOTAL (USD)")
+    tot_label.font = Font(bold=True, size=12)
+    tot_label.alignment = Alignment(horizontal='right')
     
+    tot_pay = ws.cell(row=row, column=8, value=round(total_project_payable, 2))
+    tot_pay.font = Font(bold=True, size=12, color="006100")
+    tot_pay.fill = PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid")
+    
+    tot_block = ws.cell(row=row, column=9, value=round(total_project_blocked, 2))
+    tot_block.font = Font(bold=True, size=12, color="9C0006")
+    if total_project_blocked > 0:
+        tot_block.fill = PatternFill(start_color="FFC7CE", end_color="FFC7CE", fill_type="solid")
+
     # تنسيق الأعمدة
     ws.column_dimensions['A'].width = 12
-    ws.column_dimensions['B'].width = 20
-    ws.column_dimensions['C'].width = 30
-    ws.column_dimensions['D'].width = 30
-    ws.column_dimensions['E'].width = 10
-    ws.column_dimensions['F'].width = 14
-    ws.column_dimensions['G'].width = 14
-    ws.column_dimensions['H'].width = 14
-    
-    # تجميد الصف العلوي
-    ws.freeze_panes = 'A6'
+    ws.column_dimensions['B'].width = 40
+    ws.column_dimensions['C'].width = 10
+    ws.column_dimensions['D'].width = 15
+    ws.column_dimensions['E'].width = 18
+    ws.column_dimensions['F'].width = 18
+    ws.column_dimensions['G'].width = 22
+    ws.column_dimensions['H'].width = 20
+    ws.column_dimensions['I'].width = 20
     
     wb.save(buffer)
     buffer.seek(0)
@@ -315,119 +268,36 @@ def generate_remarks_pdf(db: Session, from_date: datetime = None, to_date: datet
     elements = []
     styles = getSampleStyleSheet()
     
-    title_style = ParagraphStyle(
-        'CustomTitle',
-        parent=styles['Heading1'],
-        alignment=1,
-        fontSize=18,
-        textColor=colors.HexColor('#1F4E78'),
-        spaceAfter=20
-    )
-    
-    section_style = ParagraphStyle(
-        'SectionTitle',
-        parent=styles['Heading2'],
-        fontSize=14,
-        textColor=colors.HexColor('#2c3e50'),
-        spaceAfter=10,
-        spaceBefore=15
-    )
+    title_style = ParagraphStyle('CustomTitle', parent=styles['Heading1'], alignment=1, fontSize=18, textColor=colors.HexColor('#1F4E78'), spaceAfter=20)
+    section_style = ParagraphStyle('SectionTitle', parent=styles['Heading2'], fontSize=14, textColor=colors.HexColor('#2c3e50'), spaceAfter=10, spaceBefore=15)
     
     elements.append(Paragraph("Quality Control Remarks Log", title_style))
     elements.append(Paragraph(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}", styles['Normal']))
-    
-    if from_date or to_date:
-        date_range = f"Period: {from_date.strftime('%Y-%m-%d') if from_date else 'Start'} to {to_date.strftime('%Y-%m-%d') if to_date else 'Now'}"
-        elements.append(Paragraph(date_range, styles['Normal']))
-    
     elements.append(Spacer(1, 20))
     
     query = db.query(models.Remark).join(models.Latrine)
-    
-    if from_date:
-        query = query.filter(models.Remark.date_logged >= from_date)
-    if to_date:
-        query = query.filter(models.Remark.date_logged <= to_date)
-    
-    # فصل الملاحظات المفتوحة والمغلقة
     open_remarks = query.filter(models.Remark.status == 'open').order_by(models.Remark.date_logged.desc()).all()
-    closed_remarks = query.filter(models.Remark.status == 'closed').order_by(models.Remark.date_logged.desc()).all()
     
-    # الملاحظات المفتوحة
     if open_remarks:
         elements.append(Paragraph(f"OPEN REMARKS ({len(open_remarks)})", section_style))
-        
         for remark in open_remarks:
             data = [
                 ['Latrine ID', remark.latrine.latrine_id if remark.latrine else 'N/A'],
                 ['BoQ Code', remark.boq_code or 'General'],
                 ['Severity', remark.severity.upper()],
-                ['Date Logged', remark.date_logged.strftime('%Y-%m-%d') if remark.date_logged else 'N/A'],
                 ['Description', remark.description or ''],
-                ['Action Required', remark.action_required or ''],
             ]
-            
-            if remark.deadline:
-                data.append(['Deadline', remark.deadline.strftime('%Y-%m-%d')])
-            
             table = Table(data, colWidths=[4*cm, 12*cm])
-            
-            # تلوين حسب الخطورة
-            if remark.severity == 'critical':
-                bg_color = colors.HexColor('#FFC7CE')
-            elif remark.severity == 'major':
-                bg_color = colors.HexColor('#FFEB9C')
-            else:
-                bg_color = colors.HexColor('#e8f4f8')
-            
+            bg_color = colors.HexColor('#FFC7CE') if remark.severity == 'critical' else colors.HexColor('#FFEB9C') if remark.severity == 'major' else colors.HexColor('#e8f4f8')
             table.setStyle(TableStyle([
                 ('BACKGROUND', (0, 0), (0, -1), bg_color),
                 ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
-                ('VALIGN', (0, 0), (-1, -1), 'TOP'),
                 ('FONTNAME', (0, 0), (0, -1), 'Helvetica-Bold'),
-                ('FONTNAME', (1, 0), (1, -1), 'Helvetica'),
-                ('FONTSIZE', (0, 0), (-1, -1), 10),
-                ('TOPPADDING', (0, 0), (-1, -1), 6),
-                ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
-                ('LEFTPADDING', (0, 0), (-1, -1), 8),
-                ('RIGHTPADDING', (0, 0), (-1, -1), 8),
             ]))
             elements.append(table)
             elements.append(Spacer(1, 10))
-    
-    # صفحة جديدة للمغلقة
-    if closed_remarks:
-        elements.append(PageBreak())
-        elements.append(Paragraph(f"CLOSED REMARKS ({len(closed_remarks)})", section_style))
-        
-        for remark in closed_remarks:
-            data = [
-                ['Latrine ID', remark.latrine.latrine_id if remark.latrine else 'N/A'],
-                ['BoQ Code', remark.boq_code or 'General'],
-                ['Severity', remark.severity.upper()],
-                ['Date Logged', remark.date_logged.strftime('%Y-%m-%d') if remark.date_logged else 'N/A'],
-                ['Date Closed', remark.closed_date.strftime('%Y-%m-%d') if remark.closed_date else 'N/A'],
-                ['Description', remark.description or ''],
-            ]
-            
-            table = Table(data, colWidths=[4*cm, 12*cm])
-            table.setStyle(TableStyle([
-                ('BACKGROUND', (0, 0), (0, -1), colors.HexColor('#C6EFCE')),
-                ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
-                ('VALIGN', (0, 0), (-1, -1), 'TOP'),
-                ('FONTNAME', (0, 0), (0, -1), 'Helvetica-Bold'),
-                ('FONTNAME', (1, 0), (1, -1), 'Helvetica'),
-                ('FONTSIZE', (0, 0), (-1, -1), 10),
-                ('TOPPADDING', (0, 0), (-1, -1), 6),
-                ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
-                ('LEFTPADDING', (0, 0), (-1, -1), 8),
-                ('RIGHTPADDING', (0, 0), (-1, -1), 8),
-            ]))
-            elements.append(table)
-            elements.append(Spacer(1, 10))
-    
-    if not open_remarks and not closed_remarks:
-        elements.append(Paragraph("No remarks found for the specified period.", styles['Normal']))
+    else:
+        elements.append(Paragraph("No open remarks found.", styles['Normal']))
     
     doc.build(elements)
     buffer.seek(0)
