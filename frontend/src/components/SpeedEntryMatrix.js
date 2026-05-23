@@ -1,20 +1,12 @@
-import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { useLiveQuery } from 'dexie-react-hooks';
-import { FixedSizeList as List } from 'react-window';
-import AutoSizer from 'react-virtualized-auto-sizer';
-import { db } from '../db';
-import { pushToSyncQueue } from '../syncEngine';
-
 // ==========================================
-// Constants & Configuration
+// Constants & Configuration — المُصلحة
 // ==========================================
 const ITEM_HEIGHT = 60;
 const HEADER_HEIGHT = 72;
 const STICKY_COL_WIDTH = 200;
 const CELL_WIDTH = 100;
 const GROUP_TOGGLE_WIDTH = 30;
-// العرض الإجمالي الدقيق = 200 + (3 * 30) + (13 * 100) = 1590
-const ROW_WIDTH = 1590; 
+const ROW_WIDTH = 1590;
 
 const BOQ_LABELS = {
   'A1': { name: 'حفر وتسوية + أساس حجر', short: 'حفر/أساس', unit: 'م³' },
@@ -32,11 +24,20 @@ const BOQ_LABELS = {
   'C4': { name: 'لوحة معدنية + شعار', short: 'لوحة/شعار', unit: 'عدد' }
 };
 
+// ✅ الحل: تضمين ALL الحالات الممكنة في النظام
 const STATUS_CYCLE = {
   'not_started': { next: 'in_progress', icon: '⬜', label: 'لم يبدأ', color: '#e0e0e0', pct: 0 },
   'in_progress': { next: 'completed', icon: '🔄', label: 'قيد العمل', color: '#ffc107', pct: 50 },
   'completed': { next: 'pending_inspection', icon: '✅', label: 'مكتمل', color: '#4caf50', pct: 100 },
-  'pending_inspection': { next: 'not_started', icon: '🔍', label: 'بانتظار الفحص', color: '#2196f3', pct: 100 }
+  'pending_inspection': { next: 'accepted', icon: '🔍', label: 'بانتظار الفحص', color: '#2196f3', pct: 100 },
+  'accepted': { next: 'rejected', icon: '✓', label: 'مقبول', color: '#8bc34a', pct: 100 },        // ← جديد
+  'rejected': { next: 'rework_required', icon: '✗', label: 'مرفوض', color: '#f44336', pct: 0 },     // ← جديد
+  'rework_required': { next: 'not_started', icon: '🔧', label: 'يحتاج إعادة', color: '#ff9800', pct: 25 }, // ← جديد
+};
+
+// ✅ نسخة آمنة للقراءة (Safe Reader)
+const getStatusConfig = (status) => {
+  return STATUS_CYCLE[status] || STATUS_CYCLE['not_started']; // Fallback آمن
 };
 
 const GROUPS = {
@@ -46,7 +47,7 @@ const GROUPS = {
 };
 
 // ==========================================
-// Undo/Redo Manager
+// History Manager — بدون تغيير
 // ==========================================
 class HistoryManager {
   constructor(limit = 50) {
@@ -68,17 +69,21 @@ class HistoryManager {
 }
 
 // ==========================================
-// Sub-Components
+// Sub-Components — المُصلحة
 // ==========================================
+
+// ✅ StatusCell الآمن — يستخدم getStatusConfig
 const StatusCell = React.memo(({ item, onToggle, isSelected }) => {
   const status = item?.status || 'not_started';
-  const config = STATUS_CYCLE[status];
+  const config = getStatusConfig(status); // ← استخدام الدالة الآمنة
+  
   return (
     <button
       onClick={() => onToggle(item?.id)}
       onContextMenu={(e) => { e.preventDefault(); onToggle(item?.id, 'right'); }}
       style={{
-        width: '100%', height: '100%', border: 'none', background: isSelected ? '#e3f2fd' : config.color + '20',
+        width: '100%', height: '100%', border: 'none', 
+        background: isSelected ? '#e3f2fd' : config.color + '20',
         cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
         fontSize: '20px', transition: 'all 0.15s', borderRadius: '4px', margin: '2px'
       }}
@@ -103,7 +108,7 @@ const DualHeaderCell = ({ code, groupColor }) => {
 };
 
 // ==========================================
-// Main Component
+// Main Component — المُصلحة بالكامل
 // ==========================================
 const SpeedEntryMatrix = ({ onBack }) => {
   const [localChanges, setLocalChanges] = useState(new Map());
@@ -113,12 +118,14 @@ const SpeedEntryMatrix = ({ onBack }) => {
   const [saveMessage, setSaveMessage] = useState(null);
   const [showConfirmModal, setShowConfirmModal] = useState(false);
   const [showLabels, setShowLabels] = useState(true);
+  const [error, setError] = useState(null); // ← جديد: لالتقاط الأخطاء
 
   const historyRef = useRef(new HistoryManager());
 
   const latrines = useLiveQuery(() => db.latrines.toArray(), []);
   const boqItems = useLiveQuery(() => db.boq_items.toArray(), []);
 
+  // ✅ بناء المصفوفة مع التحقق من وجود البنود
   const matrixData = useMemo(() => {
     if (!latrines || !boqItems) return [];
     return latrines.map(latrine => {
@@ -133,7 +140,10 @@ const SpeedEntryMatrix = ({ onBack }) => {
     let data = matrixData;
     if (searchQuery) {
       const q = searchQuery.toLowerCase();
-      data = data.filter(row => row.latrine.latrine_id.toLowerCase().includes(q) || (row.latrine.beneficiary_hh || '').toLowerCase().includes(q));
+      data = data.filter(row => 
+        row.latrine.latrine_id.toLowerCase().includes(q) || 
+        (row.latrine.beneficiary_hh || '').toLowerCase().includes(q)
+      );
     }
     if (filterBlock) data = data.filter(row => row.latrine.block_no === filterBlock);
     return data;
@@ -152,98 +162,194 @@ const SpeedEntryMatrix = ({ onBack }) => {
     return { total, completed, inProgress, notStarted };
   }, [filteredData]);
 
+  // ✅ handleToggle مُصلح — يستخدم getStatusConfig ويتحقق من وجود item
   const handleToggle = useCallback((latrineId, boqCode, direction = 'forward') => {
-    const key = `${latrineId}-${boqCode}`;
-    const currentItem = matrixData.find(r => r.latrine.id === latrineId)?.items[boqCode];
-    if (!currentItem) return;
-
-    const currentStatus = localChanges.get(key)?.status || currentItem.status || 'not_started';
-    const config = STATUS_CYCLE[currentStatus];
-
-    let newStatus;
-    if (direction === 'right') {
-      const reverseMap = { 'not_started': 'pending_inspection', 'pending_inspection': 'completed', 'completed': 'in_progress', 'in_progress': 'not_started' };
-      newStatus = reverseMap[currentStatus];
-    } else {
-      newStatus = config.next;
-    }
-
-    const newPct = STATUS_CYCLE[newStatus].pct;
-    historyRef.current.push({ type: 'toggle', latrineId, boqCode, from: currentStatus, to: newStatus, fromPct: currentItem.achievement_pct || 0, toPct: newPct });
-
-    setLocalChanges(prev => new Map(prev).set(key, {
-      status: newStatus, achieved_qty: newPct === 100 ? currentItem.planned_qty : newPct === 50 ? (currentItem.planned_qty * 0.5) : 0,
-      achievement_pct: newPct, quality_pass: newStatus === 'completed' ? 'pass' : 'pending', itemId: currentItem.id, latrineId
-    }));
-  }, [matrixData, localChanges]);
-
-  const handleGroupToggle = useCallback((latrineId, groupKey) => {
-    const group = GROUPS[groupKey];
-    const row = matrixData.find(r => r.latrine.id === latrineId);
-    if (!row) return;
-
-    const allCompleted = group.codes.every(code => {
-      const item = row.items[code];
-      if (!item) return true;
-      const key = `${latrineId}-${code}`;
-      const currentStatus = localChanges.get(key)?.status || item.status || 'not_started';
-      return currentStatus === 'completed';
-    });
-
-    const targetStatus = allCompleted ? 'not_started' : 'completed';
-    const targetPct = allCompleted ? 0 : 100;
-    const newChanges = new Map(localChanges);
-
-    group.codes.forEach(code => {
-      const item = row.items[code];
-      if (!item) return;
-      const key = `${latrineId}-${code}`;
-      newChanges.set(key, {
-        status: targetStatus, achieved_qty: targetPct === 100 ? item.planned_qty : 0,
-        achievement_pct: targetPct, quality_pass: targetStatus === 'completed' ? 'pass' : 'pending', itemId: item.id, latrineId
-      });
-    });
-
-    historyRef.current.push({ type: 'group_toggle', latrineId, groupKey, to: targetStatus });
-    setLocalChanges(newChanges);
-  }, [matrixData, localChanges]);
-
-  const handleUndo = useCallback(() => {
-    const action = historyRef.current.undo();
-    if (!action) return;
-
-    if (action.type === 'toggle') {
-      const key = `${action.latrineId}-${action.boqCode}`;
-      const currentItem = matrixData.find(r => r.latrine.id === action.latrineId)?.items[action.boqCode];
-
-      if (action.from === currentItem?.status) {
-        const newChanges = new Map(localChanges);
-        newChanges.delete(key);
-        setLocalChanges(newChanges);
-      } else {
-        setLocalChanges(prev => new Map(prev).set(key, {
-          status: action.from, achieved_qty: action.fromPct === 100 ? currentItem.planned_qty : action.fromPct === 50 ? (currentItem.planned_qty * 0.5) : 0,
-          achievement_pct: action.fromPct, quality_pass: action.from === 'completed' ? 'pass' : 'pending', itemId: currentItem.id, latrineId: action.latrineId
-        }));
+    try {
+      const key = `${latrineId}-${boqCode}`;
+      const row = matrixData.find(r => r.latrine.id === latrineId);
+      
+      // ✅ تحقق أمان: هل الصف موجود؟
+      if (!row) {
+        console.warn(`Latrine ${latrineId} not found in matrix`);
+        return;
       }
+      
+      const currentItem = row.items[boqCode];
+      
+      // ✅ تحقق أمان: هل البند موجود؟
+      if (!currentItem) {
+        console.warn(`BoQ item ${boqCode} not found for latrine ${latrineId}`);
+        return;
+      }
+
+      const currentStatus = localChanges.get(key)?.status || currentItem.status || 'not_started';
+      const config = getStatusConfig(currentStatus); // ← آمن حتى مع الحالات القديمة
+
+      let newStatus;
+      if (direction === 'right') {
+        // ✅ منطق عكسي صحيح: نعكس دورة الحالات
+        const reverseCycle = {
+          'not_started': 'rework_required',
+          'in_progress': 'not_started',
+          'completed': 'in_progress',
+          'pending_inspection': 'completed',
+          'accepted': 'pending_inspection',
+          'rejected': 'accepted',
+          'rework_required': 'rejected'
+        };
+        newStatus = reverseCycle[currentStatus] || 'not_started';
+      } else {
+        newStatus = config.next;
+      }
+
+      const newConfig = getStatusConfig(newStatus);
+      const newPct = newConfig.pct;
+
+      historyRef.current.push({ 
+        type: 'toggle', 
+        latrineId, 
+        boqCode, 
+        from: currentStatus, 
+        to: newStatus, 
+        fromPct: currentItem.achievement_pct || 0, 
+        toPct: newPct 
+      });
+
+      setLocalChanges(prev => new Map(prev).set(key, {
+        status: newStatus, 
+        achieved_qty: newPct === 100 ? currentItem.planned_qty : newPct === 50 ? (currentItem.planned_qty * 0.5) : newPct === 25 ? (currentItem.planned_qty * 0.25) : 0,
+        achievement_pct: newPct, 
+        quality_pass: newStatus === 'completed' || newStatus === 'accepted' ? 'pass' : newStatus === 'rejected' ? 'fail' : 'pending', 
+        itemId: currentItem.id, 
+        latrineId
+      }));
+    } catch (err) {
+      console.error('Toggle error:', err);
+      setError('خطأ في تبديل الحالة: ' + err.message);
     }
   }, [matrixData, localChanges]);
 
+  // ✅ handleGroupToggle مُصلح — يتحقق من وجود كل البنود
+  const handleGroupToggle = useCallback((latrineId, groupKey) => {
+    try {
+      const group = GROUPS[groupKey];
+      const row = matrixData.find(r => r.latrine.id === latrineId);
+      
+      if (!row || !group) {
+        console.warn('Row or group not found');
+        return;
+      }
+
+      // ✅ التحقق: هل جميع البنود الموجودة مكتملة؟
+      const existingItems = group.codes
+        .map(code => row.items[code])
+        .filter(Boolean); // ← تصفية البنود غير الموجودة
+      
+      if (existingItems.length === 0) {
+        console.warn(`No items found for group ${groupKey} in latrine ${latrineId}`);
+        return;
+      }
+
+      const allCompleted = existingItems.every(item => {
+        const key = `${latrineId}-${item.boq_code}`;
+        const status = localChanges.get(key)?.status || item.status || 'not_started';
+        return status === 'completed' || status === 'accepted';
+      });
+
+      const targetStatus = allCompleted ? 'not_started' : 'completed';
+      const targetPct = allCompleted ? 0 : 100;
+      const newChanges = new Map(localChanges);
+
+      existingItems.forEach(item => {
+        const key = `${latrineId}-${item.boq_code}`;
+        newChanges.set(key, {
+          status: targetStatus, 
+          achieved_qty: targetPct === 100 ? item.planned_qty : 0,
+          achievement_pct: targetPct, 
+          quality_pass: targetStatus === 'completed' ? 'pass' : 'pending', 
+          itemId: item.id, 
+          latrineId
+        });
+      });
+
+      historyRef.current.push({ type: 'group_toggle', latrineId, groupKey, to: targetStatus });
+      setLocalChanges(newChanges);
+    } catch (err) {
+      console.error('Group toggle error:', err);
+      setError('خطأ في التبديل الجماعي: ' + err.message);
+    }
+  }, [matrixData, localChanges]);
+
+  // ✅ handleUndo مُصلح — يتحقق من وجود العناصر قبل الوصول
+  const handleUndo = useCallback(() => {
+    try {
+      const action = historyRef.current.undo();
+      if (!action) return;
+
+      if (action.type === 'toggle') {
+        const key = `${action.latrineId}-${action.boqCode}`;
+        const row = matrixData.find(r => r.latrine.id === action.latrineId);
+        const currentItem = row?.items?.[action.boqCode];
+
+        if (!currentItem) {
+          // ✅ إذا لم يعد العنصر موجوداً، نحذف التغيير فقط
+          const newChanges = new Map(localChanges);
+          newChanges.delete(key);
+          setLocalChanges(newChanges);
+          return;
+        }
+
+        if (action.from === currentItem?.status) {
+          const newChanges = new Map(localChanges);
+          newChanges.delete(key);
+          setLocalChanges(newChanges);
+        } else {
+          const fromConfig = getStatusConfig(action.from);
+          setLocalChanges(prev => new Map(prev).set(key, {
+            status: action.from, 
+            achieved_qty: fromConfig.pct === 100 ? currentItem.planned_qty : fromConfig.pct === 50 ? (currentItem.planned_qty * 0.5) : fromConfig.pct === 25 ? (currentItem.planned_qty * 0.25) : 0,
+            achievement_pct: fromConfig.pct, 
+            quality_pass: action.from === 'completed' || action.from === 'accepted' ? 'pass' : action.from === 'rejected' ? 'fail' : 'pending', 
+            itemId: currentItem.id, 
+            latrineId: action.latrineId
+          }));
+        }
+      }
+    } catch (err) {
+      console.error('Undo error:', err);
+      setError('خطأ في التراجع: ' + err.message);
+    }
+  }, [matrixData, localChanges]);
+
+  // ✅ handleSaveDraft مُصلح — معالجة الأخطاء المحتملة
   const handleSaveDraft = useCallback(async () => {
     if (localChanges.size === 0) return;
     const changesCount = localChanges.size;
     setIsSaving(true);
+    setError(null);
 
     try {
       await db.transaction('rw', db.boq_items, db.sync_queue, async () => {
         for (const [key, change] of localChanges) {
+          // ✅ التحقق من وجود البند قبل التحديث
+          const existingItem = await db.boq_items.get(change.itemId);
+          if (!existingItem) {
+            console.warn(`Item ${change.itemId} not found, skipping`);
+            continue;
+          }
+          
           await db.boq_items.update(change.itemId, {
-            achieved_qty: change.achieved_qty, status: change.status,
-            achievement_pct: change.achievement_pct, quality_pass: change.quality_pass
+            achieved_qty: change.achieved_qty, 
+            status: change.status,
+            achievement_pct: change.achievement_pct, 
+            quality_pass: change.quality_pass
           });
           await pushToSyncQueue('UPDATE_BOQ', {
-            id: change.itemId, achieved_qty: change.achieved_qty,
-            status: change.status, quality_pass: change.quality_pass, latrine_id: change.latrineId
+            id: change.itemId, 
+            achieved_qty: change.achieved_qty,
+            status: change.status, 
+            quality_pass: change.quality_pass, 
+            latrine_id: change.latrineId
           });
         }
       });
@@ -252,6 +358,7 @@ const SpeedEntryMatrix = ({ onBack }) => {
       historyRef.current = new HistoryManager();
       setSaveMessage({ type: 'success', text: `تم حفظ ${changesCount} تعديل في المسودة` });
     } catch (err) {
+      console.error('Save error:', err);
       setSaveMessage({ type: 'error', text: 'فشل الحفظ: ' + err.message });
     } finally {
       setIsSaving(false);
@@ -259,6 +366,7 @@ const SpeedEntryMatrix = ({ onBack }) => {
     }
   }, [localChanges]);
 
+  // ✅ اختصارات لوحة المفاتيح — مع Error Boundary ضمني
   useEffect(() => {
     const handleKeyDown = (e) => {
       if (e.ctrlKey || e.metaKey) {
@@ -270,23 +378,14 @@ const SpeedEntryMatrix = ({ onBack }) => {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [handleUndo, handleSaveDraft]);
 
-  // ==========================================
-  // 🚀 The Magic: Custom Inner Element
-  // ==========================================
-  // هذا المكون يدمج "رأس الجدول" داخل الحاوية الافتراضية لضمان تزامن التمرير 100%
+  // ✅ InnerElement — بدون تغيير جوهري
   const InnerElement = useMemo(() => React.forwardRef(({ children, ...rest }, ref) => {
     return (
       <div ref={ref} {...rest} style={{ ...rest.style, width: `${ROW_WIDTH}px`, height: `${parseFloat(rest.style.height) + HEADER_HEIGHT}px`, direction: 'rtl' }}>
-        
-        {/* 🛡️ Sticky Header (Inside the scrolling container) */}
         <div style={{ position: 'sticky', top: 0, zIndex: 20, height: HEADER_HEIGHT, display: 'flex', background: '#f8f9fa', borderBottom: '2px solid #dee2e6', width: '100%' }}>
-          
-          {/* Sticky Beneficiary Header */}
           <div style={{ width: STICKY_COL_WIDTH, minWidth: STICKY_COL_WIDTH, position: 'sticky', right: 0, zIndex: 21, background: '#f8f9fa', display: 'flex', alignItems: 'center', padding: '0 12px', borderLeft: '2px solid #dee2e6', boxSizing: 'border-box', fontSize: '13px', fontWeight: 'bold', color: '#495057' }}>
             الحمام / المستفيد
           </div>
-          
-          {/* Group Headers */}
           {Object.entries(GROUPS).map(([groupKey, group]) => (
             <div key={groupKey} style={{ display: 'flex', flexShrink: 0 }}>
               <div style={{ width: `${GROUP_TOGGLE_WIDTH}px`, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', background: group.color + '08', borderLeft: `1px solid ${group.color}20` }}>
@@ -301,8 +400,6 @@ const SpeedEntryMatrix = ({ onBack }) => {
             </div>
           ))}
         </div>
-
-        {/* 🚀 Virtualized Rows (Pushed down by HEADER_HEIGHT) */}
         {React.Children.map(children, child => {
           if (!child) return null;
           return React.cloneElement(child, {
@@ -313,16 +410,16 @@ const SpeedEntryMatrix = ({ onBack }) => {
     );
   }), [showLabels]);
 
-  // 🚀 Virtualized Row Component
+  // ✅ VirtualRow مُصلح — يتحقق من وجود البنود
   const VirtualRow = useCallback(({ index, style }) => {
     const row = filteredData[index];
+    if (!row) return null; // ✅ أمان إضافي
+    
     const latrine = row.latrine;
     const rowBg = index % 2 === 0 ? '#fafafa' : 'white';
 
     return (
       <div style={{ ...style, width: `${ROW_WIDTH}px`, display: 'flex', alignItems: 'center', borderBottom: '1px solid #e0e0e0', background: rowBg, boxSizing: 'border-box' }}>
-        
-        {/* 🛡️ Sticky Beneficiary Column */}
         <div style={{
           width: STICKY_COL_WIDTH, minWidth: STICKY_COL_WIDTH, padding: '8px 12px', borderLeft: '2px solid #e0e0e0',
           background: rowBg, position: 'sticky', right: 0, zIndex: 10, flexShrink: 0, boxSizing: 'border-box',
@@ -333,7 +430,6 @@ const SpeedEntryMatrix = ({ onBack }) => {
           <div style={{ fontSize: '10px', color: '#999' }}>{latrine.block_no} | {row.progress.toFixed(0)}%</div>
         </div>
 
-        {/* Groups A→B→C */}
         {Object.entries(GROUPS).map(([groupKey, group]) => (
           <div key={groupKey} style={{ display: 'flex', flexShrink: 0 }}>
             <div style={{ width: `${GROUP_TOGGLE_WIDTH}px`, display: 'flex', alignItems: 'center', justifyContent: 'center', background: group.color + '10', flexShrink: 0 }}>
@@ -343,10 +439,10 @@ const SpeedEntryMatrix = ({ onBack }) => {
               >
                 {group.codes.every(code => {
                   const item = row.items[code];
-                  if (!item) return true;
+                  if (!item) return true; // ✅ البند غير موجود = نعتبره مكتمل (لا يؤثر)
                   const key = `${latrine.id}-${code}`;
                   const status = localChanges.get(key)?.status || item.status || 'not_started';
-                  return status === 'completed';
+                  return status === 'completed' || status === 'accepted';
                 }) ? '✓' : '+'}
               </button>
             </div>
@@ -354,10 +450,17 @@ const SpeedEntryMatrix = ({ onBack }) => {
               const item = row.items[code];
               const key = `${latrine.id}-${code}`;
               const isModified = localChanges.has(key);
+              
+              // ✅ إذا لم يكن البند موجوداً، نعرض خلية فارغة
               if (!item) return <div key={code} style={{ width: CELL_WIDTH, flexShrink: 0 }} />;
+              
               return (
                 <div key={code} style={{ width: CELL_WIDTH, padding: '2px', flexShrink: 0, boxSizing: 'border-box' }}>
-                  <StatusCell item={{ ...item, status: localChanges.get(key)?.status || item.status }} onToggle={() => handleToggle(latrine.id, code)} isSelected={isModified} />
+                  <StatusCell 
+                    item={{ ...item, status: localChanges.get(key)?.status || item.status }} 
+                    onToggle={() => handleToggle(latrine.id, code)} 
+                    isSelected={isModified} 
+                  />
                 </div>
               );
             })}
@@ -366,6 +469,19 @@ const SpeedEntryMatrix = ({ onBack }) => {
       </div>
     );
   }, [filteredData, localChanges, handleToggle, handleGroupToggle]);
+
+  // ✅ Error Display — عرض الأخطاء بدلاً من الشاشة البيضاء
+  if (error) {
+    return (
+      <div style={{ direction: 'rtl', padding: '40px', textAlign: 'center', background: '#ffebee', color: '#c62828' }}>
+        <h2>⚠️ خطأ في الإدخال السريع</h2>
+        <p>{error}</p>
+        <button onClick={() => setError(null)} style={{ padding: '10px 20px', background: '#c62828', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer' }}>
+          إعادة المحاولة
+        </button>
+      </div>
+    );
+  }
 
   if (!latrines || !boqItems) {
     return (
@@ -378,7 +494,7 @@ const SpeedEntryMatrix = ({ onBack }) => {
 
   return (
     <div style={{ direction: 'rtl', height: 'calc(100vh - 60px)', display: 'flex', flexDirection: 'column' }}>
-      {/* Header Area */}
+      {/* Header */}
       <div style={{ background: '#1F4E78', color: 'white', padding: '15px 20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
         <div>
           <h2 style={{ margin: 0, fontSize: '20px' }}>⚡ الإدخال السريع (Speed Entry)</h2>
@@ -411,7 +527,7 @@ const SpeedEntryMatrix = ({ onBack }) => {
         </div>
       )}
 
-      {/* 🚀 Virtualized Table Area with Native CSS Sync */}
+      {/* Virtualized Table */}
       <div style={{ flex: 1, position: 'relative', background: 'white' }}>
         <AutoSizer>
           {({ height, width }) => (
