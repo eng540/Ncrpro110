@@ -1,5 +1,12 @@
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { useLiveQuery } from 'dexie-react-hooks';
+import { FixedSizeList as List } from 'react-window';
+import AutoSizer from 'react-virtualized-auto-sizer';
+import { db } from '../db';
+import { pushToSyncQueue } from '../syncEngine';
+
 // ==========================================
-// Constants & Configuration — المُصلحة
+// Constants & Configuration
 // ==========================================
 const ITEM_HEIGHT = 60;
 const HEADER_HEIGHT = 72;
@@ -24,20 +31,24 @@ const BOQ_LABELS = {
   'C4': { name: 'لوحة معدنية + شعار', short: 'لوحة/شعار', unit: 'عدد' }
 };
 
-// ✅ الحل: تضمين ALL الحالات الممكنة في النظام
+// ✅ ALL STATES — شامل كل الحالات الممكنة في النظام
 const STATUS_CYCLE = {
   'not_started': { next: 'in_progress', icon: '⬜', label: 'لم يبدأ', color: '#e0e0e0', pct: 0 },
   'in_progress': { next: 'completed', icon: '🔄', label: 'قيد العمل', color: '#ffc107', pct: 50 },
   'completed': { next: 'pending_inspection', icon: '✅', label: 'مكتمل', color: '#4caf50', pct: 100 },
   'pending_inspection': { next: 'accepted', icon: '🔍', label: 'بانتظار الفحص', color: '#2196f3', pct: 100 },
-  'accepted': { next: 'rejected', icon: '✓', label: 'مقبول', color: '#8bc34a', pct: 100 },        // ← جديد
-  'rejected': { next: 'rework_required', icon: '✗', label: 'مرفوض', color: '#f44336', pct: 0 },     // ← جديد
-  'rework_required': { next: 'not_started', icon: '🔧', label: 'يحتاج إعادة', color: '#ff9800', pct: 25 }, // ← جديد
+  'accepted': { next: 'rejected', icon: '✓', label: 'مقبول', color: '#8bc34a', pct: 100 },
+  'rejected': { next: 'rework_required', icon: '✗', label: 'مرفوض', color: '#f44336', pct: 0 },
+  'rework_required': { next: 'not_started', icon: '🔧', label: 'يحتاج إعادة', color: '#ff9800', pct: 25 },
 };
 
-// ✅ نسخة آمنة للقراءة (Safe Reader)
+// ✅ دالة آمنة للقراءة — تعالج أي حالة غير معروفة
 const getStatusConfig = (status) => {
-  return STATUS_CYCLE[status] || STATUS_CYCLE['not_started']; // Fallback آمن
+  if (!status || !STATUS_CYCLE[status]) {
+    console.warn(`Unknown status: ${status}, falling back to not_started`);
+    return STATUS_CYCLE['not_started'];
+  }
+  return STATUS_CYCLE[status];
 };
 
 const GROUPS = {
@@ -47,7 +58,7 @@ const GROUPS = {
 };
 
 // ==========================================
-// History Manager — بدون تغيير
+// History Manager
 // ==========================================
 class HistoryManager {
   constructor(limit = 50) {
@@ -69,13 +80,12 @@ class HistoryManager {
 }
 
 // ==========================================
-// Sub-Components — المُصلحة
+// Sub-Components
 // ==========================================
 
-// ✅ StatusCell الآمن — يستخدم getStatusConfig
 const StatusCell = React.memo(({ item, onToggle, isSelected }) => {
   const status = item?.status || 'not_started';
-  const config = getStatusConfig(status); // ← استخدام الدالة الآمنة
+  const config = getStatusConfig(status);
   
   return (
     <button
@@ -108,7 +118,7 @@ const DualHeaderCell = ({ code, groupColor }) => {
 };
 
 // ==========================================
-// Main Component — المُصلحة بالكامل
+// Main Component
 // ==========================================
 const SpeedEntryMatrix = ({ onBack }) => {
   const [localChanges, setLocalChanges] = useState(new Map());
@@ -118,14 +128,14 @@ const SpeedEntryMatrix = ({ onBack }) => {
   const [saveMessage, setSaveMessage] = useState(null);
   const [showConfirmModal, setShowConfirmModal] = useState(false);
   const [showLabels, setShowLabels] = useState(true);
-  const [error, setError] = useState(null); // ← جديد: لالتقاط الأخطاء
+  const [error, setError] = useState(null);
 
   const historyRef = useRef(new HistoryManager());
 
   const latrines = useLiveQuery(() => db.latrines.toArray(), []);
   const boqItems = useLiveQuery(() => db.boq_items.toArray(), []);
 
-  // ✅ بناء المصفوفة مع التحقق من وجود البنود
+  // بناء المصفوفة
   const matrixData = useMemo(() => {
     if (!latrines || !boqItems) return [];
     return latrines.map(latrine => {
@@ -162,32 +172,29 @@ const SpeedEntryMatrix = ({ onBack }) => {
     return { total, completed, inProgress, notStarted };
   }, [filteredData]);
 
-  // ✅ handleToggle مُصلح — يستخدم getStatusConfig ويتحقق من وجود item
+  // ✅ handleToggle مُصلح
   const handleToggle = useCallback((latrineId, boqCode, direction = 'forward') => {
     try {
       const key = `${latrineId}-${boqCode}`;
       const row = matrixData.find(r => r.latrine.id === latrineId);
       
-      // ✅ تحقق أمان: هل الصف موجود؟
       if (!row) {
-        console.warn(`Latrine ${latrineId} not found in matrix`);
+        console.warn(`Latrine ${latrineId} not found`);
         return;
       }
       
       const currentItem = row.items[boqCode];
       
-      // ✅ تحقق أمان: هل البند موجود؟
       if (!currentItem) {
         console.warn(`BoQ item ${boqCode} not found for latrine ${latrineId}`);
         return;
       }
 
       const currentStatus = localChanges.get(key)?.status || currentItem.status || 'not_started';
-      const config = getStatusConfig(currentStatus); // ← آمن حتى مع الحالات القديمة
+      const config = getStatusConfig(currentStatus);
 
       let newStatus;
       if (direction === 'right') {
-        // ✅ منطق عكسي صحيح: نعكس دورة الحالات
         const reverseCycle = {
           'not_started': 'rework_required',
           'in_progress': 'not_started',
@@ -225,30 +232,23 @@ const SpeedEntryMatrix = ({ onBack }) => {
       }));
     } catch (err) {
       console.error('Toggle error:', err);
-      setError('خطأ في تبديل الحالة: ' + err.message);
+      setError('خطأ في تبديل الحالة');
     }
   }, [matrixData, localChanges]);
 
-  // ✅ handleGroupToggle مُصلح — يتحقق من وجود كل البنود
+  // ✅ handleGroupToggle مُصلح
   const handleGroupToggle = useCallback((latrineId, groupKey) => {
     try {
       const group = GROUPS[groupKey];
       const row = matrixData.find(r => r.latrine.id === latrineId);
       
-      if (!row || !group) {
-        console.warn('Row or group not found');
-        return;
-      }
+      if (!row || !group) return;
 
-      // ✅ التحقق: هل جميع البنود الموجودة مكتملة؟
       const existingItems = group.codes
         .map(code => row.items[code])
-        .filter(Boolean); // ← تصفية البنود غير الموجودة
+        .filter(Boolean);
       
-      if (existingItems.length === 0) {
-        console.warn(`No items found for group ${groupKey} in latrine ${latrineId}`);
-        return;
-      }
+      if (existingItems.length === 0) return;
 
       const allCompleted = existingItems.every(item => {
         const key = `${latrineId}-${item.boq_code}`;
@@ -276,11 +276,10 @@ const SpeedEntryMatrix = ({ onBack }) => {
       setLocalChanges(newChanges);
     } catch (err) {
       console.error('Group toggle error:', err);
-      setError('خطأ في التبديل الجماعي: ' + err.message);
+      setError('خطأ في التبديل الجماعي');
     }
   }, [matrixData, localChanges]);
 
-  // ✅ handleUndo مُصلح — يتحقق من وجود العناصر قبل الوصول
   const handleUndo = useCallback(() => {
     try {
       const action = historyRef.current.undo();
@@ -292,7 +291,6 @@ const SpeedEntryMatrix = ({ onBack }) => {
         const currentItem = row?.items?.[action.boqCode];
 
         if (!currentItem) {
-          // ✅ إذا لم يعد العنصر موجوداً، نحذف التغيير فقط
           const newChanges = new Map(localChanges);
           newChanges.delete(key);
           setLocalChanges(newChanges);
@@ -317,21 +315,17 @@ const SpeedEntryMatrix = ({ onBack }) => {
       }
     } catch (err) {
       console.error('Undo error:', err);
-      setError('خطأ في التراجع: ' + err.message);
     }
   }, [matrixData, localChanges]);
 
-  // ✅ handleSaveDraft مُصلح — معالجة الأخطاء المحتملة
   const handleSaveDraft = useCallback(async () => {
     if (localChanges.size === 0) return;
     const changesCount = localChanges.size;
     setIsSaving(true);
-    setError(null);
 
     try {
       await db.transaction('rw', db.boq_items, db.sync_queue, async () => {
         for (const [key, change] of localChanges) {
-          // ✅ التحقق من وجود البند قبل التحديث
           const existingItem = await db.boq_items.get(change.itemId);
           if (!existingItem) {
             console.warn(`Item ${change.itemId} not found, skipping`);
@@ -356,7 +350,7 @@ const SpeedEntryMatrix = ({ onBack }) => {
 
       setLocalChanges(new Map());
       historyRef.current = new HistoryManager();
-      setSaveMessage({ type: 'success', text: `تم حفظ ${changesCount} تعديل في المسودة` });
+      setSaveMessage({ type: 'success', text: `تم حفظ ${changesCount} تعديل` });
     } catch (err) {
       console.error('Save error:', err);
       setSaveMessage({ type: 'error', text: 'فشل الحفظ: ' + err.message });
@@ -366,7 +360,6 @@ const SpeedEntryMatrix = ({ onBack }) => {
     }
   }, [localChanges]);
 
-  // ✅ اختصارات لوحة المفاتيح — مع Error Boundary ضمني
   useEffect(() => {
     const handleKeyDown = (e) => {
       if (e.ctrlKey || e.metaKey) {
@@ -378,10 +371,15 @@ const SpeedEntryMatrix = ({ onBack }) => {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [handleUndo, handleSaveDraft]);
 
-  // ✅ InnerElement — بدون تغيير جوهري
-  const InnerElement = useMemo(() => React.forwardRef(({ children, ...rest }, ref) => {
+  // ✅ InnerElement مُصلح — بدون parseFloat خطير
+  const InnerElement = useMemo(() => React.forwardRef(({ children, style, ...rest }, ref) => {
+    // ✅ أمان: التحقق من وجود style.height
+    const baseHeight = style?.height || 0;
+    const numericHeight = typeof baseHeight === 'string' ? parseFloat(baseHeight) : baseHeight;
+    const safeHeight = isNaN(numericHeight) ? 0 : numericHeight;
+    
     return (
-      <div ref={ref} {...rest} style={{ ...rest.style, width: `${ROW_WIDTH}px`, height: `${parseFloat(rest.style.height) + HEADER_HEIGHT}px`, direction: 'rtl' }}>
+      <div ref={ref} {...rest} style={{ ...style, width: `${ROW_WIDTH}px`, height: `${safeHeight + HEADER_HEIGHT}px`, direction: 'rtl' }}>
         <div style={{ position: 'sticky', top: 0, zIndex: 20, height: HEADER_HEIGHT, display: 'flex', background: '#f8f9fa', borderBottom: '2px solid #dee2e6', width: '100%' }}>
           <div style={{ width: STICKY_COL_WIDTH, minWidth: STICKY_COL_WIDTH, position: 'sticky', right: 0, zIndex: 21, background: '#f8f9fa', display: 'flex', alignItems: 'center', padding: '0 12px', borderLeft: '2px solid #dee2e6', boxSizing: 'border-box', fontSize: '13px', fontWeight: 'bold', color: '#495057' }}>
             الحمام / المستفيد
@@ -403,17 +401,16 @@ const SpeedEntryMatrix = ({ onBack }) => {
         {React.Children.map(children, child => {
           if (!child) return null;
           return React.cloneElement(child, {
-            style: { ...child.props.style, top: parseFloat(child.props.style.top) + HEADER_HEIGHT }
+            style: { ...child.props.style, top: (parseFloat(child.props.style?.top) || 0) + HEADER_HEIGHT }
           });
         })}
       </div>
     );
   }), [showLabels]);
 
-  // ✅ VirtualRow مُصلح — يتحقق من وجود البنود
   const VirtualRow = useCallback(({ index, style }) => {
     const row = filteredData[index];
-    if (!row) return null; // ✅ أمان إضافي
+    if (!row) return null;
     
     const latrine = row.latrine;
     const rowBg = index % 2 === 0 ? '#fafafa' : 'white';
@@ -439,7 +436,7 @@ const SpeedEntryMatrix = ({ onBack }) => {
               >
                 {group.codes.every(code => {
                   const item = row.items[code];
-                  if (!item) return true; // ✅ البند غير موجود = نعتبره مكتمل (لا يؤثر)
+                  if (!item) return true;
                   const key = `${latrine.id}-${code}`;
                   const status = localChanges.get(key)?.status || item.status || 'not_started';
                   return status === 'completed' || status === 'accepted';
@@ -451,7 +448,6 @@ const SpeedEntryMatrix = ({ onBack }) => {
               const key = `${latrine.id}-${code}`;
               const isModified = localChanges.has(key);
               
-              // ✅ إذا لم يكن البند موجوداً، نعرض خلية فارغة
               if (!item) return <div key={code} style={{ width: CELL_WIDTH, flexShrink: 0 }} />;
               
               return (
@@ -470,7 +466,6 @@ const SpeedEntryMatrix = ({ onBack }) => {
     );
   }, [filteredData, localChanges, handleToggle, handleGroupToggle]);
 
-  // ✅ Error Display — عرض الأخطاء بدلاً من الشاشة البيضاء
   if (error) {
     return (
       <div style={{ direction: 'rtl', padding: '40px', textAlign: 'center', background: '#ffebee', color: '#c62828' }}>
@@ -494,7 +489,6 @@ const SpeedEntryMatrix = ({ onBack }) => {
 
   return (
     <div style={{ direction: 'rtl', height: 'calc(100vh - 60px)', display: 'flex', flexDirection: 'column' }}>
-      {/* Header */}
       <div style={{ background: '#1F4E78', color: 'white', padding: '15px 20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
         <div>
           <h2 style={{ margin: 0, fontSize: '20px' }}>⚡ الإدخال السريع (Speed Entry)</h2>
@@ -503,18 +497,18 @@ const SpeedEntryMatrix = ({ onBack }) => {
           </p>
         </div>
         <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
-          <input type="text" placeholder="🔍 بحث برقم أو اسم..." value={searchQuery} onChange={e => setSearchQuery(e.target.value)} style={{ padding: '8px 12px', borderRadius: '4px', border: 'none', width: '200px', fontSize: '13px' }} />
+          <input type="text" placeholder="🔍 بحث..." value={searchQuery} onChange={e => setSearchQuery(e.target.value)} style={{ padding: '8px 12px', borderRadius: '4px', border: 'none', width: '200px', fontSize: '13px' }} />
           <select value={filterBlock} onChange={e => setFilterBlock(e.target.value)} style={{ padding: '8px', borderRadius: '4px', border: 'none', fontSize: '13px' }}>
             <option value="">كل المربعات</option>
             {blocks.map(b => <option key={b} value={b}>{b}</option>)}
           </select>
-          <button onClick={() => setShowLabels(!showLabels)} style={{ padding: '8px 12px', background: showLabels ? 'rgba(255,215,0,0.3)' : 'rgba(255,255,255,0.1)', color: 'white', border: '1px solid rgba(255,255,255,0.3)', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold' }}>
-            {showLabels ? '🏷️ الأسماء: ON' : '🏷️ الأسماء: OFF'}
+          <button onClick={() => setShowLabels(!showLabels)} style={{ padding: '8px 12px', background: showLabels ? 'rgba(255,215,0,0.3)' : 'rgba(255,255,255,0.1)', color: 'white', border: '1px solid rgba(255,255,255,0.3)', borderRadius: '4px', cursor: 'pointer', fontSize: '12px' }}>
+            {showLabels ? '🏷️ ON' : '🏷️ OFF'}
           </button>
           <button onClick={handleUndo} disabled={!historyRef.current.canUndo()} style={{ padding: '8px 16px', background: historyRef.current.canUndo() ? 'rgba(255,255,255,0.2)' : 'rgba(255,255,255,0.05)', color: 'white', border: '1px solid rgba(255,255,255,0.3)', borderRadius: '4px', cursor: historyRef.current.canUndo() ? 'pointer' : 'not-allowed', fontSize: '13px' }}>
             ↩️ تراجع
           </button>
-          <button onClick={() => localChanges.size > 0 ? setShowConfirmModal(true) : null} disabled={localChanges.size === 0 || isSaving} style={{ padding: '8px 20px', background: localChanges.size > 0 ? '#27ae60' : '#95a5a6', color: 'white', border: 'none', borderRadius: '4px', cursor: localChanges.size > 0 ? 'pointer' : 'not-allowed', fontWeight: 'bold', fontSize: '14px', display: 'flex', alignItems: 'center', gap: '5px' }}>
+          <button onClick={() => localChanges.size > 0 ? setShowConfirmModal(true) : null} disabled={localChanges.size === 0 || isSaving} style={{ padding: '8px 20px', background: localChanges.size > 0 ? '#27ae60' : '#95a5a6', color: 'white', border: 'none', borderRadius: '4px', cursor: localChanges.size > 0 ? 'pointer' : 'not-allowed', fontWeight: 'bold', fontSize: '14px' }}>
             {isSaving ? '⏳' : '💾'} حفظ ({localChanges.size})
           </button>
           <button onClick={onBack} style={{ padding: '8px 16px', background: 'rgba(255,255,255,0.1)', color: 'white', border: '1px solid rgba(255,255,255,0.3)', borderRadius: '4px', cursor: 'pointer' }}>← عودة</button>
@@ -527,7 +521,6 @@ const SpeedEntryMatrix = ({ onBack }) => {
         </div>
       )}
 
-      {/* Virtualized Table */}
       <div style={{ flex: 1, position: 'relative', background: 'white' }}>
         <AutoSizer>
           {({ height, width }) => (
@@ -536,7 +529,7 @@ const SpeedEntryMatrix = ({ onBack }) => {
               itemCount={filteredData.length}
               itemSize={ITEM_HEIGHT}
               width={width}
-              direction="rtl"
+              // ✅ إزالة direction="rtl" غير المدعومة
               overscanCount={5}
               innerElementType={InnerElement}
             >
@@ -546,14 +539,12 @@ const SpeedEntryMatrix = ({ onBack }) => {
         </AutoSizer>
       </div>
 
-      {/* Legend */}
       <div style={{ background: '#f8f9fa', padding: '10px 20px', borderTop: '1px solid #dee2e6', display: 'flex', gap: '15px', fontSize: '11px', color: '#666', flexWrap: 'wrap', alignItems: 'center' }}>
         <span><strong>الاختصارات:</strong></span>
-        <span>🖱️ نقرة = تبديل الحالة</span>
-        <span>🖱️🖱️ نقرة يمين = عكس الاتجاه</span>
+        <span>🖱️ نقرة = تبديل</span>
+        <span>🖱️🖱️ يمين = عكس</span>
         <span>⌨️ Ctrl+Z = تراجع</span>
         <span>⌨️ Ctrl+S = حفظ</span>
-        
         <div style={{ marginRight: 'auto', display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center', borderRight: '2px solid #dee2e6', paddingRight: '15px' }}>
           <span style={{ fontWeight: 'bold', color: '#333' }}>البنود:</span>
           {Object.entries(BOQ_LABELS).map(([code, info]) => (
@@ -564,7 +555,6 @@ const SpeedEntryMatrix = ({ onBack }) => {
         </div>
       </div>
 
-      {/* Confirm Modal */}
       {showConfirmModal && (
         <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
           <div style={{ background: 'white', padding: '30px', borderRadius: '8px', maxWidth: '400px', textAlign: 'center' }}>
@@ -572,7 +562,7 @@ const SpeedEntryMatrix = ({ onBack }) => {
             <p>هل أنت متأكد من حفظ {localChanges.size} تعديل؟</p>
             <div style={{ display: 'flex', gap: '10px', justifyContent: 'center', marginTop: '20px' }}>
               <button onClick={() => setShowConfirmModal(false)} style={{ padding: '10px 20px', background: '#ecf0f1', border: 'none', borderRadius: '4px', cursor: 'pointer' }}>إلغاء</button>
-              <button onClick={() => { setShowConfirmModal(false); handleSaveDraft(); }} style={{ padding: '10px 20px', background: '#27ae60', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>✅ تأكيد الحفظ</button>
+              <button onClick={() => { setShowConfirmModal(false); handleSaveDraft(); }} style={{ padding: '10px 20px', background: '#27ae60', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>✅ تأكيد</button>
             </div>
           </div>
         </div>
