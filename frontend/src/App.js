@@ -9,7 +9,8 @@ import DailyLogForm from './components/DailyLogForm';
 import DailyLogList from './components/DailyLogList';
 import ReportsPanel from './components/ReportsPanel';
 import AdminPanel from './components/AdminPanel';
-import SpeedEntryMatrix from './components/SpeedEntryMatrix'; // ← جديد
+import SpeedEntryMatrix from './components/SpeedEntryMatrix';
+import GovernancePanel from './components/GovernancePanel'; // ← إضافة الحوكمة
 import { db, populateLocalDB } from './db';
 
 const API_BASE_URL = process.env.REACT_APP_API_URL || '/api';
@@ -106,7 +107,6 @@ function App() {
           onClick={() => navigateTo('BULK')}
           label="⚡ الشبكة المتقدمة"
         />
-        {/* ← زر الإدخال السريع الجديد */}
         <NavButton 
           active={currentView.name === 'SPEED_ENTRY'}
           onClick={() => navigateTo('SPEED_ENTRY')}
@@ -132,6 +132,13 @@ function App() {
           active={currentView.name === 'REPORTS'}
           onClick={() => navigateTo('REPORTS')}
           label="📈 التقارير"
+        />
+        {/* ← إضافة زر الحوكمة */}
+        <NavButton 
+          active={currentView.name === 'GOVERNANCE'}
+          onClick={() => navigateTo('GOVERNANCE')}
+          label="⚖️ الحوكمة"
+          style={{ background: currentView.name === 'GOVERNANCE' ? '#fff' : 'rgba(142, 68, 173, 0.2)', color: currentView.name === 'GOVERNANCE' ? '#1F4E78' : '#e8bcf0' }}
         />
         <NavButton 
           active={currentView.name === 'ADMIN'}
@@ -173,7 +180,6 @@ function App() {
           />
         )}
 
-        {/* ← الإدخال السريع */}
         {currentView.name === 'SPEED_ENTRY' && (
           <SpeedEntryMatrix onBack={() => navigateTo('LIST')} />
         )}
@@ -196,6 +202,11 @@ function App() {
 
         {currentView.name === 'ADMIN' && (
           <AdminPanel onBack={() => navigateTo('LIST')} />
+        )}
+
+        {/* ← إضافة عرض واجهة الحوكمة */}
+        {currentView.name === 'GOVERNANCE' && (
+          <GovernancePanel onBack={() => navigateTo('LIST')} />
         )}
 
       </div>
