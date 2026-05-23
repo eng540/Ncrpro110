@@ -3,186 +3,133 @@ import React, { useState } from 'react';
 const API_BASE_URL = process.env.REACT_APP_API_URL || '/api';
 
 const ReportsPanel = () => {
-  const [generating, setGenerating] = useState(null);
+  const [isDownloading, setIsDownloading] = useState(false);
   const [error, setError] = useState(null);
-  const [dateRange, setDateRange] = useState({ from: '', to: '' });
+  
+  // فلاتر تقرير الملاحظات
+  const [fromDate, setFromDate] = useState('');
+  const [toDate, setToDate] = useState('');
 
-  const downloadReport = async (type, filename) => {
+  const handleDownload = async (endpoint, filename, isPdf = true) => {
     if (!navigator.onLine) {
-      setError('⚠️ يتطلب الاتصال بالإنترنت لتوليد التقارير');
+      setError('لا يمكن تحميل التقارير في وضع عدم الاتصال (Offline). يرجى الاتصال بالإنترنت.');
       return;
     }
 
-    setGenerating(type);
+    setIsDownloading(true);
     setError(null);
-    
+
     try {
-      let url = `${API_BASE_URL}/reports/${type}`;
-      if (type === 'remarks' && (dateRange.from || dateRange.to)) {
+      let url = `${API_BASE_URL}${endpoint}`;
+      
+      // إضافة الفلاتر إذا كان التقرير هو تقرير الملاحظات
+      if (endpoint === '/reports/remarks') {
         const params = new URLSearchParams();
-        if (dateRange.from) params.append('from_date', dateRange.from);
-        if (dateRange.to) params.append('to_date', dateRange.to);
-        url += '?' + params.toString();
+        if (fromDate) params.append('from_date', new Date(fromDate).toISOString());
+        if (toDate) params.append('to_date', new Date(toDate).toISOString());
+        if (params.toString()) url += `?${params.toString()}`;
       }
-      
-      const res = await fetch(url);
-      if (!res.ok) throw new Error('فشل توليد التقرير');
-      
-      const blob = await res.blob();
+
+      const response = await fetch(url, { method: 'GET' });
+
+      if (!response.ok) {
+        throw new Error('فشل توليد التقرير من الخادم.');
+      }
+
+      // تحويل الاستجابة إلى ملف (Blob)
+      const blob = await response.blob();
       const downloadUrl = window.URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = downloadUrl;
-      a.download = filename;
-      document.body.appendChild(a);
-      a.click();
+      const link = document.createElement('a');
+      link.href = downloadUrl;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
       window.URL.revokeObjectURL(downloadUrl);
-      document.body.removeChild(a);
+
     } catch (err) {
-      setError('❌ ' + err.message);
+      console.error('Download error:', err);
+      setError(err.message);
     } finally {
-      setGenerating(null);
+      setIsDownloading(false);
     }
   };
 
-  const reports = [
-    { 
-      type: 'summary', 
-      label: '📊 ملخص تنفيذي', 
-      filename: 'summary_ech2525.pdf', 
-      desc: 'حالة المشروع الكاملة + نسب الإنجاز + الملاحظات الحرجة',
-      icon: '📈',
-      color: '#1F4E78'
-    },
-    { 
-      type: 'ipc', 
-      label: '💰 شهادة دفع مؤقتة (IPC)', 
-      filename: 'ipc_ech2525.xlsx', 
-      desc: 'البنود المنفذة × أسعار الوحدة = المبلغ المستحق للمقاول',
-      icon: '💵',
-      color: '#27ae60'
-    },
-    { 
-      type: 'remarks', 
-      label: '📝 سجل ملاحظات الجودة', 
-      filename: 'remarks_ech2525.pdf', 
-      desc: 'الملاحظات المفتوحة والمغلقة حسب الفترة المحددة',
-      icon: '📋',
-      color: '#e74c3c',
-      needsDate: true
-    }
-  ];
-
   return (
     <div style={{ direction: 'rtl', maxWidth: '900px', margin: '0 auto' }}>
-      <h2 style={{ color: '#1F4E78', marginBottom: '10px' }}>📈 التقارير والمخرجات</h2>
-      <p style={{ color: '#7f8c8d', marginBottom: '25px' }}>توليد تقارير احترافية للمتابعة والتدقيق والمانحين</p>
-      
+      <div style={{ marginBottom: '30px' }}>
+        <h2 style={{ color: '#1F4E78', margin: 0 }}>📈 مركز التقارير والمخرجات</h2>
+        <p style={{ color: '#7f8c8d', marginTop: '5px' }}>
+          توليد وتحميل التقارير المالية والهندسية المعتمدة (يجب الاتصال بالإنترنت).
+        </p>
+      </div>
+
       {error && (
-        <div style={{ padding: '15px', background: '#f8d7da', color: '#721c24', borderRadius: '4px', marginBottom: '20px', fontWeight: 'bold' }}>
-          {error}
+        <div style={{ background: '#f8d7da', color: '#721c24', padding: '12px 16px', borderRadius: '6px', marginBottom: '20px', fontWeight: 'bold' }}>
+          ⚠️ {error}
         </div>
       )}
 
-      {/* فلترة التاريخ لملاحظات الجودة */}
-      <div style={{ background: 'white', padding: '15px', borderRadius: '8px', marginBottom: '20px', boxShadow: '0 2px 8px rgba(0,0,0,0.08)' }}>
-        <h4 style={{ margin: '0 0 10px 0', color: '#2c3e50' }}>📅 فلترة الفترة (لتقرير الملاحظات)</h4>
-        <div style={{ display: 'flex', gap: '15px', flexWrap: 'wrap', alignItems: 'center' }}>
-          <div>
-            <label style={{ display: 'block', marginBottom: '5px', fontSize: '14px', color: '#666' }}>من:</label>
-            <input 
-              type="date" 
-              value={dateRange.from} 
-              onChange={e => setDateRange({...dateRange, from: e.target.value})}
-              style={{ padding: '8px', borderRadius: '4px', border: '1px solid #ccc' }}
-            />
-          </div>
-          <div>
-            <label style={{ display: 'block', marginBottom: '5px', fontSize: '14px', color: '#666' }}>إلى:</label>
-            <input 
-              type="date" 
-              value={dateRange.to} 
-              onChange={e => setDateRange({...dateRange, to: e.target.value})}
-              style={{ padding: '8px', borderRadius: '4px', border: '1px solid #ccc' }}
-            />
-          </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '20px' }}>
+        
+        {/* 1. تقرير المستخلص المالي (IPC) */}
+        <div style={{ background: 'white', padding: '25px', borderRadius: '8px', boxShadow: '0 2px 8px rgba(0,0,0,0.08)', borderTop: '4px solid #27ae60' }}>
+          <h3 style={{ color: '#27ae60', marginTop: 0 }}>المستخلص المالي (IPC)</h3>
+          <p style={{ fontSize: '13px', color: '#666', minHeight: '40px' }}>
+            تقرير Excel شامل يوضح الكميات المنفذة، المبالغ المستحقة للدفع، والمبالغ المحتجزة بناءً على قرارات الحوكمة والجودة.
+          </p>
+          <button 
+            onClick={() => handleDownload('/reports/ipc', `IPC_Report_${new Date().toISOString().split('T')[0]}.xlsx`, false)}
+            disabled={isDownloading}
+            style={{ width: '100%', padding: '12px', background: '#27ae60', color: 'white', border: 'none', borderRadius: '4px', cursor: isDownloading ? 'not-allowed' : 'pointer', fontWeight: 'bold', fontSize: '14px' }}
+          >
+            {isDownloading ? '⏳ جاري التوليد...' : '📥 تحميل المستخلص (Excel)'}
+          </button>
         </div>
-      </div>
 
-      <div style={{ display: 'grid', gap: '20px' }}>
-        {reports.map(report => (
-          <div key={report.type} style={{ 
-            background: 'white', 
-            padding: '25px', 
-            borderRadius: '8px', 
-            boxShadow: '0 2px 8px rgba(0,0,0,0.08)',
-            borderRight: `5px solid ${report.color}`,
-            display: 'flex',
-            justifyContent: 'space-between',
-            alignItems: 'center',
-            flexWrap: 'wrap',
-            gap: '20px'
-          }}>
-            <div style={{ flex: 1, minWidth: '250px' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '8px' }}>
-                <span style={{ fontSize: '32px' }}>{report.icon}</span>
-                <h3 style={{ margin: 0, color: '#2c3e50', fontSize: '20px' }}>{report.label}</h3>
-              </div>
-              <p style={{ margin: 0, color: '#7f8c8d', fontSize: '14px', lineHeight: '1.6' }}>{report.desc}</p>
-              {report.needsDate && dateRange.from && (
-                <p style={{ margin: '8px 0 0 0', color: '#3498db', fontSize: '13px' }}>
-                  📅 الفترة: {dateRange.from} {dateRange.to ? ' إلى ' + dateRange.to : ''}
-                </p>
-              )}
+        {/* 2. الملخص التنفيذي (Executive Summary) */}
+        <div style={{ background: 'white', padding: '25px', borderRadius: '8px', boxShadow: '0 2px 8px rgba(0,0,0,0.08)', borderTop: '4px solid #1F4E78' }}>
+          <h3 style={{ color: '#1F4E78', marginTop: 0 }}>الملخص التنفيذي</h3>
+          <p style={{ fontSize: '13px', color: '#666', minHeight: '40px' }}>
+            تقرير PDF رسمي يحتوي على إحصائيات المشروع الكلية، نسب الإنجاز، وملخص قرارات الإدارة والجودة.
+          </p>
+          <button 
+            onClick={() => handleDownload('/reports/summary', `Executive_Summary_${new Date().toISOString().split('T')[0]}.pdf`, true)}
+            disabled={isDownloading}
+            style={{ width: '100%', padding: '12px', background: '#1F4E78', color: 'white', border: 'none', borderRadius: '4px', cursor: isDownloading ? 'not-allowed' : 'pointer', fontWeight: 'bold', fontSize: '14px' }}
+          >
+            {isDownloading ? '⏳ جاري التوليد...' : '📄 تحميل الملخص (PDF)'}
+          </button>
+        </div>
+
+        {/* 3. سجل الملاحظات (Remarks Log) */}
+        <div style={{ background: 'white', padding: '25px', borderRadius: '8px', boxShadow: '0 2px 8px rgba(0,0,0,0.08)', borderTop: '4px solid #e74c3c' }}>
+          <h3 style={{ color: '#e74c3c', marginTop: 0 }}>سجل ملاحظات الجودة</h3>
+          <p style={{ fontSize: '13px', color: '#666', minHeight: '40px' }}>
+            تقرير PDF مفصل بجميع الملاحظات المفتوحة والمغلقة. يمكن تحديد فترة زمنية معينة للتقرير.
+          </p>
+          
+          <div style={{ display: 'flex', gap: '10px', marginBottom: '15px' }}>
+            <div style={{ flex: 1 }}>
+              <label style={{ display: 'block', fontSize: '11px', color: '#7f8c8d', marginBottom: '4px' }}>من تاريخ:</label>
+              <input type="date" value={fromDate} onChange={(e) => setFromDate(e.target.value)} style={{ width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid #ccc', boxSizing: 'border-box' }} />
             </div>
-            <button
-              onClick={() => downloadReport(report.type, report.filename)}
-              disabled={generating === report.type || !navigator.onLine}
-              style={{
-                padding: '12px 30px',
-                background: generating === report.type ? '#95a5a6' : report.color,
-                color: 'white',
-                border: 'none',
-                borderRadius: '6px',
-                cursor: generating === report.type || !navigator.onLine ? 'not-allowed' : 'pointer',
-                fontWeight: 'bold',
-                fontSize: '16px',
-                minWidth: '150px',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                gap: '8px'
-              }}
-            >
-              {generating === report.type ? (
-                <>
-                  <span>⏳</span>
-                  <span>جاري التوليد...</span>
-                </>
-              ) : (
-                <>
-                  <span>⬇️</span>
-                  <span>تحميل</span>
-                </>
-              )}
-            </button>
+            <div style={{ flex: 1 }}>
+              <label style={{ display: 'block', fontSize: '11px', color: '#7f8c8d', marginBottom: '4px' }}>إلى تاريخ:</label>
+              <input type="date" value={toDate} onChange={(e) => setToDate(e.target.value)} style={{ width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid #ccc', boxSizing: 'border-box' }} />
+            </div>
           </div>
-        ))}
-      </div>
 
-      {!navigator.onLine && (
-        <div style={{ 
-          textAlign: 'center', 
-          padding: '30px', 
-          background: '#fff3cd', 
-          borderRadius: '8px', 
-          marginTop: '25px',
-          color: '#856404'
-        }}>
-          <div style={{ fontSize: '36px', marginBottom: '10px' }}>📡</div>
-          <h3 style={{ margin: '0 0 10px 0' }}>التقارير تتطلب الاتصال بالإنترنت</h3>
-          <p style={{ margin: 0 }}>يرجى الاتصال بالشبكة لتوليد وتحميل التقارير</p>
+          <button 
+            onClick={() => handleDownload('/reports/remarks', `Remarks_Log_${new Date().toISOString().split('T')[0]}.pdf`, true)}
+            disabled={isDownloading}
+            style={{ width: '100%', padding: '12px', background: '#e74c3c', color: 'white', border: 'none', borderRadius: '4px', cursor: isDownloading ? 'not-allowed' : 'pointer', fontWeight: 'bold', fontSize: '14px' }}
+          >
+            {isDownloading ? '⏳ جاري التوليد...' : '📑 تحميل سجل الملاحظات (PDF)'}
+          </button>
         </div>
-      )}
+
+      </div>
     </div>
   );
 };
