@@ -10,7 +10,7 @@ import DailyLogList from './components/DailyLogList';
 import ReportsPanel from './components/ReportsPanel';
 import AdminPanel from './components/AdminPanel';
 import SpeedEntryMatrix from './components/SpeedEntryMatrix';
-import GovernancePanel from './components/GovernancePanel'; // ← إضافة الحوكمة
+import GovernanceDashboard from './components/GovernanceDashboard'; // استيراد المكون الجديد
 import { db, populateLocalDB } from './db';
 
 const API_BASE_URL = process.env.REACT_APP_API_URL || '/api';
@@ -133,7 +133,7 @@ function App() {
           onClick={() => navigateTo('REPORTS')}
           label="📈 التقارير"
         />
-        {/* ← إضافة زر الحوكمة */}
+        {/* زر الحوكمة الجديد */}
         <NavButton 
           active={currentView.name === 'GOVERNANCE'}
           onClick={() => navigateTo('GOVERNANCE')}
@@ -204,9 +204,9 @@ function App() {
           <AdminPanel onBack={() => navigateTo('LIST')} />
         )}
 
-        {/* ← إضافة عرض واجهة الحوكمة */}
+        {/* عرض لوحة الحوكمة */}
         {currentView.name === 'GOVERNANCE' && (
-          <GovernancePanel onBack={() => navigateTo('LIST')} />
+          <GovernanceDashboard onBack={() => navigateTo('LIST')} />
         )}
 
       </div>
