@@ -73,6 +73,7 @@ class BoqItem(Base):
     inspection_date = Column(DateTime, nullable=True)
     inspector = Column(String(50))
     quality_pass = Column(String(10), default=QualityPass.PENDING)
+    last_update = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     latrine = relationship("Latrine", back_populates="boq_items")
 
@@ -81,7 +82,7 @@ class Remark(Base):
     __tablename__ = "remarks"
 
     id = Column(Integer, primary_key=True, index=True)
-    remark_id = Column(String(20), unique=True)
+    remark_id = Column(String(36), unique=True)  # UUID-compatible
     latrine_id = Column(Integer, ForeignKey("latrines.id"), nullable=False)
     boq_code = Column(String(10))
     date_logged = Column(DateTime, default=datetime.utcnow)
@@ -93,6 +94,7 @@ class Remark(Base):
     status = Column(String(20), default=RemarkStatus.OPEN)
     closed_date = Column(DateTime, nullable=True)
     photo_ref = Column(String(100))
+    last_update = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     latrine = relationship("Latrine", back_populates="remarks")
 
@@ -110,3 +112,19 @@ class DailyLog(Base):
     manpower = Column(Integer, default=0)
     equipment = Column(Text)
     notes = Column(Text)
+
+# ==========================================
+# MASTER BOQ DICTIONARY (القاموس الديناميكي)
+# ==========================================
+class BoqDictionary(Base):
+    __tablename__ = "boq_dictionary"
+
+    id = Column(Integer, primary_key=True, index=True)
+    boq_code = Column(String(10), unique=True, index=True, nullable=False)
+    category = Column(String(50))
+    description_ar = Column(Text)
+    description_en = Column(Text)
+    unit = Column(String(10))
+    default_qty = Column(Float, default=0.0)
+    unit_price = Column(Float, default=0.0)  # السعر الديناميكي
+    is_active = Column(Boolean, default=True)

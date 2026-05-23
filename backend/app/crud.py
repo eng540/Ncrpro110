@@ -2,7 +2,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func
 from typing import List
 from app import models, schemas
-from datetime import datetime
+from datetime import datetime, timedelta
 
 def get_latrine(db: Session, latrine_id: int):
     return db.query(models.Latrine).filter(models.Latrine.id == latrine_id).first()
@@ -70,19 +70,21 @@ def bulk_update_boq_items(db: Session, updates: List[schemas.BoqItemBulkUpdate])
             item.achievement_pct = round((item.achieved_qty / item.planned_qty) * 100, 2)
         updated_latrine_ids.add(item.latrine_id)
     db.commit()
-    
+
     for upd in updates:
         item = db.query(models.BoqItem).filter(models.BoqItem.id == upd.item_id).first()
         if item:
             db.refresh(item)
-            
+
     for lid in updated_latrine_ids:
         recalc_latrine_progress(db, lid)
-        
+
     return {"updated_count": len(updates), "affected_latrines": len(updated_latrine_ids)}
 
+# ==========================================
+# 🌟 التحول الديناميكي: قراءة الأسعار من القاموس
+# ==========================================
 def recalc_latrine_progress(db: Session, latrine_id: int):
-    # Row-Level Locking لمنع تداخل البيانات
     latrine = db.query(models.Latrine).filter(models.Latrine.id == latrine_id).with_for_update().first()
     if not latrine:
         return
@@ -90,52 +92,42 @@ def recalc_latrine_progress(db: Session, latrine_id: int):
     items = db.query(models.BoqItem).filter(models.BoqItem.latrine_id == latrine_id).all()
     if not items:
         return
-    
-    # ARCHITECTURE FIX: Financial Progress Calculation (Earned Value)
-    # قاموس أسعار الوحدة (يمكن تعديله لاحقاً عند توفر العقد النهائي)
-    unit_prices = {
-        'A1': 10.0,  # سعر افتراضي لحفر وتسوية
-        'A2': 14.0,  # بلك مفرغ
-        'A3': 5.0,   # لياسة
-        'A4': 70.0,  # سقف خرسانة
-        'A5': 40.0,  # كرسي عربي
-        'A6': 5.0,   # بلاط
-        'B1': 5.0,   # حفر بيارة
-        'B2': 3.0,   # تمديد UPVC
-        'B3': 30.0,  # غطاء بيارة
-        'C1': 70.0,  # باب حديد
-        'C2': 20.0,  # نافذة ألمنيوم
-        'C3': 40.0,  # إضاءة شمسية
-        'C4': 30.0,  # لوحة معدنية
+
+    # جلب الأسعار من القاموس الديناميكي
+    dictionary_items = db.query(models.BoqDictionary).filter(models.BoqDictionary.is_active == True).all()
+    dynamic_prices = {item.boq_code: item.unit_price for item in dictionary_items}
+
+    # Fallback: أسعار احتياطية في حال لم يُرفع القاموس بعد (Backward Compatibility)
+    fallback_prices = {
+        'A1': 10.0, 'A2': 14.0, 'A3': 5.0, 'A4': 70.0, 'A5': 40.0, 'A6': 5.0,
+        'B1': 5.0, 'B2': 3.0, 'B3': 30.0,
+        'C1': 70.0, 'C2': 20.0, 'C3': 40.0, 'C4': 30.0,
     }
-    
+
     total_planned_cost = 0.0
     total_earned_value = 0.0
-    
+
     for item in items:
-        price = unit_prices.get(item.boq_code, 0.0)
+        # استخدام السعر الديناميكي أولاً، ثم الاحتياطي، ثم 0
+        price = dynamic_prices.get(item.boq_code, fallback_prices.get(item.boq_code, 0.0))
+
         planned_qty = item.planned_qty or 0.0
         achieved_qty = item.achieved_qty or 0.0
-        
-        # التكلفة المخططة = الكمية المخططة × السعر
         total_planned_cost += (planned_qty * price)
-        # القيمة المكتسبة (المنفذ مالياً) = الكمية المنفذة × السعر
         total_earned_value += (achieved_qty * price)
-    
-    # حساب النسبة الكلية بناءً على التكلفة المالية
+
     if total_planned_cost > 0:
         latrine.overall_pct = round((total_earned_value / total_planned_cost) * 100, 2)
     else:
         latrine.overall_pct = 0.0
-        
-    # تحديث الحالة تلقائياً
+
     if latrine.overall_pct >= 99.9:
         latrine.status = 'completed'
     elif latrine.overall_pct > 0:
         latrine.status = 'in_progress'
     else:
         latrine.status = 'not_started'
-        
+
     db.commit()
 
 def create_remark(db: Session, remark: schemas.RemarkCreate):
@@ -171,6 +163,49 @@ def update_remark(db: Session, remark_id: int, updates: schemas.RemarkUpdate):
     db.refresh(remark)
     return remark
 
+# ---------- Daily Log CRUD ----------
+def create_daily_log(db: Session, log: schemas.DailyLogCreate):
+    db_log = models.DailyLog(**log.dict())
+    db.add(db_log)
+    db.commit()
+    db.refresh(db_log)
+    return db_log
+
+def get_daily_logs(db: Session, skip: int = 0, limit: int = 30, from_date: datetime = None, to_date: datetime = None):
+    query = db.query(models.DailyLog)
+    if from_date:
+        query = query.filter(models.DailyLog.date >= from_date)
+    if to_date:
+        query = query.filter(models.DailyLog.date <= to_date)
+    return query.order_by(models.DailyLog.date.desc()).offset(skip).limit(limit).all()
+
+def get_daily_log_stats(db: Session, target_date: datetime):
+    start_of_day = target_date.replace(hour=0, minute=0, second=0, microsecond=0)
+    end_of_day = target_date.replace(hour=23, minute=59, second=59, microsecond=999999)
+
+    inspected = db.query(models.BoqItem).filter(
+        models.BoqItem.inspection_date >= start_of_day,
+        models.BoqItem.inspection_date <= end_of_day
+    ).count()
+
+    accepted = db.query(models.BoqItem).filter(
+        models.BoqItem.quality_pass == 'pass',
+        models.BoqItem.inspection_date >= start_of_day,
+        models.BoqItem.inspection_date <= end_of_day
+    ).count()
+
+    remarks = db.query(models.Remark).filter(
+        models.Remark.date_logged >= start_of_day,
+        models.Remark.date_logged <= end_of_day
+    ).count()
+
+    return schemas.DailyLogStats(
+        latrines_inspected=inspected,
+        latrines_accepted=accepted,
+        remarks_issued=remarks
+    )
+
+# ---------- Dashboard ----------
 def get_dashboard_summary(db: Session):
     total = db.query(models.Latrine).count()
     completed = db.query(models.Latrine).filter(models.Latrine.status == 'completed').count()
@@ -200,23 +235,189 @@ def get_category_progress(db: Session):
     ).group_by(models.BoqItem.category).all()
     return [schemas.CategoryProgress(category=r[0], avg_achievement_pct=round(float(r[1] or 0), 2)) for r in result]
 
+# ---------- BoQ Dictionary CRUD (جديد) ----------
+def get_boq_dictionary(db: Session):
+    return db.query(models.BoqDictionary).filter(models.BoqDictionary.is_active == True).all()
+
+def get_boq_dictionary_item(db: Session, boq_code: str):
+    return db.query(models.BoqDictionary).filter(models.BoqDictionary.boq_code == boq_code).first()
+
+def create_boq_dictionary_item(db: Session, item: schemas.BoqDictionaryCreate):
+    db_item = models.BoqDictionary(**item.dict())
+    db.add(db_item)
+    db.commit()
+    db.refresh(db_item)
+    return db_item
+
+def update_boq_dictionary_item(db: Session, boq_code: str, updates: schemas.BoqDictionaryUpdate):
+    item = db.query(models.BoqDictionary).filter(models.BoqDictionary.boq_code == boq_code).first()
+    if not item:
+        return None
+    for key, value in updates.dict(exclude_unset=True).items():
+        setattr(item, key, value)
+    db.commit()
+    db.refresh(item)
+    return item
+
+def delete_boq_dictionary_item(db: Session, boq_code: str):
+    item = db.query(models.BoqDictionary).filter(models.BoqDictionary.boq_code == boq_code).first()
+    if not item:
+        return None
+    item.is_active = False
+    db.commit()
+    return item
+
+# ---------- Seeding (الآن يقرأ من القاموس) ----------
 def seed_boq_items(db: Session, latrine_id: int):
-    items = [
-        {'boq_code': 'A1', 'category': 'A-Building & Concrete', 'description_ar': 'حفر وتسوية + أساس حجر', 'description_en': 'Excavation & Stone Foundation', 'unit': 'm3', 'planned_qty': 1.00},
-        {'boq_code': 'A2', 'category': 'A-Building & Concrete', 'description_ar': 'جدران بلك مفرغ 15سم', 'description_en': 'Hollow Block Wall', 'unit': 'm2', 'planned_qty': 9.32},
-        {'boq_code': 'A3', 'category': 'A-Building & Concrete', 'description_ar': 'لياسة داخلية وخارجية', 'description_en': 'Plaster', 'unit': 'm2', 'planned_qty': 3.20},
-        {'boq_code': 'A4', 'category': 'A-Building & Concrete', 'description_ar': 'سقف خرسانة مسلحة', 'description_en': 'RC Roof', 'unit': 'Lum', 'planned_qty': 1.00},
-        {'boq_code': 'A5', 'category': 'A-Building & Concrete', 'description_ar': 'كرسي عربي + كوع ريحة', 'description_en': 'Pan + UPVC', 'unit': 'No', 'planned_qty': 1.00},
-        {'boq_code': 'A6', 'category': 'A-Building & Concrete', 'description_ar': 'بلاط موزايكو', 'description_en': 'Mosaic Tiles', 'unit': 'm2', 'planned_qty': 1.32},
-        {'boq_code': 'B1', 'category': 'B-Septic & Pipes', 'description_ar': 'حفر بيارة قطر 1م', 'description_en': 'Septic Excavation', 'unit': 'm3', 'planned_qty': 2.00},
-        {'boq_code': 'B2', 'category': 'B-Septic & Pipes', 'description_ar': 'تمديد UPVC 4 انش + تهوية', 'description_en': 'UPVC Drainage', 'unit': 'LM', 'planned_qty': 12.00},
-        {'boq_code': 'B3', 'category': 'B-Septic & Pipes', 'description_ar': 'غطاء بيارة خرساني', 'description_en': 'Septic Cover', 'unit': 'No', 'planned_qty': 1.00},
-        {'boq_code': 'C1', 'category': 'C-Doors & Windows', 'description_ar': 'باب حديد صاج', 'description_en': 'Steel Door', 'unit': 'No', 'planned_qty': 1.00},
-        {'boq_code': 'C2', 'category': 'C-Doors & Windows', 'description_ar': 'نافذة ألمنيوم', 'description_en': 'Aluminum Window', 'unit': 'No', 'planned_qty': 1.00},
-        {'boq_code': 'C3', 'category': 'C-Doors & Windows', 'description_ar': 'إضاءة شمسية 10واط', 'description_en': 'Solar Light', 'unit': 'No', 'planned_qty': 1.00},
-        {'boq_code': 'C4', 'category': 'C-Doors & Windows', 'description_ar': 'لوحة معدنية + شعار', 'description_en': 'Logo Plate', 'unit': 'No', 'planned_qty': 1.00},
-    ]
+    """إنشاء بنود الحمام بناءً على القاموس الديناميكي"""
+    dictionary = get_boq_dictionary(db)
+
+    # إذا لم يُرفع قاموس بعد، نستخدم القائمة الافتراضية (Backward Compatibility)
+    if not dictionary:
+        items = [
+            {'boq_code': 'A1', 'category': 'A-Building & Concrete', 'description_ar': 'حفر وتسوية + أساس حجر', 'description_en': 'Excavation & Stone Foundation', 'unit': 'm3', 'planned_qty': 1.00},
+            {'boq_code': 'A2', 'category': 'A-Building & Concrete', 'description_ar': 'جدران بلك مفرغ 15سم', 'description_en': 'Hollow Block Wall', 'unit': 'm2', 'planned_qty': 9.32},
+            {'boq_code': 'A3', 'category': 'A-Building & Concrete', 'description_ar': 'لياسة داخلية وخارجية', 'description_en': 'Plaster', 'unit': 'm2', 'planned_qty': 3.20},
+            {'boq_code': 'A4', 'category': 'A-Building & Concrete', 'description_ar': 'سقف خرسانة مسلحة', 'description_en': 'RC Roof', 'unit': 'Lum', 'planned_qty': 1.00},
+            {'boq_code': 'A5', 'category': 'A-Building & Concrete', 'description_ar': 'كرسي عربي + كوع ريحة', 'description_en': 'Pan + UPVC', 'unit': 'No', 'planned_qty': 1.00},
+            {'boq_code': 'A6', 'category': 'A-Building & Concrete', 'description_ar': 'بلاط موزايكو', 'description_en': 'Mosaic Tiles', 'unit': 'm2', 'planned_qty': 1.32},
+            {'boq_code': 'B1', 'category': 'B-Septic & Pipes', 'description_ar': 'حفر بيارة قطر 1م', 'description_en': 'Septic Excavation', 'unit': 'm3', 'planned_qty': 2.00},
+            {'boq_code': 'B2', 'category': 'B-Septic & Pipes', 'description_ar': 'تمديد UPVC 4 انش + تهوية', 'description_en': 'UPVC Drainage', 'unit': 'LM', 'planned_qty': 12.00},
+            {'boq_code': 'B3', 'category': 'B-Septic & Pipes', 'description_ar': 'غطاء بيارة خرساني', 'description_en': 'Septic Cover', 'unit': 'No', 'planned_qty': 1.00},
+            {'boq_code': 'C1', 'category': 'C-Doors & Windows', 'description_ar': 'باب حديد صاج', 'description_en': 'Steel Door', 'unit': 'No', 'planned_qty': 1.00},
+            {'boq_code': 'C2', 'category': 'C-Doors & Windows', 'description_ar': 'نافذة ألمنيوم', 'description_en': 'Aluminum Window', 'unit': 'No', 'planned_qty': 1.00},
+            {'boq_code': 'C3', 'category': 'C-Doors & Windows', 'description_ar': 'إضاءة شمسية 10واط', 'description_en': 'Solar Light', 'unit': 'No', 'planned_qty': 1.00},
+            {'boq_code': 'C4', 'category': 'C-Doors & Windows', 'description_ar': 'لوحة معدنية + شعار', 'description_en': 'Logo Plate', 'unit': 'No', 'planned_qty': 1.00},
+        ]
+    else:
+        items = [
+            {
+                'boq_code': d.boq_code,
+                'category': d.category,
+                'description_ar': d.description_ar,
+                'description_en': d.description_en,
+                'unit': d.unit,
+                'planned_qty': d.default_qty
+            }
+            for d in dictionary
+        ]
+
     for item in items:
         db_item = models.BoqItem(latrine_id=latrine_id, **item)
         db.add(db_item)
     db.commit()
+
+# ---------- Sync Engine Processor ----------
+def process_sync_queue(db: Session, sync_req: schemas.SyncRequest) -> schemas.SyncResponse:
+    processed = []
+    failed = []
+    errors = {}
+    latrines_to_recalc = set()
+
+    date_fields = {'closed_date', 'deadline', 'inspection_date', 'start_date', 'expected_completion', 'date_logged', 'date'}
+
+    for op in sync_req.operations:
+        try:
+            if isinstance(op.data, dict):
+                for key in list(op.data.keys()):
+                    if key in date_fields and isinstance(op.data[key], str):
+                        try:
+                            clean_date_str = op.data[key].replace('Z', '+00:00')
+                            op.data[key] = datetime.fromisoformat(clean_date_str)
+                        except ValueError:
+                            pass
+
+            if op.type == "UPDATE_BOQ":
+                item_id = op.data.get("id")
+                item = db.query(models.BoqItem).filter(models.BoqItem.id == item_id).first()
+                if item:
+                    for key, value in op.data.items():
+                        if hasattr(item, key) and key != "id":
+                            setattr(item, key, value)
+                    if item.planned_qty and item.planned_qty > 0:
+                        item.achievement_pct = round((item.achieved_qty / item.planned_qty) * 100, 2)
+                    item.last_update = op.timestamp
+                    latrines_to_recalc.add(item.latrine_id)
+
+            elif op.type == "CREATE_REMARK":
+                remark_data = op.data.copy()
+                local_uuid = remark_data.pop('local_uuid', None)
+                remark_data.pop('sync_status', None)
+                remark_data.pop('id', None)
+                remark_data.pop('local_id', None)
+
+                new_remark = models.Remark(**remark_data)
+                new_remark.date_logged = op.timestamp
+
+                if local_uuid:
+                    new_remark.remark_id = str(local_uuid)
+
+                db.add(new_remark)
+                db.flush()
+
+                processed.append(op.id)
+                latrines_to_recalc.add(op.data.get("latrine_id"))
+
+            elif op.type == "UPDATE_REMARK":
+                local_uuid = op.data.get("local_uuid")
+                remark = None
+
+                if local_uuid:
+                    remark = db.query(models.Remark).filter(
+                        models.Remark.remark_id == str(local_uuid)
+                    ).first()
+
+                if not remark and op.data.get("id"):
+                    if int(op.data.get("id")) > 0:
+                        remark = db.query(models.Remark).filter(
+                            models.Remark.id == op.data.get("id")
+                        ).first()
+
+                if remark:
+                    for key, value in op.data.items():
+                        if hasattr(remark, key) and key not in ["id", "local_uuid", "sync_status", "local_id"]:
+                            setattr(remark, key, value)
+                    remark.last_update = op.timestamp
+                    processed.append(op.id)
+                else:
+                    failed.append(op.id)
+                    errors[op.id] = "Remark not found on server"
+
+            elif op.type == "UPDATE_LATRINE":
+                latrine_id = op.data.get("id")
+                latrine = db.query(models.Latrine).filter(models.Latrine.id == latrine_id).first()
+                if latrine:
+                    for key, value in op.data.items():
+                        if hasattr(latrine, key) and key != "id":
+                            setattr(latrine, key, value)
+                    latrine.last_update = op.timestamp
+
+            elif op.type == "CREATE_DAILY_LOG":
+                log_data = op.data.copy()
+                log_data.pop('sync_status', None)
+                log_data.pop('id', None)
+
+                new_log = models.DailyLog(**log_data)
+                if not new_log.date:
+                    new_log.date = op.timestamp
+                db.add(new_log)
+
+            db.commit()
+
+            if op.type not in ["UPDATE_REMARK", "CREATE_REMARK"]: 
+                processed.append(op.id)
+
+        except Exception as e:
+            db.rollback()
+            failed.append(op.id)
+            errors[op.id] = f"Error processing {op.type}: {str(e)}"
+
+    for lid in latrines_to_recalc:
+        if lid:
+            recalc_latrine_progress(db, lid)
+
+    return schemas.SyncResponse(
+        processed_ids=processed,
+        failed_ids=failed,
+        errors=errors
+    )

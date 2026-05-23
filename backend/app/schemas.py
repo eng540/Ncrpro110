@@ -1,5 +1,5 @@
 from pydantic import BaseModel
-from typing import Optional, List
+from typing import Optional, List, Dict, Any
 from datetime import datetime
 
 # ---------- Latrine Schemas ----------
@@ -69,6 +69,7 @@ class BoqItemOut(BoqItemBase):
     latrine_id: int
     inspection_date: Optional[datetime] = None
     inspector: Optional[str] = None
+    last_update: Optional[datetime] = None
 
     class Config:
         from_attributes = True
@@ -97,9 +98,36 @@ class RemarkOut(RemarkBase):
     latrine_id: int
     date_logged: datetime
     closed_date: Optional[datetime] = None
+    last_update: Optional[datetime] = None
 
     class Config:
         from_attributes = True
+
+# ---------- Daily Log Schemas ----------
+class DailyLogBase(BaseModel):
+    date: datetime
+    engineer: Optional[str] = None
+    latrines_inspected: Optional[int] = 0
+    latrines_accepted: Optional[int] = 0
+    remarks_issued: Optional[int] = 0
+    weather: Optional[str] = None
+    manpower: Optional[int] = 0
+    equipment: Optional[str] = None
+    notes: Optional[str] = None
+
+class DailyLogCreate(DailyLogBase):
+    pass
+
+class DailyLogOut(DailyLogBase):
+    id: int
+
+    class Config:
+        from_attributes = True
+
+class DailyLogStats(BaseModel):
+    latrines_inspected: int
+    latrines_accepted: int
+    remarks_issued: int
 
 # ---------- Dashboard Schemas ----------
 class DashboardSummary(BaseModel):
@@ -121,3 +149,48 @@ class EngineerPerformance(BaseModel):
     engineer: str
     inspected_today: int
     accepted_today: int
+
+# ---------- BoQ Dictionary Schemas (جديد) ----------
+class BoqDictionaryBase(BaseModel):
+    boq_code: str
+    category: Optional[str] = None
+    description_ar: Optional[str] = None
+    description_en: Optional[str] = None
+    unit: Optional[str] = None
+    default_qty: float = 0.0
+    unit_price: float = 0.0
+    is_active: bool = True
+
+class BoqDictionaryCreate(BoqDictionaryBase):
+    pass
+
+class BoqDictionaryUpdate(BaseModel):
+    category: Optional[str] = None
+    description_ar: Optional[str] = None
+    description_en: Optional[str] = None
+    unit: Optional[str] = None
+    default_qty: Optional[float] = None
+    unit_price: Optional[float] = None
+    is_active: Optional[bool] = None
+
+class BoqDictionaryOut(BoqDictionaryBase):
+    id: int
+
+    class Config:
+        from_attributes = True
+
+# ---------- Sync Engine Schemas ----------
+class SyncOperation(BaseModel):
+    id: str
+    type: str
+    timestamp: datetime
+    local_uuid: Optional[str] = None
+    data: Dict[str, Any]
+
+class SyncRequest(BaseModel):
+    operations: List[SyncOperation]
+
+class SyncResponse(BaseModel):
+    processed_ids: List[str]
+    failed_ids: List[str]
+    errors: Dict[str, str]

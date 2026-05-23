@@ -1,4 +1,6 @@
 import React, { useState, useEffect } from 'react';
+import { useLiveQuery } from 'dexie-react-hooks';
+import { db } from '../db';
 
 const statusColors = {
   completed: '#C6EFCE',
@@ -16,59 +18,35 @@ const statusLabels = {
   rejected: 'مرفوض'
 };
 
-function LatrineList({ apiUrl, onSelect }) {
-  const [latrines, setLatrines] = useState([]);
+// ← تعديل: استقبال initialFilter
+function LatrineList({ onSelectLatrine, initialFilter = '' }) {
   const [filter, setFilter] = useState('');
-  const [statusFilter, setStatusFilter] = useState('');
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
+  const [statusFilter, setStatusFilter] = useState(initialFilter);
 
+  // ← تعديل: تحديث الفلتر إذا تغير من الخارج (عبر لوحة المؤشرات)
   useEffect(() => {
-    setLoading(true);
-    setError(null);
-    
-    // ARCHITECTURE FIX: Added limit=200 to fetch all 110 latrines
-    const baseUrl = `${apiUrl}/latrines?limit=200`;
-    const url = statusFilter ? `${baseUrl}&status=${statusFilter}` : baseUrl;
-    
-    fetch(url)
-      .then(async r => {
-        if (!r.ok) throw new Error('فشل الاتصال بالخادم');
-        return r.json();
-      })
-      .then(data => {
-        // Defensive Programming: Ensure data is an array
-        if (Array.isArray(data)) {
-          setLatrines(data);
-        } else {
-          setLatrines([]);
-          console.error("Expected array but got:", data);
-        }
-        setLoading(false);
-      })
-      .catch(err => {
-        console.error(err);
-        setError('تعذر تحميل قائمة الحمامات');
-        setLatrines([]);
-        setLoading(false);
-      });
-  }, [apiUrl, statusFilter]);
+    setStatusFilter(initialFilter);
+  }, [initialFilter]);
 
-  // Defensive Filtering: Protect against null values
+  const latrines = useLiveQuery(() => db.latrines.toArray(), []);
+
+  if (latrines === undefined) {
+    return <div style={{textAlign:'center',padding:'40px'}}>جاري قراءة البيانات المحلية...</div>;
+  }
+
   const safeLatrines = Array.isArray(latrines) ? latrines : [];
   const filtered = safeLatrines.filter(l => {
     const idMatch = (l.latrine_id || '').toLowerCase().includes(filter.toLowerCase());
     const hhMatch = (l.beneficiary_hh || '').toLowerCase().includes(filter.toLowerCase());
-    return idMatch || hhMatch;
+    const statusMatch = statusFilter ? l.status === statusFilter : true;
+    
+    return (idMatch || hhMatch) && statusMatch;
   });
 
-  if (loading) return <div style={{textAlign:'center',padding:'40px'}}>جاري تحميل سجل الحمامات...</div>;
-  if (error) return <div style={{textAlign:'center',padding:'40px',color:'#C00000',fontWeight:'bold'}}>{error}</div>;
-
   return (
-    <div>
+    <div style={{ direction: 'rtl' }}>
       <div style={{display:'flex',gap:'12px',marginBottom:'20px',alignItems:'center',flexWrap:'wrap'}}>
-        <h2 style={{color:'#1F4E78',margin:0}}>سجل الحمامات</h2>
+        <h2 style={{color:'#1F4E78',margin:0}}>سجل الحمامات (ECHO 2525)</h2>
         <input 
           placeholder="بحث برقم الحمام أو الأسرة..."
           value={filter}
@@ -100,11 +78,13 @@ function LatrineList({ apiUrl, onSelect }) {
           <tbody>
             {filtered.length === 0 ? (
               <tr>
-                <td colSpan="6" style={{padding:'20px',textAlign:'center',color:'#666'}}>لا توجد حمامات مطابقة للبحث</td>
+                <td colSpan="6" style={{padding:'20px',textAlign:'center',color:'#666'}}>
+                  {latrines.length === 0 ? 'لا توجد بيانات محلية. يرجى المزامنة مع الخادم.' : 'لا توجد حمامات مطابقة للبحث'}
+                </td>
               </tr>
             ) : (
               filtered.map(l => (
-                <tr key={l.id} onClick={() => onSelect(l)} style={{cursor:'pointer',borderBottom:'1px solid #eee'}}>
+                <tr key={l.id} onClick={() => onSelectLatrine(l.id)} style={{cursor:'pointer',borderBottom:'1px solid #eee'}}>
                   <td style={{padding:'12px',fontWeight:'bold',color:'#1F4E78'}}>{l.latrine_id}</td>
                   <td style={{padding:'12px'}}>
                     <span style={{
