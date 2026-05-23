@@ -2,6 +2,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func
 from typing import List
 from app import models, schemas
+from app.engine import generate_recommendation, DEFAULT_POLICIES # 🌟 استيراد المحرك
 from datetime import datetime, timedelta
 
 def get_latrine(db: Session, latrine_id: int):
@@ -82,22 +83,82 @@ def bulk_update_boq_items(db: Session, updates: List[schemas.BoqItemBulkUpdate])
     return {"updated_count": len(updates), "affected_latrines": len(updated_latrine_ids)}
 
 # ==========================================
-# 🌟 التحول الديناميكي: قراءة الأسعار من القاموس
+# 🌟 محرك تحديث القرارات (The Governance Link)
+# ==========================================
+def update_item_decision(db: Session, boq_item_id: int):
+    """
+    تقوم هذه الدالة بجمع الواقع الميداني للبند، وتمريره لمحرك القرارات،
+    ثم تحديث سجل القرار (DecisionRecord) في قاعدة البيانات.
+    """
+    item = db.query(models.BoqItem).filter(models.BoqItem.id == boq_item_id).first()
+    if not item: return
+
+    latrine = db.query(models.Latrine).filter(models.Latrine.id == item.latrine_id).first()
+    
+    # 1. جلب السياسة المطبقة على هذا الحمام (أو السياسة الافتراضية)
+    policy = None
+    if latrine.policy_id:
+        policy = db.query(models.PolicyProfile).filter(models.PolicyProfile.id == latrine.policy_id).first()
+    if not policy:
+        policy = db.query(models.PolicyProfile).filter(models.PolicyProfile.is_default == True).first()
+    
+    if not policy: return # لا توجد سياسات في النظام بعد
+
+    # 2. البحث عن أخطر ملاحظة مفتوحة على هذا البند
+    open_remarks = db.query(models.Remark).filter(
+        models.Remark.latrine_id == item.latrine_id,
+        models.Remark.boq_code == item.boq_code,
+        models.Remark.status == 'open'
+    ).all()
+
+    highest_severity = None
+    if open_remarks:
+        severities = [r.severity for r in open_remarks]
+        if 'critical' in severities: highest_severity = 'critical'
+        elif 'major' in severities: highest_severity = 'major'
+        else: highest_severity = 'minor'
+
+    # 3. استدعاء المحرك النقي (Stateless Engine)
+    recommendation = generate_recommendation(
+        execution_pct=item.achievement_pct,
+        quality_status=item.quality_pass,
+        highest_remark_severity=highest_severity,
+        policy_rules=policy.rules_json
+    )
+
+    # 4. تحديث أو إنشاء سجل القرار (DecisionRecord)
+    decision = db.query(models.DecisionRecord).filter(models.DecisionRecord.boq_item_id == item.id).first()
+    if not decision:
+        decision = models.DecisionRecord(boq_item_id=item.id)
+        db.add(decision)
+
+    decision.execution_pct = item.achievement_pct
+    decision.quality_status = item.quality_pass
+    decision.highest_remark_severity = highest_severity
+    
+    decision.system_recommendation_code = recommendation["code"]
+    decision.system_recommendation_note = recommendation["note"]
+    decision.system_payment_pct = recommendation["payment_pct"]
+    
+    # إذا لم يتدخل البشر بعد، فإن الحالة النهائية تعتمد على توصية النظام
+    if not decision.human_decision_code:
+        decision.final_state = "OPEN"
+
+    db.commit()
+
+# ==========================================
+# 🌟 الحساب المالي المعتمد على القرارات (IPC Engine)
 # ==========================================
 def recalc_latrine_progress(db: Session, latrine_id: int):
     latrine = db.query(models.Latrine).filter(models.Latrine.id == latrine_id).with_for_update().first()
-    if not latrine:
-        return
+    if not latrine: return
 
     items = db.query(models.BoqItem).filter(models.BoqItem.latrine_id == latrine_id).all()
-    if not items:
-        return
+    if not items: return
 
-    # جلب الأسعار من القاموس الديناميكي
     dictionary_items = db.query(models.BoqDictionary).filter(models.BoqDictionary.is_active == True).all()
     dynamic_prices = {item.boq_code: item.unit_price for item in dictionary_items}
 
-    # Fallback: أسعار احتياطية في حال لم يُرفع القاموس بعد (Backward Compatibility)
     fallback_prices = {
         'A1': 10.0, 'A2': 14.0, 'A3': 5.0, 'A4': 70.0, 'A5': 40.0, 'A6': 5.0,
         'B1': 5.0, 'B2': 3.0, 'B3': 30.0,
@@ -105,19 +166,28 @@ def recalc_latrine_progress(db: Session, latrine_id: int):
     }
 
     total_planned_cost = 0.0
-    total_earned_value = 0.0
+    total_earned_value = 0.0 # الإنجاز المالي الحقيقي (يُدفع للمقاول)
+    total_physical_progress = 0.0 # الإنجاز الهندسي (على أرض الواقع)
 
     for item in items:
-        # استخدام السعر الديناميكي أولاً، ثم الاحتياطي، ثم 0
         price = dynamic_prices.get(item.boq_code, fallback_prices.get(item.boq_code, 0.0))
-
         planned_qty = item.planned_qty or 0.0
-        achieved_qty = item.achieved_qty or 0.0
         total_planned_cost += (planned_qty * price)
-        total_earned_value += (achieved_qty * price)
+
+        # الإنجاز الهندسي يعتمد على الكمية المنفذة فقط
+        achieved_qty = item.achieved_qty or 0.0
+        total_physical_progress += (achieved_qty * price)
+
+        # 🌟 الإنجاز المالي يعتمد على "سجل القرار" (DecisionRecord)
+        decision = db.query(models.DecisionRecord).filter(models.DecisionRecord.boq_item_id == item.id).first()
+        if decision:
+            # إذا تدخل المدير، نأخذ قراره. وإلا نأخذ توصية النظام.
+            payment_pct = decision.human_payment_pct if decision.human_payment_pct is not None else decision.system_payment_pct
+            total_earned_value += (planned_qty * (payment_pct / 100.0) * price)
 
     if total_planned_cost > 0:
-        latrine.overall_pct = round((total_earned_value / total_planned_cost) * 100, 2)
+        latrine.overall_pct = round((total_physical_progress / total_planned_cost) * 100, 2)
+        # يمكننا لاحقاً إضافة حقل financial_pct إلى جدول latrines لتخزين total_earned_value
     else:
         latrine.overall_pct = 0.0
 
@@ -235,7 +305,7 @@ def get_category_progress(db: Session):
     ).group_by(models.BoqItem.category).all()
     return [schemas.CategoryProgress(category=r[0], avg_achievement_pct=round(float(r[1] or 0), 2)) for r in result]
 
-# ---------- BoQ Dictionary CRUD (جديد) ----------
+# ---------- BoQ Dictionary CRUD ----------
 def get_boq_dictionary(db: Session):
     return db.query(models.BoqDictionary).filter(models.BoqDictionary.is_active == True).all()
 
@@ -267,12 +337,9 @@ def delete_boq_dictionary_item(db: Session, boq_code: str):
     db.commit()
     return item
 
-# ---------- Seeding (الآن يقرأ من القاموس) ----------
 def seed_boq_items(db: Session, latrine_id: int):
-    """إنشاء بنود الحمام بناءً على القاموس الديناميكي"""
     dictionary = get_boq_dictionary(db)
 
-    # إذا لم يُرفع قاموس بعد، نستخدم القائمة الافتراضية (Backward Compatibility)
     if not dictionary:
         items = [
             {'boq_code': 'A1', 'category': 'A-Building & Concrete', 'description_ar': 'حفر وتسوية + أساس حجر', 'description_en': 'Excavation & Stone Foundation', 'unit': 'm3', 'planned_qty': 1.00},
@@ -313,6 +380,7 @@ def process_sync_queue(db: Session, sync_req: schemas.SyncRequest) -> schemas.Sy
     failed = []
     errors = {}
     latrines_to_recalc = set()
+    items_to_recalc_decision = set() # 🌟 تتبع البنود التي تحتاج تحديث قرار
 
     date_fields = {'closed_date', 'deadline', 'inspection_date', 'start_date', 'expected_completion', 'date_logged', 'date'}
 
@@ -338,6 +406,7 @@ def process_sync_queue(db: Session, sync_req: schemas.SyncRequest) -> schemas.Sy
                         item.achievement_pct = round((item.achieved_qty / item.planned_qty) * 100, 2)
                     item.last_update = op.timestamp
                     latrines_to_recalc.add(item.latrine_id)
+                    items_to_recalc_decision.add(item.id) # 🌟 البند تغير، يجب تحديث قراره
 
             elif op.type == "CREATE_REMARK":
                 remark_data = op.data.copy()
@@ -350,13 +419,21 @@ def process_sync_queue(db: Session, sync_req: schemas.SyncRequest) -> schemas.Sy
                 new_remark.date_logged = op.timestamp
 
                 if local_uuid:
-                    new_remark.remark_id = str(local_uuid)
+                    new_remark.remark_id = str(local_uuid)[:36]
 
                 db.add(new_remark)
                 db.flush()
 
                 processed.append(op.id)
                 latrines_to_recalc.add(op.data.get("latrine_id"))
+                
+                # 🌟 إذا كانت الملاحظة مرتبطة ببند، يجب تحديث قرار البند
+                if new_remark.boq_code:
+                    related_item = db.query(models.BoqItem).filter(
+                        models.BoqItem.latrine_id == new_remark.latrine_id,
+                        models.BoqItem.boq_code == new_remark.boq_code
+                    ).first()
+                    if related_item: items_to_recalc_decision.add(related_item.id)
 
             elif op.type == "UPDATE_REMARK":
                 local_uuid = op.data.get("local_uuid")
@@ -364,7 +441,7 @@ def process_sync_queue(db: Session, sync_req: schemas.SyncRequest) -> schemas.Sy
 
                 if local_uuid:
                     remark = db.query(models.Remark).filter(
-                        models.Remark.remark_id == str(local_uuid)
+                        models.Remark.remark_id == str(local_uuid)[:36]
                     ).first()
 
                 if not remark and op.data.get("id"):
@@ -379,6 +456,14 @@ def process_sync_queue(db: Session, sync_req: schemas.SyncRequest) -> schemas.Sy
                             setattr(remark, key, value)
                     remark.last_update = op.timestamp
                     processed.append(op.id)
+                    
+                    # 🌟 الملاحظة تغيرت (مثلاً أُغلقت)، يجب تحديث قرار البند
+                    if remark.boq_code:
+                        related_item = db.query(models.BoqItem).filter(
+                            models.BoqItem.latrine_id == remark.latrine_id,
+                            models.BoqItem.boq_code == remark.boq_code
+                        ).first()
+                        if related_item: items_to_recalc_decision.add(related_item.id)
                 else:
                     failed.append(op.id)
                     errors[op.id] = "Remark not found on server"
@@ -412,6 +497,11 @@ def process_sync_queue(db: Session, sync_req: schemas.SyncRequest) -> schemas.Sy
             failed.append(op.id)
             errors[op.id] = f"Error processing {op.type}: {str(e)}"
 
+    # 🌟 1. تحديث قرارات البنود المتأثرة أولاً
+    for item_id in items_to_recalc_decision:
+        update_item_decision(db, item_id)
+
+    # 🌟 2. إعادة حساب الإنجاز المالي للحمامات المتأثرة ثانياً
     for lid in latrines_to_recalc:
         if lid:
             recalc_latrine_progress(db, lid)
@@ -421,3 +511,12 @@ def process_sync_queue(db: Session, sync_req: schemas.SyncRequest) -> schemas.Sy
         failed_ids=failed,
         errors=errors
     )
+
+# 🌟 دالة حقن السياسات الافتراضية عند بدء تشغيل النظام
+def seed_default_policies(db: Session):
+    count = db.query(models.PolicyProfile).count()
+    if count == 0:
+        for policy in DEFAULT_POLICIES:
+            db_policy = models.PolicyProfile(**policy)
+            db.add(db_policy)
+        db.commit()
