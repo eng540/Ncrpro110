@@ -1,4 +1,7 @@
 import React, { useState, useEffect } from 'react';
+import SeedLockScreen from './components/SeedLockScreen';
+import PinGate from './components/PinGate';
+import { cryptoService } from './crypto/cryptoService';
 import SyncStatus from './components/SyncStatus';
 import LatrineList from './components/LatrineList';
 import BoqUpdater from './components/BoqUpdater';
@@ -10,12 +13,17 @@ import DailyLogList from './components/DailyLogList';
 import ReportsPanel from './components/ReportsPanel';
 import AdminPanel from './components/AdminPanel';
 import SpeedEntryMatrix from './components/SpeedEntryMatrix';
-import GovernanceDashboard from './components/GovernanceDashboard'; // استيراد المكون الجديد
+import GovernanceDashboard from './components/GovernanceDashboard';
 import { db, populateLocalDB } from './db';
 
 const API_BASE_URL = process.env.REACT_APP_API_URL || '/api';
 
 function App() {
+  // ====== حالات الأمان ======
+  const [seedUnlocked, setSeedUnlocked] = useState(false);
+  const [pinVerified, setPinVerified] = useState(false);
+
+  // ====== حالات التطبيق الأصلية ======
   const [currentView, setCurrentView] = useState({ 
     name: 'LIST', 
     latrineId: null, 
@@ -25,6 +33,7 @@ function App() {
   });
   const [isInitializing, setIsInitializing] = useState(true);
 
+  // ====== تهيئة البيانات (تتم بعد اجتياز كلا البابين) ======
   const initializeData = async () => {
     try {
       const count = await db.latrines.count();
@@ -50,9 +59,32 @@ function App() {
   };
 
   useEffect(() => {
-    initializeData();
-  }, []);
+    if (seedUnlocked && pinVerified) {
+      initializeData();
+    }
+  }, [seedUnlocked, pinVerified]);
 
+  // ====== البوابة الأولى: فتح القفل بالـ Seed ======
+  if (!seedUnlocked) {
+    return (
+      <SeedLockScreen 
+        onUnlock={() => setSeedUnlocked(true)} 
+      />
+    );
+  }
+
+  // ====== البوابة الثانية: التحقق من PIN ======
+  if (!pinVerified) {
+    return (
+      <PinGate 
+        required={true} 
+        actionLabel="الوصول للبيانات" 
+        onSuccess={() => setPinVerified(true)} 
+      />
+    );
+  }
+
+  // ====== شاشة التحميل ======
   if (isInitializing) {
     return (
       <div style={{ padding: '50px', textAlign: 'center', direction: 'rtl' }}>
@@ -63,6 +95,7 @@ function App() {
     );
   }
 
+  // ====== دوال التنقل ======
   const navigateTo = (viewName, params = {}) => {
     setCurrentView(prev => ({
       name: viewName,
@@ -83,6 +116,7 @@ function App() {
     }));
   };
 
+  // ====== التطبيق الرئيسي ======
   return (
     <div style={{ fontFamily: 'Tahoma, sans-serif', backgroundColor: '#f5f6fa', minHeight: '100vh', direction: 'rtl' }}>
       <SyncStatus />
@@ -133,7 +167,6 @@ function App() {
           onClick={() => navigateTo('REPORTS')}
           label="📈 التقارير"
         />
-        {/* زر الحوكمة الجديد */}
         <NavButton 
           active={currentView.name === 'GOVERNANCE'}
           onClick={() => navigateTo('GOVERNANCE')}
@@ -204,7 +237,6 @@ function App() {
           <AdminPanel onBack={() => navigateTo('LIST')} />
         )}
 
-        {/* عرض لوحة الحوكمة */}
         {currentView.name === 'GOVERNANCE' && (
           <GovernanceDashboard onBack={() => navigateTo('LIST')} />
         )}
