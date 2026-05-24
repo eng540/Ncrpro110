@@ -1,7 +1,7 @@
+
 import React, { useState, useEffect } from 'react';
 import SeedLockScreen from './components/SeedLockScreen';
 import PinGate from './components/PinGate';
-import { cryptoService } from './crypto/cryptoService';
 import SyncStatus from './components/SyncStatus';
 import LatrineList from './components/LatrineList';
 import BoqUpdater from './components/BoqUpdater';
@@ -14,9 +14,7 @@ import ReportsPanel from './components/ReportsPanel';
 import AdminPanel from './components/AdminPanel';
 import SpeedEntryMatrix from './components/SpeedEntryMatrix';
 import GovernanceDashboard from './components/GovernanceDashboard';
-
-// 🌟 التصحيح المعماري: استدعاء قاعدة البيانات الجديدة المتوافقة مع التشفير
-import { db, populateLocalDB } from './db/index.js'; 
+import { db, populateLocalDB } from './db';
 
 const API_BASE_URL = process.env.REACT_APP_API_URL || '/api';
 
@@ -50,23 +48,7 @@ function App() {
           const latrines = await latrinesRes.json();
           const boqItems = await boqRes.json();
           const remarks = remarksRes.ok ? await remarksRes.json() : [];
-          
-          // 🌟 نستخدم secureStorage لتشفير البيانات قبل حفظها لأول مرة
-          const { secureStorage } = await import('./storage/secureStorage.js');
-          
-          // تنظيف القاعدة
-          await db.transaction('rw', db.latrines, db.boq_items, db.remarks, async () => {
-            await db.latrines.clear();
-            await db.boq_items.clear();
-            await db.remarks.clear();
-          });
-
-          // حفظ البيانات مشفرة
-          for (const latrine of latrines) await secureStorage.saveLatrine(latrine);
-          if (boqItems.length > 0) await db.boq_items.bulkAdd(boqItems); // البنود لا تشفر
-          for (const remark of remarks) {
-            await secureStorage.saveRemark({...remark, sync_status: 'synced'});
-          }
+          await populateLocalDB(latrines, boqItems, remarks);
         }
       }
     } catch (error) {
@@ -96,7 +78,7 @@ function App() {
     return (
       <PinGate 
         required={true} 
-        actionLabel="الوصول للبيانات الميدانية" 
+        actionLabel="الوصول للبيانات" 
         onSuccess={() => setPinVerified(true)} 
       />
     );
@@ -107,8 +89,8 @@ function App() {
     return (
       <div style={{ padding: '50px', textAlign: 'center', direction: 'rtl' }}>
         <div style={{ fontSize: '48px', marginBottom: '20px' }}>🏗️</div>
-        <h2>جاري تهيئة النظام الميداني الآمن...</h2>
-        <p style={{ color: '#7f8c8d' }}>يتم تشفير البيانات محلياً، يرجى الانتظار</p>
+        <h2>جاري تهيئة النظام الميداني...</h2>
+        <p style={{ color: '#7f8c8d' }}>يرجى الانتظار أثناء تحميل البيانات</p>
       </div>
     );
   }
@@ -149,29 +131,116 @@ function App() {
         top: '50px',
         zIndex: 999
       }}>
-        <NavButton active={['LIST', 'BOQ', 'REMARKS'].includes(currentView.name)} onClick={() => navigateTo('LIST', { filterStatus: '' })} label="🏗️ سجل الحمامات" />
-        <NavButton active={currentView.name === 'BULK'} onClick={() => navigateTo('BULK')} label="⚡ الشبكة المتقدمة" />
-        <NavButton active={currentView.name === 'SPEED_ENTRY'} onClick={() => navigateTo('SPEED_ENTRY')} label="🚀 الإدخال السريع" style={{ background: currentView.name === 'SPEED_ENTRY' ? '#fff' : 'rgba(255,215,0,0.2)', color: currentView.name === 'SPEED_ENTRY' ? '#1F4E78' : '#ffd700' }} />
-        <NavButton active={currentView.name === 'DAILY_LOG'} onClick={() => navigateTo('DAILY_LOG')} label="📝 التقرير اليومي" />
-        <NavButton active={currentView.name === 'DAILY_LOG_LIST'} onClick={() => navigateTo('DAILY_LOG_LIST')} label="📋 سجل التقارير" />
-        <NavButton active={currentView.name === 'DASHBOARD'} onClick={() => navigateTo('DASHBOARD')} label="📊 لوحة المؤشرات" />
-        <NavButton active={currentView.name === 'REPORTS'} onClick={() => navigateTo('REPORTS')} label="📈 التقارير" />
-        <NavButton active={currentView.name === 'GOVERNANCE'} onClick={() => navigateTo('GOVERNANCE')} label="⚖️ الحوكمة" style={{ background: currentView.name === 'GOVERNANCE' ? '#fff' : 'rgba(142, 68, 173, 0.2)', color: currentView.name === 'GOVERNANCE' ? '#1F4E78' : '#e8bcf0' }} />
-        <NavButton active={currentView.name === 'ADMIN'} onClick={() => navigateTo('ADMIN')} label="⚙️ الإدارة" style={{ marginRight: 'auto', background: 'rgba(255,255,255,0.15)' }} />
+        <NavButton 
+          active={['LIST', 'BOQ', 'REMARKS'].includes(currentView.name)}
+          onClick={() => navigateTo('LIST', { filterStatus: '' })}
+          label="🏗️ سجل الحمامات"
+        />
+        <NavButton 
+          active={currentView.name === 'BULK'}
+          onClick={() => navigateTo('BULK')}
+          label="⚡ الشبكة المتقدمة"
+        />
+        <NavButton 
+          active={currentView.name === 'SPEED_ENTRY'}
+          onClick={() => navigateTo('SPEED_ENTRY')}
+          label="🚀 الإدخال السريع"
+          style={{ background: currentView.name === 'SPEED_ENTRY' ? '#fff' : 'rgba(255,215,0,0.2)', color: currentView.name === 'SPEED_ENTRY' ? '#1F4E78' : '#ffd700' }}
+        />
+        <NavButton 
+          active={currentView.name === 'DAILY_LOG'}
+          onClick={() => navigateTo('DAILY_LOG')}
+          label="📝 التقرير اليومي"
+        />
+        <NavButton 
+          active={currentView.name === 'DAILY_LOG_LIST'}
+          onClick={() => navigateTo('DAILY_LOG_LIST')}
+          label="📋 سجل التقارير"
+        />
+        <NavButton 
+          active={currentView.name === 'DASHBOARD'}
+          onClick={() => navigateTo('DASHBOARD')}
+          label="📊 لوحة المؤشرات"
+        />
+        <NavButton 
+          active={currentView.name === 'REPORTS'}
+          onClick={() => navigateTo('REPORTS')}
+          label="📈 التقارير"
+        />
+        <NavButton 
+          active={currentView.name === 'GOVERNANCE'}
+          onClick={() => navigateTo('GOVERNANCE')}
+          label="⚖️ الحوكمة"
+          style={{ background: currentView.name === 'GOVERNANCE' ? '#fff' : 'rgba(142, 68, 173, 0.2)', color: currentView.name === 'GOVERNANCE' ? '#1F4E78' : '#e8bcf0' }}
+        />
+        <NavButton 
+          active={currentView.name === 'ADMIN'}
+          onClick={() => navigateTo('ADMIN')}
+          label="⚙️ الإدارة"
+          style={{ marginRight: 'auto', background: 'rgba(255,255,255,0.15)' }}
+        />
       </div>
 
       <div style={{ maxWidth: '1200px', margin: '0 auto', padding: '20px' }}>
-        {currentView.name === 'LIST' && <LatrineList initialFilter={currentView.filterStatus} onSelectLatrine={(id) => navigateTo('BOQ', { latrineId: id })} />}
-        {currentView.name === 'BOQ' && <BoqUpdater latrineId={currentView.latrineId} onBack={goBack} onOpenRemarks={(id, boqCode) => navigateTo('REMARKS', { latrineId: id, boqCode })} />}
-        {currentView.name === 'REMARKS' && <RemarksManager latrineId={currentView.latrineId} boqCode={currentView.boqCode} initialFilter={currentView.filterStatus} onBack={goBack} />}
-        {currentView.name === 'BULK' && <BulkUpdate onOpenRemarks={(id, boqCode) => navigateTo('REMARKS', { latrineId: id, boqCode })} />}
-        {currentView.name === 'SPEED_ENTRY' && <SpeedEntryMatrix onBack={() => navigateTo('LIST')} />}
-        {currentView.name === 'DAILY_LOG' && <DailyLogForm onSaved={() => navigateTo('DAILY_LOG_LIST')} />}
-        {currentView.name === 'DAILY_LOG_LIST' && <DailyLogList />}
-        {currentView.name === 'DASHBOARD' && <Dashboard navigateTo={navigateTo} />}
-        {currentView.name === 'REPORTS' && <ReportsPanel />}
-        {currentView.name === 'ADMIN' && <AdminPanel onBack={() => navigateTo('LIST')} />}
-        {currentView.name === 'GOVERNANCE' && <GovernanceDashboard onBack={() => navigateTo('LIST')} />}
+
+        {currentView.name === 'LIST' && (
+          <LatrineList 
+            initialFilter={currentView.filterStatus}
+            onSelectLatrine={(id) => navigateTo('BOQ', { latrineId: id })} 
+          />
+        )}
+
+        {currentView.name === 'BOQ' && (
+          <BoqUpdater 
+            latrineId={currentView.latrineId} 
+            onBack={goBack}
+            onOpenRemarks={(id, boqCode) => navigateTo('REMARKS', { latrineId: id, boqCode })}
+          />
+        )}
+
+        {currentView.name === 'REMARKS' && (
+          <RemarksManager 
+            latrineId={currentView.latrineId} 
+            boqCode={currentView.boqCode}
+            initialFilter={currentView.filterStatus}
+            onBack={goBack}
+          />
+        )}
+
+        {currentView.name === 'BULK' && (
+          <BulkUpdate 
+            onOpenRemarks={(id, boqCode) => navigateTo('REMARKS', { latrineId: id, boqCode })}
+          />
+        )}
+
+        {currentView.name === 'SPEED_ENTRY' && (
+          <SpeedEntryMatrix onBack={() => navigateTo('LIST')} />
+        )}
+
+        {currentView.name === 'DAILY_LOG' && (
+          <DailyLogForm onSaved={() => navigateTo('DAILY_LOG_LIST')} />
+        )}
+
+        {currentView.name === 'DAILY_LOG_LIST' && (
+          <DailyLogList />
+        )}
+
+        {currentView.name === 'DASHBOARD' && (
+          <Dashboard navigateTo={navigateTo} />
+        )}
+
+        {currentView.name === 'REPORTS' && (
+          <ReportsPanel />
+        )}
+
+        {currentView.name === 'ADMIN' && (
+          <AdminPanel onBack={() => navigateTo('LIST')} />
+        )}
+
+        {currentView.name === 'GOVERNANCE' && (
+          <GovernanceDashboard onBack={() => navigateTo('LIST')} />
+        )}
+
       </div>
     </div>
   );
@@ -182,9 +251,17 @@ function NavButton({ active, onClick, label, style = {} }) {
     <button 
       onClick={onClick}
       style={{ 
-        background: active ? 'white' : 'transparent', color: active ? '#1F4E78' : 'white', 
-        border: 'none', padding: '8px 16px', borderRadius: '4px', cursor: 'pointer', 
-        fontWeight: 'bold', fontSize: '14px', transition: 'all 0.2s', whiteSpace: 'nowrap', ...style
+        background: active ? 'white' : 'transparent', 
+        color: active ? '#1F4E78' : 'white', 
+        border: 'none', 
+        padding: '8px 16px', 
+        borderRadius: '4px', 
+        cursor: 'pointer', 
+        fontWeight: 'bold',
+        fontSize: '14px',
+        transition: 'all 0.2s',
+        whiteSpace: 'nowrap',
+        ...style
       }}
     >
       {label}
@@ -193,3 +270,5 @@ function NavButton({ active, onClick, label, style = {} }) {
 }
 
 export default App;
+
+
