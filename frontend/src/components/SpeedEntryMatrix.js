@@ -1,8 +1,9 @@
+
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { FixedSizeList as List } from 'react-window';
 import AutoSizer from 'react-virtualized-auto-sizer';
-import { db } from '../db';
+import { db } from '../db/index.js';
 import { pushToSyncQueue } from '../syncEngine';
 
 // ==========================================
@@ -572,3 +573,5 @@ const SpeedEntryMatrix = ({ onBack }) => {
 };
 
 export default SpeedEntryMatrix;
+
+
