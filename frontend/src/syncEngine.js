@@ -1,130 +1,111 @@
-import { db } from './db';
+/**
+
+syncEngine.js (updated)
+
+Uses syncProtocol for deterministic batch encoding
+
+Uses secureStorage for encrypted payloads
+*/
+
+
+import { db } from './db/index.js';
+import { cryptoService } from './crypto/cryptoService.js';
+import { syncProtocol } from './sync/syncProtocol.js';
 import { v4 as uuidv4 } from 'uuid';
 
 const API_BASE_URL = process.env.REACT_APP_API_URL || '/api';
 
 /**
- * تسجيل عملية جديدة في طابور المزامنة
- * @param {string} type - نوع العملية (UPDATE_BOQ, CREATE_REMARK, UPDATE_REMARK, UPDATE_LATRINE)
- * @param {object} data - البيانات المعدلة
- */
+
+Push operation to sync queue (encrypted)
+*/
 export const pushToSyncQueue = async (type, data) => {
-  const operation = {
-    id: uuidv4(),
-    type: type,
-    timestamp: new Date().toISOString(),
-    local_uuid: data.local_uuid || null,
-    data: data
-  };
-  
-  await db.sync_queue.add(operation);
-  
-  // تحديث sync_status للملاحظات
-  if (type === 'CREATE_REMARK' && data.local_uuid) {
-    await db.remarks.where('local_uuid').equals(data.local_uuid).modify({ sync_status: 'pending' });
-  }
-  if (type === 'UPDATE_REMARK' && data.local_uuid) {
-    await db.remarks.where('local_uuid').equals(data.local_uuid).modify({ sync_status: 'pending' });
-  }
-  
-  return operation;
+const { secureStorage } = await import('./storage/secureStorage.js');
+await secureStorage.pushSyncQueue(type, data);
 };
 
+
 /**
- * محاولة إرسال الطابور إلى الخادم
- */
+
+Sync with server using deterministic protocol
+*/
 export const syncWithServer = async () => {
-  if (!navigator.onLine) {
-    throw new Error('لا يوجد اتصال بالإنترنت. لا يمكن المزامنة الآن.');
-  }
+if (!navigator.onLine) {
+throw new Error('لا يوجد اتصال بالإنترنت');
+}
 
-  const queue = await db.sync_queue.toArray();
-  if (queue.length === 0) {
-    return { status: 'empty', message: 'لا توجد بيانات معلقة للمزامنة.' };
-  }
 
-  try {
-    const response = await fetch(`${API_BASE_URL}/sync`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ operations: queue })
-    });
+const { secureStorage } = await import('./storage/secureStorage.js');
+const items = await secureStorage.popSyncQueue();
 
-    if (!response.ok) {
-      throw new Error(`الخادم رد بالحالة ${response.status}`);
-    }
+if (items.length === 0) {
+return { status: 'empty', message: 'لا توجد بيانات معلقة' };
+}
 
-    const result = await response.json();
+// Build deterministic batch
+const operations = items.map(item => ({
+type: item.type,
+payload: item.payload,
+}));
 
-    // حذف العمليات الناجحة فقط من الطابور
-    if (result.processed_ids && result.processed_ids.length > 0) {
-      await db.sync_queue.bulkDelete(result.processed_ids);
-      
-      // تحديث sync_status للملاحظات المُرسلة
-      for (const op of queue) {
-        if (result.processed_ids.includes(op.id) && op.local_uuid) {
-          await db.remarks.where('local_uuid').equals(op.local_uuid).modify({ 
-            sync_status: 'synced'
-          });
-        }
-      }
-    }
+// Verify determinism
+await syncProtocol.verifyDeterministic(operations);
 
-    // العمليات الفاشلة — تحديث حالتها إلى failed
-    if (result.failed_ids && result.failed_ids.length > 0) {
-      for (const failedId of result.failed_ids) {
-        const failedOp = queue.find(q => q.id === failedId);
-        if (failedOp && failedOp.local_uuid) {
-          await db.remarks.where('local_uuid').equals(failedOp.local_uuid).modify({ 
-            sync_status: 'failed' 
-          });
-        }
-      }
-    }
+const batch = await syncProtocol.encodeBatch(operations);
 
-    return { 
-      status: 'success', 
-      processed: result.processed_ids?.length || 0,
-      failed: result.failed_ids?.length || 0,
-      errors: result.errors || {}
-    };
+try {
+const response = await fetch(${API_BASE_URL}/sync, {
+method: 'POST',
+headers: { 'Content-Type': 'application/json' },
+body: JSON.stringify(batch)
+});
 
-  } catch (error) {
-    console.error('فشل المزامنة:', error);
-    // لا تُغيّر حالة queue — ستُعاد المحاولة لاحقاً
-    // لا تُغيّر sync_status — تبقى pending
-    throw error;
-  }
+if (!response.ok) throw new Error(`Server error: ${response.status}`);  
+
+const result = await response.json();  
+const decoded = syncProtocol.decodeResponse(result);  
+
+// Delete processed items  
+if (decoded.processed.length > 0) {  
+  await db.sync_queue.bulkDelete(  
+    items.filter((_, i) => decoded.processed.includes(i + 1)).map(i => i.id)  
+  );  
+}  
+
+// Update failed items  
+for (const [seq, error] of Object.entries(decoded.failed)) {  
+  const item = items[parseInt(seq) - 1];  
+  if (item) {  
+    await db.sync_queue.update(item.id, {   
+      sync_status: 'failed',  
+      retry_count: (item.retry_count || 0) + 1,  
+      last_error: error.reason  
+    });  
+  }  
+}  
+
+return {  
+  status: 'success',  
+  processed: decoded.processed.length,  
+  failed: Object.keys(decoded.failed).length,  
 };
 
-/**
- * جلب العدد الحالي للعمليات المعلقة (لعرضها في واجهة المستخدم)
- */
+} catch (error) {
+console.error('Sync failed:', error);
+throw error;
+}
+};
+
 export const getPendingSyncCount = async () => {
-  return await db.sync_queue.count();
+return await db.sync_queue.where('sync_status').equals('pending').count();
 };
 
-/**
- * إعادة محاولة المزامنة للعمليات الفاشلة فقط
- */
 export const retryFailedSync = async () => {
-  const failedRemarks = await db.remarks.where('sync_status').equals('failed').toArray();
-  
-  for (const remark of failedRemarks) {
-    await db.remarks.where('local_uuid').equals(remark.local_uuid).modify({ 
-      sync_status: 'local' 
-    });
-    
-    if (remark.id < 0 || !remark.server_id) {
-      await pushToSyncQueue('CREATE_REMARK', remark);
-    } else {
-      await pushToSyncQueue('UPDATE_REMARK', {
-        local_uuid: remark.local_uuid,
-        status: remark.status,
-        closed_date: remark.closed_date
-      });
-    }
-  }
-  
-  return await syncWithServer();
+const failed = await db.sync_queue.where('sync_status').equals('failed').toArray();
+
+for (const item of failed) {
+await db.sync_queue.update(item.id, { sync_status: 'pending', retry_count: (item.retry_count || 0) + 1 });
+}
+
+return await syncWithServer();
 };
