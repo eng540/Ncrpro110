@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '../db/index.js';
@@ -7,12 +6,12 @@ import { pushToSyncQueue } from '../syncEngine';
 const qualityColors = { pass: '#C6EFCE', fail: '#FFC7CE', pending: '#FFF2CC' };
 
 const itemStatuses = [
-  { value: 'not_started', label: 'Ù„Ù… ÙŠØ¨Ø¯Ø£' },
-  { value: 'in_progress', label: 'Ù‚ÙŠØ¯ Ø§Ù„Ø¹Ù…Ù„' },
-  { value: 'completed', label: 'Ù…ÙƒØªÙ…Ù„' },
-  { value: 'pending_inspection', label: 'Ø¨Ø§Ù†ØªØ¸Ø§Ø± Ø§Ù„ÙØ­Øµ' },
-  { value: 'rework_required', label: 'ÙŠØ­ØªØ§Ø¬ Ø¥Ø¹Ø§Ø¯Ø© Ø¹Ù…Ù„' },
-  { value: 'rejected', label: 'Ù…Ø±ÙÙˆØ¶ Ù†Ù‡Ø§Ø¦ÙŠØ§Ù‹' }
+  { value: 'not_started', label: 'لم يبدأ' },
+  { value: 'in_progress', label: 'قيد العمل' },
+  { value: 'completed', label: 'مكتمل' },
+  { value: 'pending_inspection', label: 'بانتظار الفحص' },
+  { value: 'rework_required', label: 'يحتاج إعادة عمل' },
+  { value: 'rejected', label: 'مرفوض نهائياً' }
 ];
 
 const BoqUpdater = ({ latrineId, onBack, onOpenRemarks }) => {
@@ -22,12 +21,10 @@ const BoqUpdater = ({ latrineId, onBack, onOpenRemarks }) => {
   const [selectedItems, setSelectedItems] = useState([]);
   const [errorMsg, setErrorMsg] = useState(null);
 
-  // ØªÙ†Ø¸ÙŠÙ Ø§Ù„ØªØ­Ø¯ÙŠØ¯ Ø¹Ù†Ø¯ ØªØºÙŠÙŠØ± Ø§Ù„Ø­Ù…Ø§Ù…
   useEffect(() => {
     setSelectedItems([]);
   }, [latrineId]);
 
-  // ØªÙ†Ø¸ÙŠÙ Ø±Ø³Ø§Ù„Ø© Ø§Ù„Ø®Ø·Ø£ ØªÙ„Ù‚Ø§Ø¦ÙŠØ§Ù‹
   useEffect(() => {
     if (!errorMsg) return;
     const timer = setTimeout(() => setErrorMsg(null), 4000);
@@ -36,13 +33,12 @@ const BoqUpdater = ({ latrineId, onBack, onOpenRemarks }) => {
 
   const showError = (msg) => setErrorMsg(msg);
 
-  // âœ… ÙŠÙØ±Ø¬Ø¹ true Ø¹Ù†Ø¯ Ø§Ù„Ù†Ø¬Ø§Ø­ØŒ false Ø¹Ù†Ø¯ Ø§Ù„ÙØ´Ù„ (Ù„Ù„ØªØ­ÙƒÙ… ÙÙŠ DOM)
   const handleUpdate = async (item, newQty, newStatus, newQuality) => {
     setUpdatingId(item.id);
     try {
       const achieved = parseFloat(newQty);
       if (isNaN(achieved) || achieved < 0 || achieved > item.planned_qty) {
-        showError(`Ø§Ù„ÙƒÙ…ÙŠØ© ØºÙŠØ± ØµØ§Ù„Ø­Ø© Ù„Ù„Ø¨Ù†Ø¯ ${item.boq_code}. Ø§Ù„Ø­Ø¯ Ø§Ù„Ø£Ù‚ØµÙ‰: ${item.planned_qty}`);
+        showError(`الكمية غير صالحة للبند ${item.boq_code}. الحد الأقصى: ${item.planned_qty}`);
         return false;
       }
 
@@ -63,7 +59,7 @@ const BoqUpdater = ({ latrineId, onBack, onOpenRemarks }) => {
       return true;
     } catch (error) {
       console.error('BoqUpdater update error:', error);
-      showError('Ø®Ø·Ø£ Ø£Ø«Ù†Ø§Ø¡ Ø§Ù„Ø­ÙØ¸ Ø§Ù„Ù…Ø­Ù„ÙŠ. ÙŠØ±Ø¬Ù‰ Ø§Ù„Ù…Ø­Ø§ÙˆÙ„Ø© Ù…Ø¬Ø¯Ø¯Ø§Ù‹.');
+      showError('خطأ أثناء الحفظ المحلي. يرجى المحاولة مجدداً.');
       return false;
     } finally {
       setUpdatingId(null);
@@ -82,10 +78,9 @@ const BoqUpdater = ({ latrineId, onBack, onOpenRemarks }) => {
     setSelectedItems(prev => prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id]);
   };
 
-  // âœ… ØªØ­Ø¯ÙŠØ« DOM ÙÙ‚Ø· Ø¨Ø¹Ø¯ Ù†Ø¬Ø§Ø­ handleUpdate
   const handleBulkComplete = async () => {
     if (!selectedItems.length) return;
-    if (!window.confirm(`Ù‡Ù„ Ø£Ù†Øª Ù…ØªØ£ÙƒØ¯ Ù…Ù† Ø¥ÙƒÙ…Ø§Ù„ ${selectedItems.length} Ø¨Ù†Ø¯ Ù…Ø­Ø¯Ø¯ Ø¨Ù†Ø³Ø¨Ø© 100% ÙƒÙ…Ù‚Ø¨ÙˆÙ„ØŸ`)) return;
+    if (!window.confirm(`هل أنت متأكد من إكمال ${selectedItems.length} بند محدد بنسبة 100% كمقبول؟`)) return;
 
     const itemsToProcess = boqItems.filter(i => selectedItems.includes(i.id));
     let success = false;
@@ -110,10 +105,9 @@ const BoqUpdater = ({ latrineId, onBack, onOpenRemarks }) => {
       success = true;
     } catch (error) {
       console.error('Bulk complete error:', error);
-      showError('Ø®Ø·Ø£ ÙÙŠ Ø§Ù„ØªØ­Ø¯ÙŠØ« Ø§Ù„Ø¬Ù…Ø§Ø¹ÙŠ.');
+      showError('خطأ في التحديث الجماعي.');
     }
 
-    // ØªØ­Ø¯ÙŠØ« DOM ÙÙ‚Ø· Ø¥Ø°Ø§ Ù†Ø¬Ø­Øª Ø§Ù„Ù…Ø¹Ø§Ù…Ù„Ø© Ø¨Ø§Ù„ÙƒØ§Ù…Ù„
     if (success) {
       for (const item of itemsToProcess) {
         const qtyInput = document.getElementById(`qty-${item.id}`);
@@ -131,7 +125,6 @@ const BoqUpdater = ({ latrineId, onBack, onOpenRemarks }) => {
     }
   };
 
-  // âœ… ØªØ­Ø¯ÙŠØ« DOM ÙÙ‚Ø· Ø¨Ø¹Ø¯ Ù†Ø¬Ø§Ø­ handleUpdate
   const handleQuickPercent = async (item, percent) => {
     const qty = (item.planned_qty * percent).toFixed(2);
     const status = percent === 1 ? 'completed' : (percent === 0 ? 'not_started' : 'in_progress');
@@ -152,37 +145,36 @@ const BoqUpdater = ({ latrineId, onBack, onOpenRemarks }) => {
   };
 
   if (!latrine || !boqItems) {
-    return <div style={{ padding: '40px', textAlign: 'center' }}>Ø¬Ø§Ø±ÙŠ Ø§Ù„ØªØ­Ù…ÙŠÙ„...</div>;
+    return <div style={{ padding: '40px', textAlign: 'center' }}>جاري التحميل...</div>;
   }
 
   const allSelected = boqItems.length > 0 && selectedItems.length === boqItems.length;
 
   return (
     <div style={{ direction: 'rtl' }}>
-      {/* Ø´Ø±ÙŠØ· Ø§Ù„Ø®Ø·Ø£ Ø§Ù„Ø¹Ø§Ø¦Ù… */}
       {errorMsg && (
         <div style={{ background: '#ffebee', color: '#c62828', padding: '12px 16px', borderRadius: '6px', marginBottom: '15px', border: '1px solid #ef9a9a', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <span>âš ï¸</span> {errorMsg}
+          <span>⚠️</span> {errorMsg}
         </div>
       )}
 
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', flexWrap: 'wrap', gap: '10px' }}>
-        <h2 style={{ color: '#1F4E78', margin: 0 }}>Ø¬Ø¯ÙˆÙ„ ÙƒÙ…ÙŠØ§Øª Ø­Ù…Ø§Ù…: {latrine.latrine_id}</h2>
+        <h2 style={{ color: '#1F4E78', margin: 0 }}>جدول كميات حمام: {latrine.latrine_id}</h2>
         <div style={{ display: 'flex', gap: '10px' }}>
           <button onClick={() => onOpenRemarks?.(latrineId, null)} style={{ padding: '8px 16px', background: '#e74c3c', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer' }}>
-            Ø§Ù„Ù…Ù„Ø§Ø­Ø¸Ø§Øª Ø§Ù„Ø¹Ø§Ù…Ø© Ù„Ù„Ø­Ù…Ø§Ù…
+            الملاحظات العامة للحمام
           </button>
           <button onClick={onBack} style={{ padding: '8px 16px', background: '#ecf0f1', border: '1px solid #bdc3c7', borderRadius: '4px', cursor: 'pointer' }}>
-            &larr; Ø§Ù„Ø¹ÙˆØ¯Ø© Ù„Ù„Ù‚Ø§Ø¦Ù…Ø©
+            &larr; العودة للقائمة
           </button>
         </div>
       </div>
 
       {selectedItems.length > 0 && (
         <div style={{ background: '#dff9fb', padding: '15px', borderRadius: '8px', marginBottom: '15px', border: '1px solid #c7ecee', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <strong>ØªÙ… ØªØ­Ø¯ÙŠØ¯ {selectedItems.length} Ø¨Ù†ÙˆØ¯</strong>
+          <strong>تم تحديد {selectedItems.length} بنود</strong>
           <button onClick={handleBulkComplete} style={{ padding: '8px 16px', background: '#27ae60', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>
-            âœ“ Ø§Ø¹ØªÙ…Ø§Ø¯ Ø§Ù„ÙƒÙ„ ÙƒÙ…ÙƒØªÙ…Ù„ ÙˆÙ…Ù‚Ø¨ÙˆÙ„ (100%)
+            ✓ اعتماد الكل كمكتمل ومقبول (100%)
           </button>
         </div>
       )}
@@ -192,22 +184,22 @@ const BoqUpdater = ({ latrineId, onBack, onOpenRemarks }) => {
           <thead style={{ background: '#1F4E78', color: 'white' }}>
             <tr>
               <th style={{ padding: '12px', textAlign: 'center' }}>
-                <input type="checkbox" onChange={toggleSelectAll} checked={allSelected} aria-label="ØªØ­Ø¯ÙŠØ¯ ÙƒÙ„ Ø§Ù„Ø¨Ù†ÙˆØ¯" title="ØªØ­Ø¯ÙŠØ¯ Ø§Ù„ÙƒÙ„" />
+                <input type="checkbox" onChange={toggleSelectAll} checked={allSelected} aria-label="تحديد كل البنود" title="تحديد الكل" />
               </th>
-              <th style={{ padding: '12px', textAlign: 'right' }}>Ø§Ù„Ø¨Ù†Ø¯</th>
-              <th style={{ padding: '12px', textAlign: 'right' }}>Ø§Ù„Ù…Ø®Ø·Ø·</th>
-              <th style={{ padding: '12px', textAlign: 'right' }}>Ø¥Ø¯Ø®Ø§Ù„ Ø³Ø±ÙŠØ¹</th>
-              <th style={{ padding: '12px', textAlign: 'right' }}>Ø§Ù„Ù…Ù†ÙØ° ÙŠØ¯ÙˆÙŠØ§Ù‹</th>
-              <th style={{ padding: '12px', textAlign: 'right' }}>Ø§Ù„Ø­Ø§Ù„Ø©</th>
-              <th style={{ padding: '12px', textAlign: 'right' }}>ÙØ­Øµ Ø§Ù„Ø¬ÙˆØ¯Ø©</th>
-              <th style={{ padding: '12px', textAlign: 'center' }}>Ø¥Ø¬Ø±Ø§Ø¡Ø§Øª</th>
+              <th style={{ padding: '12px', textAlign: 'right' }}>البند</th>
+              <th style={{ padding: '12px', textAlign: 'right' }}>المخطط</th>
+              <th style={{ padding: '12px', textAlign: 'right' }}>إدخال سريع</th>
+              <th style={{ padding: '12px', textAlign: 'right' }}>المنفذ يدوياً</th>
+              <th style={{ padding: '12px', textAlign: 'right' }}>الحالة</th>
+              <th style={{ padding: '12px', textAlign: 'right' }}>فحص الجودة</th>
+              <th style={{ padding: '12px', textAlign: 'center' }}>إجراءات</th>
             </tr>
           </thead>
           <tbody>
             {boqItems.map(item => (
               <tr key={item.id} style={{ borderBottom: '1px solid #eee', backgroundColor: selectedItems.includes(item.id) ? '#f1f8ff' : 'transparent' }}>
                 <td style={{ padding: '12px', textAlign: 'center' }}>
-                  <input type="checkbox" checked={selectedItems.includes(item.id)} onChange={() => toggleSelect(item.id)} aria-label={`ØªØ­Ø¯ÙŠØ¯ Ø¨Ù†Ø¯ ${item.boq_code}`} />
+                  <input type="checkbox" checked={selectedItems.includes(item.id)} onChange={() => toggleSelect(item.id)} aria-label={`تحديد بند ${item.boq_code}`} />
                 </td>
                 <td style={{ padding: '12px', whiteSpace: 'nowrap' }}>
                   <strong>{item.boq_code}</strong><br/>
@@ -216,10 +208,10 @@ const BoqUpdater = ({ latrineId, onBack, onOpenRemarks }) => {
                 <td style={{ padding: '12px', color: '#7f8c8d', fontWeight: 'bold', whiteSpace: 'nowrap' }}>{item.planned_qty} {item.unit}</td>
                 <td style={{ padding: '12px', whiteSpace: 'nowrap' }}>
                   <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
-                    <button onClick={() => handleQuickPercent(item, 0.25)} aria-label="25% Ù…Ù† Ø§Ù„ÙƒÙ…ÙŠØ©" style={{ padding: '4px 8px', background: '#ecf0f1', border: '1px solid #bdc3c7', borderRadius: '4px', cursor: 'pointer', fontSize:'11px' }}>25%</button>
-                    <button onClick={() => handleQuickPercent(item, 0.50)} aria-label="50% Ù…Ù† Ø§Ù„ÙƒÙ…ÙŠØ©" style={{ padding: '4px 8px', background: '#ecf0f1', border: '1px solid #bdc3c7', borderRadius: '4px', cursor: 'pointer', fontSize:'11px' }}>50%</button>
-                    <button onClick={() => handleQuickPercent(item, 0.75)} aria-label="75% Ù…Ù† Ø§Ù„ÙƒÙ…ÙŠØ©" style={{ padding: '4px 8px', background: '#ecf0f1', border: '1px solid #bdc3c7', borderRadius: '4px', cursor: 'pointer', fontSize:'11px' }}>75%</button>
-                    <button onClick={() => handleQuickPercent(item, 1.00)} aria-label="100% Ù…Ù† Ø§Ù„ÙƒÙ…ÙŠØ© Ù…ÙƒØªÙ…Ù„" style={{ padding: '4px 8px', background: '#3498db', color:'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize:'11px', fontWeight:'bold' }}>100%</button>
+                    <button onClick={() => handleQuickPercent(item, 0.25)} aria-label="25% من الكمية" style={{ padding: '4px 8px', background: '#ecf0f1', border: '1px solid #bdc3c7', borderRadius: '4px', cursor: 'pointer', fontSize:'11px' }}>25%</button>
+                    <button onClick={() => handleQuickPercent(item, 0.50)} aria-label="50% من الكمية" style={{ padding: '4px 8px', background: '#ecf0f1', border: '1px solid #bdc3c7', borderRadius: '4px', cursor: 'pointer', fontSize:'11px' }}>50%</button>
+                    <button onClick={() => handleQuickPercent(item, 0.75)} aria-label="75% من الكمية" style={{ padding: '4px 8px', background: '#ecf0f1', border: '1px solid #bdc3c7', borderRadius: '4px', cursor: 'pointer', fontSize:'11px' }}>75%</button>
+                    <button onClick={() => handleQuickPercent(item, 1.00)} aria-label="100% من الكمية مكتمل" style={{ padding: '4px 8px', background: '#3498db', color:'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize:'11px', fontWeight:'bold' }}>100%</button>
                   </div>
                 </td>
                 <td style={{ padding: '12px' }}>
@@ -236,9 +228,9 @@ const BoqUpdater = ({ latrineId, onBack, onOpenRemarks }) => {
                     style={{ padding: '6px', borderRadius: '4px', border: '1px solid #ccc', backgroundColor: qualityColors[item.quality_pass || 'pending'] }}
                     onChange={(e) => e.target.style.backgroundColor = qualityColors[e.target.value]}
                   >
-                    <option value="pending">Ù‚ÙŠØ¯ Ø§Ù„ÙØ­Øµ</option>
-                    <option value="pass">Ù…Ù‚Ø¨ÙˆÙ„</option>
-                    <option value="fail">Ù…Ø±ÙÙˆØ¶</option>
+                    <option value="pending">قيد الفحص</option>
+                    <option value="pass">مقبول</option>
+                    <option value="fail">مرفوض</option>
                   </select>
                 </td>
                 <td style={{ padding: '12px', textAlign: 'center' }}>
@@ -251,13 +243,13 @@ const BoqUpdater = ({ latrineId, onBack, onOpenRemarks }) => {
                         const quality = document.getElementById(`quality-${item.id}`).value;
                         handleUpdate(item, qty, status, quality);
                       }} 
-                      aria-label={`Ø­ÙØ¸ Ø¨Ù†Ø¯ ${item.boq_code}`}
+                      aria-label={`حفظ بند ${item.boq_code}`}
                       style={{ padding: '6px 10px', background: '#27ae60', color: 'white', border: 'none', borderRadius: '4px', cursor: updatingId === item.id ? 'not-allowed' : 'pointer', fontWeight: 'bold' }}
                     >
-                      {updatingId === item.id ? '...' : 'Ø­ÙØ¸'}
+                      {updatingId === item.id ? '...' : 'حفظ'}
                     </button>
-                    <button onClick={() => onOpenRemarks?.(latrineId, item.boq_code)} aria-label={`Ù…Ù„Ø§Ø­Ø¸Ø© Ù„Ø¨Ù†Ø¯ ${item.boq_code}`} style={{ padding: '4px 8px', background: '#e67e22', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '11px' }}>
-                      + Ù…Ù„Ø§Ø­Ø¸Ø© Ù„Ù„Ø¨Ù†Ø¯
+                    <button onClick={() => onOpenRemarks?.(latrineId, item.boq_code)} aria-label={`ملاحظة لبند ${item.boq_code}`} style={{ padding: '4px 8px', background: '#e67e22', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '11px' }}>
+                      + ملاحظة للبند
                     </button>
                   </div>
                 </td>
@@ -271,5 +263,3 @@ const BoqUpdater = ({ latrineId, onBack, onOpenRemarks }) => {
 };
 
 export default BoqUpdater;
-
-
