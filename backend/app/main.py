@@ -36,6 +36,16 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# حقن السياسات الافتراضية عند الإقلاع
+@app.on_event("startup")
+def startup_event():
+    try:
+        db = next(get_db())
+        crud.seed_default_policies(db)
+        print("Default policies seeded successfully.")
+    except Exception as e:
+        print(f"Failed to seed policies: {e}")
+
 # ========== API ROUTES (all under /api) ==========
 
 @app.get("/api/health")
@@ -185,18 +195,15 @@ def sync_offline_data(request: schemas.SyncRequest, db: Session = Depends(get_db
         raise HTTPException(status_code=500, detail=f"Critical Sync Failure: {str(e)}")
 
 # ==========================================
-# 🌟 ADMIN & DYNAMIC CONTROL ENDPOINTS (جديد)
+# 🌟 ADMIN & DYNAMIC CONTROL ENDPOINTS
 # ==========================================
 
-# ---------- BoQ Dictionary Management ----------
 @app.get("/api/admin/boq-dictionary", response_model=List[schemas.BoqDictionaryOut])
 def list_boq_dictionary(db: Session = Depends(get_db)):
-    """جلب قائمة البنود والأسعار من القاموس الديناميكي"""
     return crud.get_boq_dictionary(db)
 
 @app.post("/api/admin/boq-dictionary", response_model=schemas.BoqDictionaryOut)
 def create_dictionary_item(item: schemas.BoqDictionaryCreate, db: Session = Depends(get_db)):
-    """إضافة بند جديد للقاموس"""
     existing = crud.get_boq_dictionary_item(db, item.boq_code)
     if existing:
         raise HTTPException(status_code=400, detail=f"BoQ code {item.boq_code} already exists")
@@ -204,7 +211,6 @@ def create_dictionary_item(item: schemas.BoqDictionaryCreate, db: Session = Depe
 
 @app.patch("/api/admin/boq-dictionary/{boq_code}", response_model=schemas.BoqDictionaryOut)
 def update_dictionary_item(boq_code: str, updates: schemas.BoqDictionaryUpdate, db: Session = Depends(get_db)):
-    """تحديث بند في القاموس (السعر، الوصف، إلخ)"""
     item = crud.update_boq_dictionary_item(db, boq_code, updates)
     if not item:
         raise HTTPException(status_code=404, detail="BoQ Dictionary item not found")
@@ -212,25 +218,13 @@ def update_dictionary_item(boq_code: str, updates: schemas.BoqDictionaryUpdate, 
 
 @app.delete("/api/admin/boq-dictionary/{boq_code}")
 def delete_dictionary_item(boq_code: str, db: Session = Depends(get_db)):
-    """إلغاء تفعيل بند (Soft Delete)"""
     item = crud.delete_boq_dictionary_item(db, boq_code)
     if not item:
         raise HTTPException(status_code=404, detail="BoQ Dictionary item not found")
     return {"message": f"BoQ {boq_code} deactivated successfully"}
 
-# ---------- Excel Import Engine ----------
 @app.post("/api/admin/import-beneficiaries")
 async def import_beneficiaries(file: UploadFile = File(...), db: Session = Depends(get_db)):
-    """
-    استيراد ملف Excel يحتوي على بيانات المستفيدين والحمامات.
-
-    الأعمدة المتوقعة:
-    - A: رقم الحمام (Latrine ID) - مطلوب
-    - B: اسم المستفيد (Beneficiary HH) - اختياري
-    - C: المربع/القرية (Block No) - اختياري (افتراضي: B01)
-    - D: المهندس المسؤول (Site Engineer) - اختياري
-    - E: إحداثيات GPS - اختياري
-    """
     if not file.filename.endswith(('.xlsx', '.xls')):
         raise HTTPException(status_code=400, detail="يجب رفع ملف Excel (.xlsx أو .xls)")
 
@@ -243,10 +237,9 @@ async def import_beneficiaries(file: UploadFile = File(...), db: Session = Depen
         created_count = 0
         errors = []
 
-        # تخطي الصف الأول (العناوين)
         for idx, row in enumerate(ws.iter_rows(min_row=2, values_only=True), start=2):
             if not row or not row[0]:
-                continue  # تخطي الصفوف الفارغة
+                continue
 
             try:
                 latrine_id = str(row[0]).strip()
@@ -260,19 +253,13 @@ async def import_beneficiaries(file: UploadFile = File(...), db: Session = Depen
 
                 existing = crud.get_latrine_by_code(db, latrine_id)
                 if existing:
-                    # تحديث الحمام الموجود
-                    if beneficiary:
-                        existing.beneficiary_hh = beneficiary
-                    if block_no and block_no != "B01":
-                        existing.block_no = block_no
-                    if engineer:
-                        existing.site_engineer = engineer
-                    if gps:
-                        existing.gps_coordinates = gps
+                    if beneficiary: existing.beneficiary_hh = beneficiary
+                    if block_no and block_no != "B01": existing.block_no = block_no
+                    if engineer: existing.site_engineer = engineer
+                    if gps: existing.gps_coordinates = gps
                     existing.last_update = datetime.utcnow()
                     updated_count += 1
                 else:
-                    # إنشاء حمام جديد
                     new_latrine = schemas.LatrineCreate(
                         latrine_id=latrine_id,
                         beneficiary_hh=beneficiary,
@@ -305,18 +292,6 @@ async def import_beneficiaries(file: UploadFile = File(...), db: Session = Depen
 
 @app.post("/api/admin/import-boq-dictionary")
 async def import_boq_dictionary(file: UploadFile = File(...), db: Session = Depends(get_db)):
-    """
-    استيراد قاموس البنود والأسعار من ملف Excel.
-
-    الأعمدة المتوقعة:
-    - A: كود البند (BoQ Code) - مطلوب
-    - B: الفئة (Category) - اختياري
-    - C: الوصف العربي - اختياري
-    - D: الوصف الإنجليزي - اختياري
-    - E: الوحدة (Unit) - اختياري
-    - F: الكمية الافتراضية (Default Qty) - اختياري
-    - G: سعر الوحدة (Unit Price) - مطلوب
-    """
     if not file.filename.endswith(('.xlsx', '.xls')):
         raise HTTPException(status_code=400, detail="يجب رفع ملف Excel (.xlsx أو .xls)")
 
@@ -347,21 +322,15 @@ async def import_boq_dictionary(file: UploadFile = File(...), db: Session = Depe
 
                 existing = crud.get_boq_dictionary_item(db, boq_code)
                 if existing:
-                    # تحديث البند الموجود
-                    if category:
-                        existing.category = category
-                    if description_ar:
-                        existing.description_ar = description_ar
-                    if description_en:
-                        existing.description_en = description_en
-                    if unit:
-                        existing.unit = unit
+                    if category: existing.category = category
+                    if description_ar: existing.description_ar = description_ar
+                    if description_en: existing.description_en = description_en
+                    if unit: existing.unit = unit
                     existing.default_qty = default_qty
                     existing.unit_price = unit_price
                     existing.is_active = True
                     updated_count += 1
                 else:
-                    # إنشاء بند جديد
                     new_item = schemas.BoqDictionaryCreate(
                         boq_code=boq_code,
                         category=category,
@@ -391,10 +360,25 @@ async def import_boq_dictionary(file: UploadFile = File(...), db: Session = Depe
         db.rollback()
         raise HTTPException(status_code=500, detail=f"خطأ أثناء معالجة الملف: {str(e)}")
 
-# ---------- Legacy Seeding (للتوافق مع النسخ القديمة) ----------
+# ==========================================
+# 🌟 GOVERNANCE ENDPOINTS (مسارات الحوكمة الجديدة)
+# ==========================================
+@app.get("/api/admin/governance-items", response_model=List[schemas.GovernanceItemOut])
+def get_governance_items(status_filter: Optional[str] = None, db: Session = Depends(get_db)):
+    """جلب البنود التي تحتاج إلى قرار إداري (أو كل القرارات السابقة)"""
+    return crud.get_governance_items(db, status_filter)
+
+@app.post("/api/admin/governance-items/{decision_id}/override")
+def override_decision(decision_id: int, override_data: schemas.DecisionOverrideUpdate, db: Session = Depends(get_db)):
+    """تطبيق التجاوز البشري (Override) على قرار النظام"""
+    decision = crud.override_item_decision(db, decision_id, override_data)
+    if not decision:
+        raise HTTPException(status_code=404, detail="Decision record not found")
+    return {"message": "Decision overridden successfully", "new_state": decision.final_state}
+
+# ---------- Legacy Seeding ----------
 @app.post("/api/seed-latrines")
 def seed_latrines(count: int = 110, db: Session = Depends(get_db)):
-    """توليد حمامات تجريبية (للاختبار فقط)"""
     created = []
     for i in range(1, count + 1):
         code = f"LAT-{str(i).zfill(3)}"
@@ -418,23 +402,32 @@ def seed_latrines(count: int = 110, db: Session = Depends(get_db)):
 # ========== REACT FRONTEND (serve static files) ==========
 static_dir = os.path.join(os.path.dirname(__file__), "static")
 
-if os.path.exists(static_dir) and os.path.exists(os.path.join(static_dir, "index.html")):
+def get_no_cache_response(file_path: str):
+    response = FileResponse(file_path)
+    response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate, max-age=0"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
+    return response
 
+if os.path.exists(static_dir) and os.path.exists(os.path.join(static_dir, "index.html")):
+    
     @app.get("/")
     async def serve_react_root():
-        return FileResponse(os.path.join(static_dir, "index.html"))
+        return get_no_cache_response(os.path.join(static_dir, "index.html"))
 
     @app.get("/{full_path:path}")
     async def serve_react_catchall(full_path: str):
         if full_path.startswith("api/"):
             raise HTTPException(status_code=404, detail="API Route Not Found")
-
+        
         file_path = os.path.join(static_dir, full_path)
-
+        
         if os.path.exists(file_path) and os.path.isfile(file_path):
+            if full_path == "service-worker.js" or full_path == "index.html":
+                return get_no_cache_response(file_path)
             return FileResponse(file_path)
-
-        return FileResponse(os.path.join(static_dir, "index.html"))
+        
+        return get_no_cache_response(os.path.join(static_dir, "index.html"))
 else:
     @app.get("/")
     def root():

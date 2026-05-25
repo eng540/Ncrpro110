@@ -150,7 +150,7 @@ class EngineerPerformance(BaseModel):
     inspected_today: int
     accepted_today: int
 
-# ---------- BoQ Dictionary Schemas (جديد) ----------
+# ---------- BoQ Dictionary Schemas ----------
 class BoqDictionaryBase(BaseModel):
     boq_code: str
     category: Optional[str] = None
@@ -178,6 +178,34 @@ class BoqDictionaryOut(BoqDictionaryBase):
 
     class Config:
         from_attributes = True
+
+# ==========================================
+# 🌟 GOVERNANCE & DECISION SCHEMAS (جديد)
+# ==========================================
+class GovernanceItemOut(BaseModel):
+    """قالب إرسال بيانات البند والقرار لعرضها في لوحة تحكم المدير"""
+    decision_id: int
+    boq_item_id: int
+    latrine_id: str
+    beneficiary_hh: Optional[str] = None
+    boq_code: str
+    execution_pct: float
+    quality_status: str
+    highest_remark_severity: Optional[str] = None
+    system_recommendation_code: str
+    system_recommendation_note: Optional[str] = None
+    system_payment_pct: float
+    human_decision_code: Optional[str] = None
+    human_payment_pct: Optional[float] = None
+    override_reason: Optional[str] = None
+    final_state: str
+
+class DecisionOverrideUpdate(BaseModel):
+    """قالب استقبال قرار التجاوز من المدير"""
+    human_decision_code: str
+    human_payment_pct: float
+    override_reason: str
+    approved_by: str
 
 # ---------- Sync Engine Schemas ----------
 class SyncOperation(BaseModel):

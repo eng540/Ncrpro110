@@ -1,4 +1,5 @@
 from sqlalchemy import Column, Integer, String, Float, DateTime, Text, ForeignKey, Enum, Boolean
+from sqlalchemy.dialects.postgresql import JSONB # 🌟 استخدام JSONB لقوة الأداء في PostgreSQL
 from sqlalchemy.orm import relationship
 from app.database import Base
 import enum
@@ -35,33 +36,41 @@ class RemarkStatus(str, enum.Enum):
     CLOSED = "closed"
     OVERDUE = "overdue"
 
-# MASTER REGISTRY
+# ==========================================
+# 1. MASTER REGISTRY
+# ==========================================
 class Latrine(Base):
     __tablename__ = "latrines"
 
     id = Column(Integer, primary_key=True, index=True)
-    latrine_id = Column(String(20), unique=True, index=True, nullable=False)  # LAT-001
+    latrine_id = Column(String(20), unique=True, index=True, nullable=False)
     block_no = Column(String(10), default="B01")
     gps_coordinates = Column(String(50))
-    beneficiary_hh = Column(String(20))
+    beneficiary_hh = Column(String(100))
     status = Column(String(20), default=LatrineStatus.NOT_STARTED)
     overall_pct = Column(Float, default=0.0)
     start_date = Column(DateTime, nullable=True)
     expected_completion = Column(DateTime, nullable=True)
-    site_engineer = Column(String(50))
+    site_engineer = Column(String(100))
     last_update = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     remarks_count = Column(Integer, default=0)
 
+    # 🌟 ربط الحمام بسياسة معينة (اختياري، إذا كان فارغاً يأخذ السياسة الافتراضية)
+    policy_id = Column(Integer, ForeignKey("policy_profiles.id"), nullable=True)
+
     boq_items = relationship("BoqItem", back_populates="latrine", cascade="all, delete-orphan")
     remarks = relationship("Remark", back_populates="latrine", cascade="all, delete-orphan")
+    policy = relationship("PolicyProfile")
 
-# BOQ TRACKING
+# ==========================================
+# 2. BOQ TRACKING
+# ==========================================
 class BoqItem(Base):
     __tablename__ = "boq_items"
 
     id = Column(Integer, primary_key=True, index=True)
     latrine_id = Column(Integer, ForeignKey("latrines.id"), nullable=False)
-    boq_code = Column(String(10), nullable=False)  # A1, A2, etc.
+    boq_code = Column(String(10), nullable=False)
     category = Column(String(50))
     description_ar = Column(Text)
     description_en = Column(Text)
@@ -76,17 +85,20 @@ class BoqItem(Base):
     last_update = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     latrine = relationship("Latrine", back_populates="boq_items")
+    decision_record = relationship("DecisionRecord", back_populates="boq_item", uselist=False, cascade="all, delete-orphan")
 
-# REMARKS / DEFECTS
+# ==========================================
+# 3. REMARKS / DEFECTS
+# ==========================================
 class Remark(Base):
     __tablename__ = "remarks"
 
     id = Column(Integer, primary_key=True, index=True)
-    remark_id = Column(String(36), unique=True)  # UUID-compatible
+    remark_id = Column(String(36), unique=True)
     latrine_id = Column(Integer, ForeignKey("latrines.id"), nullable=False)
     boq_code = Column(String(10))
     date_logged = Column(DateTime, default=datetime.utcnow)
-    type = Column(String(50))  # Dimensional, Material, Workmanship, Safety
+    type = Column(String(50))
     severity = Column(String(20), default=RemarkSeverity.MINOR)
     description = Column(Text)
     action_required = Column(Text)
@@ -98,7 +110,9 @@ class Remark(Base):
 
     latrine = relationship("Latrine", back_populates="remarks")
 
-# DAILY LOG
+# ==========================================
+# 4. DAILY LOG
+# ==========================================
 class DailyLog(Base):
     __tablename__ = "daily_logs"
 
@@ -112,9 +126,10 @@ class DailyLog(Base):
     manpower = Column(Integer, default=0)
     equipment = Column(Text)
     notes = Column(Text)
+    last_update = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 # ==========================================
-# MASTER BOQ DICTIONARY (القاموس الديناميكي)
+# 5. MASTER BOQ DICTIONARY
 # ==========================================
 class BoqDictionary(Base):
     __tablename__ = "boq_dictionary"
@@ -126,5 +141,50 @@ class BoqDictionary(Base):
     description_en = Column(Text)
     unit = Column(String(10))
     default_qty = Column(Float, default=0.0)
-    unit_price = Column(Float, default=0.0)  # السعر الديناميكي
+    unit_price = Column(Float, default=0.0)
     is_active = Column(Boolean, default=True)
+
+# ==========================================
+# 6. GOVERNANCE & POLICIES (الطبقة الجديدة)
+# ==========================================
+class PolicyProfile(Base):
+    """جدول السياسات (يخزن القواعد كـ JSON)"""
+    __tablename__ = "policy_profiles"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(50), unique=True, nullable=False) # e.g., "NRC Strict", "Emergency"
+    description = Column(Text)
+    is_default = Column(Boolean, default=False)
+    
+    # 🌟 هنا يكمن السحر: تخزين مصفوفة القرار كـ JSON
+    rules_json = Column(JSONB, nullable=False) 
+
+class DecisionRecord(Base):
+    """سجل القرار لكل بند (المصدر الوحيد للحقيقة)"""
+    __tablename__ = "decision_records"
+
+    id = Column(Integer, primary_key=True, index=True)
+    boq_item_id = Column(Integer, ForeignKey("boq_items.id"), unique=True, nullable=False)
+    
+    # --- 1. المدخلات الخام (Snapshot of Reality) ---
+    execution_pct = Column(Float)
+    quality_status = Column(String(20))
+    highest_remark_severity = Column(String(20), nullable=True)
+    
+    # --- 2. توصية النظام (Immutable Advisor) ---
+    system_recommendation_code = Column(String(50)) # APPROVE, REWORK, HOLD, STOP
+    system_recommendation_note = Column(Text)
+    system_payment_pct = Column(Float)
+    
+    # --- 3. القرار البشري (Mutable Decider) ---
+    human_decision_code = Column(String(50), nullable=True) # APPROVE, REJECT, OVERRIDE, HOLD
+    human_payment_pct = Column(Float, nullable=True)
+    override_reason = Column(Text, nullable=True)
+    
+    approved_by = Column(String(100), nullable=True)
+    approved_at = Column(DateTime, nullable=True)
+    
+    # --- 4. الحالة النهائية (Derived State) ---
+    final_state = Column(String(20), default="OPEN") # LOCKED, OPEN, DISPUTED
+
+    boq_item = relationship("BoqItem", back_populates="decision_record")

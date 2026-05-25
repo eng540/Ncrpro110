@@ -1,6 +1,7 @@
+
 import React, { useState, useEffect } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { db, populateLocalDB } from '../db';
+import { db, populateLocalDB } from '../db/index.js';
 import { syncWithServer } from '../syncEngine';
 
 const API_BASE_URL = process.env.REACT_APP_API_URL || '/api';
@@ -130,3 +131,4 @@ const SyncStatus = () => {
 };
 
 export default SyncStatus;
+

@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { db } from '../db';
+import { db } from '../db/index.js';
 import { pushToSyncQueue } from '../syncEngine';
 
 const qualityColors = { pass: '#C6EFCE', fail: '#FFC7CE', pending: '#FFF2CC' };
@@ -21,12 +21,10 @@ const BoqUpdater = ({ latrineId, onBack, onOpenRemarks }) => {
   const [selectedItems, setSelectedItems] = useState([]);
   const [errorMsg, setErrorMsg] = useState(null);
 
-  // تنظيف التحديد عند تغيير الحمام
   useEffect(() => {
     setSelectedItems([]);
   }, [latrineId]);
 
-  // تنظيف رسالة الخطأ تلقائياً
   useEffect(() => {
     if (!errorMsg) return;
     const timer = setTimeout(() => setErrorMsg(null), 4000);
@@ -35,7 +33,6 @@ const BoqUpdater = ({ latrineId, onBack, onOpenRemarks }) => {
 
   const showError = (msg) => setErrorMsg(msg);
 
-  // ✅ يُرجع true عند النجاح، false عند الفشل (للتحكم في DOM)
   const handleUpdate = async (item, newQty, newStatus, newQuality) => {
     setUpdatingId(item.id);
     try {
@@ -81,7 +78,6 @@ const BoqUpdater = ({ latrineId, onBack, onOpenRemarks }) => {
     setSelectedItems(prev => prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id]);
   };
 
-  // ✅ تحديث DOM فقط بعد نجاح handleUpdate
   const handleBulkComplete = async () => {
     if (!selectedItems.length) return;
     if (!window.confirm(`هل أنت متأكد من إكمال ${selectedItems.length} بند محدد بنسبة 100% كمقبول؟`)) return;
@@ -112,7 +108,6 @@ const BoqUpdater = ({ latrineId, onBack, onOpenRemarks }) => {
       showError('خطأ في التحديث الجماعي.');
     }
 
-    // تحديث DOM فقط إذا نجحت المعاملة بالكامل
     if (success) {
       for (const item of itemsToProcess) {
         const qtyInput = document.getElementById(`qty-${item.id}`);
@@ -130,7 +125,6 @@ const BoqUpdater = ({ latrineId, onBack, onOpenRemarks }) => {
     }
   };
 
-  // ✅ تحديث DOM فقط بعد نجاح handleUpdate
   const handleQuickPercent = async (item, percent) => {
     const qty = (item.planned_qty * percent).toFixed(2);
     const status = percent === 1 ? 'completed' : (percent === 0 ? 'not_started' : 'in_progress');
@@ -158,7 +152,6 @@ const BoqUpdater = ({ latrineId, onBack, onOpenRemarks }) => {
 
   return (
     <div style={{ direction: 'rtl' }}>
-      {/* شريط الخطأ العائم */}
       {errorMsg && (
         <div style={{ background: '#ffebee', color: '#c62828', padding: '12px 16px', borderRadius: '6px', marginBottom: '15px', border: '1px solid #ef9a9a', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '8px' }}>
           <span>⚠️</span> {errorMsg}
