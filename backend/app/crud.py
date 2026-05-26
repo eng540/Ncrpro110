@@ -99,7 +99,7 @@ def update_item_decision(db: Session, boq_item_id: int):
     if not item: return
 
     latrine = db.query(models.Latrine).filter(models.Latrine.id == item.latrine_id).first()
-    
+
     # 🌟 إصلاح: التأكد من وجود سياسات في قاعدة البيانات
     seed_default_policies(db)
 
@@ -108,8 +108,8 @@ def update_item_decision(db: Session, boq_item_id: int):
         policy = db.query(models.PolicyProfile).filter(models.PolicyProfile.id == latrine.policy_id).first()
     if not policy:
         policy = db.query(models.PolicyProfile).filter(models.PolicyProfile.is_default == True).first()
-    
-    if not policy: return # لن يحدث هذا بعد الآن بفضل دالة seed
+
+    if not policy: return # لن يحدث هذا الآن بعد بفضل دالة seed
 
     open_remarks = db.query(models.Remark).filter(
         models.Remark.latrine_id == item.latrine_id,
@@ -139,11 +139,11 @@ def update_item_decision(db: Session, boq_item_id: int):
     decision.execution_pct = item.achievement_pct
     decision.quality_status = item.quality_pass
     decision.highest_remark_severity = highest_severity
-    
+
     decision.system_recommendation_code = recommendation["code"]
     decision.system_recommendation_note = recommendation["note"]
     decision.system_payment_pct = recommendation["payment_pct"]
-    
+
     if not decision.human_decision_code:
         decision.final_state = "OPEN"
 
@@ -373,7 +373,7 @@ def seed_boq_items(db: Session, latrine_id: int):
         db.add(db_item)
     db.commit()
 
-# ---------- Sync Engine Processor ----------
+# ---------- Sync Engine Processor (CLEAN - No Encryption Traces) ----------
 def process_sync_queue(db: Session, sync_req: schemas.SyncRequest) -> schemas.SyncResponse:
     processed = []
     failed = []
@@ -385,13 +385,8 @@ def process_sync_queue(db: Session, sync_req: schemas.SyncRequest) -> schemas.Sy
 
     for op in sync_req.operations:
         try:
-            # 🌟 إصلاح: تحويل الـ payload إلى قاموس إذا وصل كنص
+            # البيانات تصل مباشرة كـ dict (لا حاجة لـ json.loads)
             op_data = op.payload
-            if isinstance(op_data, str):
-                try:
-                    op_data = json.loads(op_data)
-                except:
-                    pass # إذا فشل التحويل، نتركه كما هو
 
             if isinstance(op_data, dict):
                 for key in list(op_data.keys()):
@@ -423,12 +418,7 @@ def process_sync_queue(db: Session, sync_req: schemas.SyncRequest) -> schemas.Sy
                 remark_data.pop('id', None)
                 remark_data.pop('local_id', None)
 
-                # 🌟 إصلاح: تحويل الحقول المشفرة (JSON Strings) إلى نصوص عادية ليقبلها SQLAlchemy
-                if 'description' in remark_data and isinstance(remark_data['description'], dict):
-                    remark_data['description'] = json.dumps(remark_data['description'])
-                if 'action_required' in remark_data and isinstance(remark_data['action_required'], dict):
-                    remark_data['action_required'] = json.dumps(remark_data['action_required'])
-
+                # لا حاجة لتحويل أي حقل – جميعها نصوص عادية الآن
                 new_remark = models.Remark(**remark_data)
                 new_remark.date_logged = datetime.utcnow()
 
@@ -440,7 +430,7 @@ def process_sync_queue(db: Session, sync_req: schemas.SyncRequest) -> schemas.Sy
 
                 processed.append(op.seq)
                 latrines_to_recalc.add(op_data.get("latrine_id"))
-                
+
                 if new_remark.boq_code:
                     related_item = db.query(models.BoqItem).filter(
                         models.BoqItem.latrine_id == new_remark.latrine_id,
@@ -466,13 +456,11 @@ def process_sync_queue(db: Session, sync_req: schemas.SyncRequest) -> schemas.Sy
                 if remark:
                     for key, value in op_data.items():
                         if hasattr(remark, key) and key not in ["id", "local_uuid", "sync_status", "local_id"]:
-                            # 🌟 إصلاح: تحويل الحقول المشفرة
-                            if isinstance(value, dict):
-                                value = json.dumps(value)
+                            # القيم أصبحت نصوصاً عادية، لا تحويل
                             setattr(remark, key, value)
                     remark.last_update = datetime.utcnow()
                     processed.append(op.seq)
-                    
+
                     if remark.boq_code:
                         related_item = db.query(models.BoqItem).filter(
                             models.BoqItem.latrine_id == remark.latrine_id,
@@ -489,8 +477,6 @@ def process_sync_queue(db: Session, sync_req: schemas.SyncRequest) -> schemas.Sy
                 if latrine:
                     for key, value in op_data.items():
                         if hasattr(latrine, key) and key != "id":
-                            if isinstance(value, dict):
-                                value = json.dumps(value)
                             setattr(latrine, key, value)
                     latrine.last_update = datetime.utcnow()
                 processed.append(op.seq)
@@ -500,9 +486,7 @@ def process_sync_queue(db: Session, sync_req: schemas.SyncRequest) -> schemas.Sy
                 log_data.pop('sync_status', None)
                 log_data.pop('id', None)
 
-                if 'notes' in log_data and isinstance(log_data['notes'], dict):
-                    log_data['notes'] = json.dumps(log_data['notes'])
-
+                # notes حقل نصي عادي
                 new_log = models.DailyLog(**log_data)
                 if not new_log.date:
                     new_log.date = datetime.utcnow()
@@ -536,12 +520,12 @@ def get_governance_items(db: Session, status_filter: str = None):
     query = db.query(models.DecisionRecord, models.BoqItem, models.Latrine)\
               .join(models.BoqItem, models.DecisionRecord.boq_item_id == models.BoqItem.id)\
               .join(models.Latrine, models.BoqItem.latrine_id == models.Latrine.id)
-    
+
     if status_filter:
         query = query.filter(models.DecisionRecord.system_recommendation_code == status_filter)
-        
+
     results = query.all()
-    
+
     output = []
     for decision, item, latrine in results:
         output.append(schemas.GovernanceItemOut(
@@ -567,19 +551,19 @@ def override_item_decision(db: Session, decision_id: int, override_data: schemas
     decision = db.query(models.DecisionRecord).filter(models.DecisionRecord.id == decision_id).first()
     if not decision:
         return None
-        
+
     decision.human_decision_code = override_data.human_decision_code
     decision.human_payment_pct = override_data.human_payment_pct
     decision.override_reason = override_data.override_reason
     decision.approved_by = override_data.approved_by
     decision.approved_at = datetime.utcnow()
     decision.final_state = "LOCKED"
-    
+
     db.commit()
     db.refresh(decision)
-    
+
     item = db.query(models.BoqItem).filter(models.BoqItem.id == decision.boq_item_id).first()
     if item:
         recalc_latrine_progress(db, item.latrine_id)
-        
+
     return decision
