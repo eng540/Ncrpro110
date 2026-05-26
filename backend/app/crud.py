@@ -384,37 +384,41 @@ def process_sync_queue(db: Session, sync_req: schemas.SyncRequest) -> schemas.Sy
 
     for op in sync_req.operations:
         try:
-            if isinstance(op.data, dict):
-                for key in list(op.data.keys()):
-                    if key in date_fields and isinstance(op.data[key], str):
+            # 🌟 الإصلاح: قراءة البيانات من payload بدلاً من data
+            op_data = op.payload 
+            
+            if isinstance(op_data, dict):
+                for key in list(op_data.keys()):
+                    if key in date_fields and isinstance(op_data[key], str):
                         try:
-                            clean_date_str = op.data[key].replace('Z', '+00:00')
-                            op.data[key] = datetime.fromisoformat(clean_date_str)
+                            clean_date_str = op_data[key].replace('Z', '+00:00')
+                            op_data[key] = datetime.fromisoformat(clean_date_str)
                         except ValueError:
                             pass
 
             if op.type == "UPDATE_BOQ":
-                item_id = op.data.get("id")
+                item_id = op_data.get("id")
                 item = db.query(models.BoqItem).filter(models.BoqItem.id == item_id).first()
                 if item:
-                    for key, value in op.data.items():
+                    for key, value in op_data.items():
                         if hasattr(item, key) and key != "id":
                             setattr(item, key, value)
                     if item.planned_qty and item.planned_qty > 0:
                         item.achievement_pct = round((item.achieved_qty / item.planned_qty) * 100, 2)
-                    item.last_update = op.timestamp
+                    item.last_update = datetime.utcnow()
                     latrines_to_recalc.add(item.latrine_id)
                     items_to_recalc_decision.add(item.id)
+                processed.append(op.seq)
 
             elif op.type == "CREATE_REMARK":
-                remark_data = op.data.copy()
+                remark_data = op_data.copy()
                 local_uuid = remark_data.pop('local_uuid', None)
                 remark_data.pop('sync_status', None)
                 remark_data.pop('id', None)
                 remark_data.pop('local_id', None)
 
                 new_remark = models.Remark(**remark_data)
-                new_remark.date_logged = op.timestamp
+                new_remark.date_logged = datetime.utcnow()
 
                 if local_uuid:
                     new_remark.remark_id = str(local_uuid)[:36]
@@ -422,8 +426,8 @@ def process_sync_queue(db: Session, sync_req: schemas.SyncRequest) -> schemas.Sy
                 db.add(new_remark)
                 db.flush()
 
-                processed.append(op.id)
-                latrines_to_recalc.add(op.data.get("latrine_id"))
+                processed.append(op.seq) # 🌟 استخدام seq للرد
+                latrines_to_recalc.add(op_data.get("latrine_id"))
                 
                 if new_remark.boq_code:
                     related_item = db.query(models.BoqItem).filter(
@@ -433,7 +437,7 @@ def process_sync_queue(db: Session, sync_req: schemas.SyncRequest) -> schemas.Sy
                     if related_item: items_to_recalc_decision.add(related_item.id)
 
             elif op.type == "UPDATE_REMARK":
-                local_uuid = op.data.get("local_uuid")
+                local_uuid = op_data.get("local_uuid")
                 remark = None
 
                 if local_uuid:
@@ -441,18 +445,18 @@ def process_sync_queue(db: Session, sync_req: schemas.SyncRequest) -> schemas.Sy
                         models.Remark.remark_id == str(local_uuid)[:36]
                     ).first()
 
-                if not remark and op.data.get("id"):
-                    if int(op.data.get("id")) > 0:
+                if not remark and op_data.get("id"):
+                    if int(op_data.get("id")) > 0:
                         remark = db.query(models.Remark).filter(
-                            models.Remark.id == op.data.get("id")
+                            models.Remark.id == op_data.get("id")
                         ).first()
 
                 if remark:
-                    for key, value in op.data.items():
+                    for key, value in op_data.items():
                         if hasattr(remark, key) and key not in ["id", "local_uuid", "sync_status", "local_id"]:
                             setattr(remark, key, value)
-                    remark.last_update = op.timestamp
-                    processed.append(op.id)
+                    remark.last_update = datetime.utcnow()
+                    processed.append(op.seq)
                     
                     if remark.boq_code:
                         related_item = db.query(models.BoqItem).filter(
@@ -461,37 +465,36 @@ def process_sync_queue(db: Session, sync_req: schemas.SyncRequest) -> schemas.Sy
                         ).first()
                         if related_item: items_to_recalc_decision.add(related_item.id)
                 else:
-                    failed.append(op.id)
-                    errors[op.id] = "Remark not found on server"
+                    failed.append(op.seq)
+                    errors[str(op.seq)] = "Remark not found on server"
 
             elif op.type == "UPDATE_LATRINE":
-                latrine_id = op.data.get("id")
+                latrine_id = op_data.get("id")
                 latrine = db.query(models.Latrine).filter(models.Latrine.id == latrine_id).first()
                 if latrine:
-                    for key, value in op.data.items():
+                    for key, value in op_data.items():
                         if hasattr(latrine, key) and key != "id":
                             setattr(latrine, key, value)
-                    latrine.last_update = op.timestamp
+                    latrine.last_update = datetime.utcnow()
+                processed.append(op.seq)
 
             elif op.type == "CREATE_DAILY_LOG":
-                log_data = op.data.copy()
+                log_data = op_data.copy()
                 log_data.pop('sync_status', None)
                 log_data.pop('id', None)
 
                 new_log = models.DailyLog(**log_data)
                 if not new_log.date:
-                    new_log.date = op.timestamp
+                    new_log.date = datetime.utcnow()
                 db.add(new_log)
+                processed.append(op.seq)
 
             db.commit()
 
-            if op.type not in ["UPDATE_REMARK", "CREATE_REMARK"]: 
-                processed.append(op.id)
-
         except Exception as e:
             db.rollback()
-            failed.append(op.id)
-            errors[op.id] = f"Error processing {op.type}: {str(e)}"
+            failed.append(op.seq)
+            errors[str(op.seq)] = f"Error processing {op.type}: {str(e)}"
 
     for item_id in items_to_recalc_decision:
         update_item_decision(db, item_id)
