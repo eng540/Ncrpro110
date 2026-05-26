@@ -456,6 +456,29 @@ def override_decision(decision_id: int, override_data: schemas.DecisionOverrideU
         raise HTTPException(status_code=404, detail="Decision record not found")
     return {"message": "Decision overridden successfully", "new_state": decision.final_state}
 
+@app.post("/api/admin/governance-backfill")
+def backfill_governance_decisions(db: Session = Depends(get_db)):
+    """
+    أداة صيانة (Maintenance Tool):
+    تقوم بالمرور على جميع البنود في قاعدة البيانات (التي ليس لها سجل قرار)،
+    وتقوم بتشغيل محرك القرارات عليها لإنشاء سجلات لها بأثر رجعي.
+    """
+    all_items = db.query(models.BoqItem).all()
+    processed_count = 0
+
+    for item in all_items:
+        decision = db.query(models.DecisionRecord).filter(models.DecisionRecord.boq_item_id == item.id).first()
+        if not decision:
+            crud.update_item_decision(db, item.id)
+            processed_count += 1
+
+    # إعادة حساب الإنجاز لجميع الحمامات
+    latrines = db.query(models.Latrine).all()
+    for latrine in latrines:
+        crud.recalc_latrine_progress(db, latrine.id)
+
+    return {"message": f"Successfully backfilled decisions for {processed_count} items."}
+
 # ---------- Legacy Seeding ----------
 @app.post("/api/seed-latrines")
 def seed_latrines(count: int = 110, db: Session = Depends(get_db)):
