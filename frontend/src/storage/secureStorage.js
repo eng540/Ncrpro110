@@ -29,15 +29,15 @@ class SecureStorage {
     const record = await db.latrines.get(id);
     if (!record) return null;
     const view = { id: record.id, latrine_id: record.latrine_id, block_no: record.block_no, status: record.status, overall_pct: record.overall_pct, last_update: record.last_update };
-    
+
     // فك التشفير إذا كانت البيانات مغلفة
     try {
       if (record.beneficiary_hh?._env) view.beneficiary_hh = await cryptoService.decryptField(record.beneficiary_hh);
       else view.beneficiary_hh = record.beneficiary_hh; // Fallback للبيانات القديمة
-      
+
       if (record.gps_coordinates?._env) view.gps_coordinates = await cryptoService.decryptField(record.gps_coordinates);
       else view.gps_coordinates = record.gps_coordinates;
-      
+
       if (record.site_engineer?._env) view.site_engineer = await cryptoService.decryptField(record.site_engineer);
       else view.site_engineer = record.site_engineer;
     } catch (e) {
@@ -48,31 +48,45 @@ class SecureStorage {
 
   // ========== REMARKS ==========
   async saveRemark(data) {
+    // 🌟 إصلاح: التأكد من وجود local_uuid دائماً
+    const safeUuid = data.local_uuid || crypto.randomUUID();
+    
     const envelope = {
-      id: data.id,
-      local_uuid: data.local_uuid,
       latrine_id: data.latrine_id,
       boq_code: data.boq_code,
       status: data.status,
       severity: data.severity,
       sync_status: data.sync_status || 'local',
       date_logged: data.date_logged || new Date().toISOString(),
-      description: data.description ? (await cryptoService.encryptField(data.description, { entity: 'remark', field: 'description', rid: data.local_uuid || data.id })).toDB() : null,
-      action_required: data.action_required ? (await cryptoService.encryptField(data.action_required, { entity: 'remark', field: 'action_required', rid: data.local_uuid || data.id })).toDB() : null,
+      local_uuid: safeUuid,
     };
+
+    // الاحتفاظ بالـ ID إذا كان موجوداً (للتعديل)
+    if (data.id) envelope.id = data.id;
+
+    // تشفير الحقول الحساسة
+    if (data.description) {
+      const envDesc = await cryptoService.encryptField(data.description, { entity: 'remark', field: 'description', rid: safeUuid });
+      envelope.description = envDesc.toDB();
+    }
+    if (data.action_required) {
+      const envAction = await cryptoService.encryptField(data.action_required, { entity: 'remark', field: 'action_required', rid: safeUuid });
+      envelope.action_required = envAction.toDB();
+    }
+
     await db.remarks.put(envelope);
-    await audit.log('REMARK_SAVED', 'remark', data.local_uuid || data.id, { severity: data.severity });
+    await audit.log('REMARK_SAVED', 'remark', safeUuid, { severity: data.severity });
   }
 
   async getRemark(id) {
     const record = await db.remarks.get(id);
     if (!record) return null;
     const view = { id: record.id, local_uuid: record.local_uuid, latrine_id: record.latrine_id, boq_code: record.boq_code, status: record.status, severity: record.severity, sync_status: record.sync_status, date_logged: record.date_logged };
-    
+
     try {
       if (record.description?._env) view.description = await cryptoService.decryptField(record.description);
       else view.description = record.description;
-      
+
       if (record.action_required?._env) view.action_required = await cryptoService.decryptField(record.action_required);
       else view.action_required = record.action_required;
     } catch (e) {
