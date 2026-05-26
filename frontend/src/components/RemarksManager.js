@@ -49,7 +49,7 @@ const LoadingSkeleton = () => (
   </div>
 );
 
-// --- Remark Form (Used for Add & Edit) ---
+// --- RemarkForm (Used for Add & Edit) ---
 const RemarkForm = ({ initialData, boqCode, isSaving, onSubmit, onCancel }) => {
   const [desc, setDesc] = useState(initialData?.description || '');
   const [sev, setSev] = useState(initialData?.severity || 'minor');
@@ -150,13 +150,13 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
   const [filter, setFilter] = useState(initialFilter);
   const [searchQuery, setSearchQuery] = useState('');
   const [sortBy, setSortBy] = useState('smart');
-  const [groupBy, setGroupBy] = useState('none'); // 🌟 جديد: طريقة العرض (none, latrine, boq)
+  const [groupBy, setGroupBy] = useState('none');
   const [error, setError] = useState(null);
   const [isSaving, setIsSaving] = useState(false);
   const [isRetrying, setIsRetrying] = useState(false);
   const [processingIds, setProcessingIds] = useState(new Set());
   
-  const [editingRemark, setEditingRemark] = useState(null); // 🌟 جديد: الملاحظة قيد التعديل
+  const [editingRemark, setEditingRemark] = useState(null);
 
   // --- Live Queries (Decrypted via secureStorage) ---
   const latrine = useLiveQuery(async () => {
@@ -237,7 +237,6 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
       return acc;
     }, { total: 0, open: 0, closed: 0, failed: 0 });
 
-    // 🌟 تجميع البيانات (Grouping)
     const grouped = {};
     if (groupBy !== 'none') {
       filtered.forEach(r => {
@@ -398,10 +397,19 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
       {editingRemark ? (
         <div style={{ background: 'white', padding: '20px', borderRadius: '8px', marginBottom: '20px', boxShadow: '0 4px 15px rgba(0,0,0,0.1)', border: '2px solid #3498db' }}>
           <h3 style={{ marginTop: 0, color: '#3498db' }}>✏️ تعديل الملاحظة</h3>
-          <RemarkForm initialData={editingRemark} isSaving={isSaving} onSubmit={handleEditRemark} onCancel={() => setEditingRemark(null)} />
+          <RemarkForm
+            initialData={editingRemark}
+            isSaving={isSaving}
+            onSubmit={handleEditRemark}
+            onCancel={() => setEditingRemark(null)}
+          />
         </div>
-      ) : (
-        latrineId && <AddRemarkForm boqCode={boqCode} isSaving={isSaving} onAdd={handleAddRemark} />
+      ) : latrineId && (
+        <RemarkForm
+          boqCode={boqCode}
+          isSaving={isSaving}
+          onSubmit={handleAddRemark}
+        />
       )}
 
       {/* شريط الفلاتر وطريقة العرض */}
@@ -419,7 +427,6 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
             <option value="newest">الأحدث</option>
             <option value="oldest">الأقدم</option>
           </select>
-          {/* 🌟 زر التجميع (Grouping) يظهر فقط في العرض الشامل */}
           {!latrineId && (
             <select value={groupBy} onChange={e => setGroupBy(e.target.value)} style={{ padding: '8px', borderRadius: '4px', border: '2px solid #3498db', fontWeight: 'bold', color: '#2c3e50' }}>
               <option value="none">عرض كقائمة (بدون تجميع)</option>
@@ -444,14 +451,12 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
           <h3 style={{ margin: 0 }}>لا توجد ملاحظات مطابقة للبحث أو الفلتر.</h3>
         </div>
       ) : groupBy === 'none' ? (
-        // عرض القائمة العادية
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))', gap: '16px' }}>
           {processedRemarks.map(r => (
             <RemarkCard key={r.id} r={r} getLatrineCode={getLatrineCode} isProcessing={processingIds.has(r.id)} onClose={handleCloseRemark} onEdit={setEditingRemark} />
           ))}
         </div>
       ) : (
-        // 🌟 العرض المجمع (Grouped View)
         <div>
           {Object.entries(groupedRemarks).map(([groupName, groupItems]) => (
             <div key={groupName} style={{ marginBottom: '30px', background: 'white', borderRadius: '8px', boxShadow: '0 2px 8px rgba(0,0,0,0.08)', overflow: 'hidden' }}>
