@@ -83,21 +83,32 @@ def bulk_update_boq_items(db: Session, updates: List[schemas.BoqItemBulkUpdate])
     return {"updated_count": len(updates), "affected_latrines": len(updated_latrine_ids)}
 
 # ==========================================
-# 🌟 محرك تحديث القرارات (The Governance Link)
+# 🌟 محرك تحديث القرارات (تم إصلاحه لضمان وجود سياسة)
 # ==========================================
+def seed_default_policies(db: Session):
+    count = db.query(models.PolicyProfile).count()
+    if count == 0:
+        for policy in DEFAULT_POLICIES:
+            db_policy = models.PolicyProfile(**policy)
+            db.add(db_policy)
+        db.commit()
+
 def update_item_decision(db: Session, boq_item_id: int):
     item = db.query(models.BoqItem).filter(models.BoqItem.id == boq_item_id).first()
     if not item: return
 
     latrine = db.query(models.Latrine).filter(models.Latrine.id == item.latrine_id).first()
     
+    # 🌟 إصلاح: التأكد من وجود سياسات في قاعدة البيانات
+    seed_default_policies(db)
+
     policy = None
     if latrine.policy_id:
         policy = db.query(models.PolicyProfile).filter(models.PolicyProfile.id == latrine.policy_id).first()
     if not policy:
         policy = db.query(models.PolicyProfile).filter(models.PolicyProfile.is_default == True).first()
     
-    if not policy: return
+    if not policy: return # لن يحدث هذا بعد الآن بفضل دالة seed
 
     open_remarks = db.query(models.Remark).filter(
         models.Remark.latrine_id == item.latrine_id,
@@ -138,7 +149,7 @@ def update_item_decision(db: Session, boq_item_id: int):
     db.commit()
 
 # ==========================================
-# 🌟 الحساب المالي المعتمد على القرارات (IPC Engine)
+# 🌟 الحساب المالي المعتمد على القرارات
 # ==========================================
 def recalc_latrine_progress(db: Session, latrine_id: int):
     latrine = db.query(models.Latrine).filter(models.Latrine.id == latrine_id).with_for_update().first()
@@ -495,19 +506,10 @@ def process_sync_queue(db: Session, sync_req: schemas.SyncRequest) -> schemas.Sy
         errors=errors
     )
 
-def seed_default_policies(db: Session):
-    count = db.query(models.PolicyProfile).count()
-    if count == 0:
-        for policy in DEFAULT_POLICIES:
-            db_policy = models.PolicyProfile(**policy)
-            db.add(db_policy)
-        db.commit()
-
 # ==========================================
-# 🌟 GOVERNANCE CRUD (جديد - للوحة التحكم)
+# 🌟 GOVERNANCE CRUD
 # ==========================================
 def get_governance_items(db: Session, status_filter: str = None):
-    """جلب البنود التي تحتاج إلى مراجعة إدارية مع بيانات الحمام"""
     query = db.query(models.DecisionRecord, models.BoqItem, models.Latrine)\
               .join(models.BoqItem, models.DecisionRecord.boq_item_id == models.BoqItem.id)\
               .join(models.Latrine, models.BoqItem.latrine_id == models.Latrine.id)
@@ -539,7 +541,6 @@ def get_governance_items(db: Session, status_filter: str = None):
     return output
 
 def override_item_decision(db: Session, decision_id: int, override_data: schemas.DecisionOverrideUpdate):
-    """تطبيق التجاوز البشري وإعادة حساب الإنجاز المالي"""
     decision = db.query(models.DecisionRecord).filter(models.DecisionRecord.id == decision_id).first()
     if not decision:
         return None
@@ -549,12 +550,11 @@ def override_item_decision(db: Session, decision_id: int, override_data: schemas
     decision.override_reason = override_data.override_reason
     decision.approved_by = override_data.approved_by
     decision.approved_at = datetime.utcnow()
-    decision.final_state = "LOCKED" # تم اتخاذ القرار النهائي
+    decision.final_state = "LOCKED"
     
     db.commit()
     db.refresh(decision)
     
-    # 🌟 إعادة حساب الإنجاز المالي للحمام بناءً على القرار الجديد
     item = db.query(models.BoqItem).filter(models.BoqItem.id == decision.boq_item_id).first()
     if item:
         recalc_latrine_progress(db, item.latrine_id)
