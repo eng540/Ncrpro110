@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '../db/index.js';
-import { secureStorage } from '../storage/secureStorage.js';
 import { pushToSyncQueue, retryFailedSync } from '../syncEngine';
 import { v4 as uuidv4 } from 'uuid';
 
@@ -76,7 +75,7 @@ const RemarkForm = ({ initialData, boqCode, isSaving, onSubmit, onCancel }) => {
       <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', alignItems: 'center' }}>
         <input type="text" placeholder="الإجراء المطلوب..." value={action} onChange={(e) => setAction(e.target.value)} style={{ flex: 1, padding: '10px', borderRadius: '4px', border: '1px solid #ccc', minWidth: '200px' }} disabled={isSaving} />
         <input type="date" value={dead} onChange={(e) => setDead(e.target.value)} style={{ padding: '10px', borderRadius: '4px', border: '1px solid #ccc' }} disabled={isSaving} />
-        
+
         <div style={{ display: 'flex', gap: '10px', marginLeft: 'auto' }}>
           {onCancel && (
             <button type="button" onClick={onCancel} disabled={isSaving} style={{ padding: '10px 20px', background: '#ecf0f1', color: '#333', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>
@@ -122,7 +121,7 @@ const RemarkCard = ({ r, getLatrineCode, isProcessing, onClose, onEdit }) => (
         <span style={{ background: UI_COLORS.status[r.status] || UI_COLORS.sync.local, padding: '4px 8px', borderRadius: '4px', fontSize: '12px', fontWeight: 'bold', color: r.status === 'open' ? '#856404' : r.status === 'overdue' ? '#721c24' : '#155724' }}>
           {UI_LABELS.status[r.status] || r.status}
         </span>
-        
+
         {r.status === 'open' && (
           <div style={{ display: 'flex', gap: '5px' }}>
             <button onClick={() => onEdit(r)} disabled={isProcessing} style={{ padding: '6px 12px', background: '#f39c12', color: 'white', border: 'none', borderRadius: '4px', cursor: isProcessing ? 'not-allowed' : 'pointer', fontSize: '12px', fontWeight: 'bold' }}>
@@ -155,30 +154,29 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
   const [isSaving, setIsSaving] = useState(false);
   const [isRetrying, setIsRetrying] = useState(false);
   const [processingIds, setProcessingIds] = useState(new Set());
-  
+
   const [editingRemark, setEditingRemark] = useState(null);
 
-  // --- Live Queries (Decrypted via secureStorage) ---
+  // --- Live Queries (Direct Dexie, No Encryption) ---
   const latrine = useLiveQuery(async () => {
     if (!latrineId) return null;
-    return await secureStorage.getLatrine(latrineId);
+    return await db.latrines.get(latrineId);
   }, [latrineId]);
 
   const allLatrines = useLiveQuery(async () => {
     if (latrineId) return [];
-    const raw = await db.latrines.toArray();
-    return await Promise.all(raw.map(l => secureStorage.getLatrine(l.id)));
+    return await db.latrines.toArray();
   }, [latrineId]); 
-  
+
   const rawRemarks = useLiveQuery(async () => {
     let query;
     if (!latrineId) query = db.remarks.toArray();
     else if (boqCode) query = db.remarks.where({ latrine_id: latrineId, boq_code: boqCode }).toArray();
     else query = db.remarks.where({ latrine_id: latrineId }).toArray();
 
+    // البيانات جاهزة مباشرة
     const raw = await query;
-    const decrypted = await Promise.all(raw.map(r => secureStorage.getRemark(r.id)));
-    return decrypted.filter(Boolean);
+    return raw;
   }, [latrineId, boqCode]);
 
   // --- Sync Auto-Healing ---
@@ -218,14 +216,14 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
     filtered.sort((a, b) => {
       if (sortBy === 'newest') return new Date(b.date_logged) - new Date(a.date_logged);
       if (sortBy === 'oldest') return new Date(a.date_logged) - new Date(b.date_logged);
-      
+
       if (a.status === 'open' && b.status !== 'open') return -1;
       if (a.status !== 'open' && b.status === 'open') return 1;
-      
+
       const weightA = SEVERITY_WEIGHT[a.severity] || 0;
       const weightB = SEVERITY_WEIGHT[b.severity] || 0;
       if (weightA !== weightB) return weightB - weightA;
-      
+
       return new Date(b.date_logged) - new Date(a.date_logged);
     });
 
@@ -255,7 +253,7 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
     return { processedRemarks: filtered, counters: counts, groupedRemarks: grouped };
   }, [rawRemarks, filter, searchQuery, sortBy, groupBy, allLatrines]);
 
-  // --- Handlers ---
+  // --- Handlers (Direct DB Operations) ---
   const handleAddRemark = async (formData) => {
     setIsSaving(true);
     setError(null);
@@ -275,8 +273,11 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
         closed_date: null
       };
 
-      await secureStorage.saveRemark(newRemark);
+      // ✅ حفظ مباشر في IndexedDB
+      await db.remarks.add(newRemark);
+      // إضافة إلى طابور المزامنة
       await pushToSyncQueue('CREATE_REMARK', newRemark);
+
       setError({ type: 'success', message: 'تم تسجيل الملاحظة محلياً وإضافتها لطابور المزامنة.' });
     } catch (err) {
       console.error('Add remark error:', err);
@@ -291,8 +292,7 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
     setIsSaving(true);
     setError(null);
     try {
-      const updatedRemark = {
-        ...editingRemark,
+      const updatedFields = {
         description: formData.description.trim(),
         severity: formData.severity,
         action_required: formData.action_required.trim() || null,
@@ -300,16 +300,16 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
         sync_status: editingRemark.sync_status === 'synced' ? 'pending' : 'local'
       };
 
-      await secureStorage.saveRemark(updatedRemark);
+      // ✅ تحديث مباشر في قاعدة البيانات
+      await db.remarks.update(editingRemark.id, updatedFields);
+
+      // إرسال التحديث للخادم عبر طابور المزامنة
       await pushToSyncQueue('UPDATE_REMARK', {
-        id: updatedRemark.id,
-        local_uuid: updatedRemark.local_uuid,
-        description: updatedRemark.description,
-        severity: updatedRemark.severity,
-        action_required: updatedRemark.action_required,
-        deadline: updatedRemark.deadline
+        id: editingRemark.id,
+        local_uuid: editingRemark.local_uuid,
+        ...updatedFields
       });
-      
+
       setEditingRemark(null);
       setError({ type: 'success', message: 'تم تحديث الملاحظة بنجاح.' });
     } catch (err) {
@@ -322,15 +322,14 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
 
   const handleCloseRemark = async (remark) => {
     if (processingIds.has(remark.id)) return;
-    
+
     setProcessingIds(prev => new Set(prev).add(remark.id));
     setError(null);
     try {
       const closedDate = new Date().toISOString();
       const newSyncStatus = remark.sync_status === 'synced' ? 'pending' : 'local';
-      
-      const updatedRemark = { ...remark, status: 'closed', closed_date: closedDate, sync_status: newSyncStatus };
-      await secureStorage.saveRemark(updatedRemark);
+
+      await db.remarks.update(remark.id, { status: 'closed', closed_date: closedDate, sync_status: newSyncStatus });
 
       await pushToSyncQueue('UPDATE_REMARK', {
         id: remark.id,
