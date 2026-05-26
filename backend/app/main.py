@@ -186,6 +186,22 @@ def download_remarks_pdf(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to generate report: {str(e)}")
 
+@app.get("/api/reports/daily-logs")
+def download_daily_logs_pdf(
+    from_date: Optional[datetime] = None,
+    to_date: Optional[datetime] = None,
+    db: Session = Depends(get_db)
+):
+    try:
+        pdf_bytes = reports.generate_daily_logs_pdf(db, from_date, to_date)
+        return StreamingResponse(
+            BytesIO(pdf_bytes),
+            media_type="application/pdf",
+            headers={"Content-Disposition": "attachment; filename=site_diary_report.pdf"}
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to generate report: {str(e)}")
+
 # ---------- Sync Engine Endpoint ----------
 @app.post("/api/sync", response_model=schemas.SyncResponse)
 def sync_offline_data(request: schemas.SyncRequest, db: Session = Depends(get_db)):
@@ -410,7 +426,7 @@ def get_no_cache_response(file_path: str):
     return response
 
 if os.path.exists(static_dir) and os.path.exists(os.path.join(static_dir, "index.html")):
-    
+
     @app.get("/")
     async def serve_react_root():
         return get_no_cache_response(os.path.join(static_dir, "index.html"))
@@ -419,14 +435,14 @@ if os.path.exists(static_dir) and os.path.exists(os.path.join(static_dir, "index
     async def serve_react_catchall(full_path: str):
         if full_path.startswith("api/"):
             raise HTTPException(status_code=404, detail="API Route Not Found")
-        
+
         file_path = os.path.join(static_dir, full_path)
-        
+
         if os.path.exists(file_path) and os.path.isfile(file_path):
             if full_path == "service-worker.js" or full_path == "index.html":
                 return get_no_cache_response(file_path)
             return FileResponse(file_path)
-        
+
         return get_no_cache_response(os.path.join(static_dir, "index.html"))
 else:
     @app.get("/")
