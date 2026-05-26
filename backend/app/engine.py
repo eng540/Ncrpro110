@@ -15,12 +15,12 @@ def generate_recommendation(
     محرك استنتاج نقي (Stateless Inference Engine).
     يأخذ الواقع الميداني وسياسة المشروع، ويولد توصية النظام الآلية.
     """
-    
+
     # 1. استخراج القواعد من السياسة (JSON)
     payment_rules = policy_rules.get("payment_rules", {})
     quality_rules = policy_rules.get("quality_rules", {})
     remark_rules = policy_rules.get("remark_rules", {})
-    
+
     # القيم الافتراضية للتوصية
     recommendation = {
         "code": "HOLD",
@@ -52,13 +52,13 @@ def generate_recommendation(
             recommendation["note"] = "Critical safety/quality issue detected. Stop work."
             recommendation["payment_pct"] = remark_rules.get("CRITICAL_PAYMENT_PCT", 0.0)
             return recommendation
-            
+
         elif highest_remark_severity == "major":
             recommendation["code"] = "HOLD"
             recommendation["note"] = "Major remark open. Payment withheld until resolved."
             recommendation["payment_pct"] = remark_rules.get("MAJOR_PAYMENT_PCT", 0.0)
             return recommendation
-            
+
         elif highest_remark_severity == "minor":
             recommendation["code"] = "APPROVE_WITH_NOTE"
             recommendation["note"] = "Passed with minor remarks. Proceed with caution."
@@ -66,7 +66,7 @@ def generate_recommendation(
             allowance = remark_rules.get("MINOR_PAYMENT_PCT", 100.0) / 100.0
             recommendation["payment_pct"] = execution_pct * allowance
             return recommendation
-            
+
         else:
             # لا توجد ملاحظات والجودة مقبولة
             recommendation["code"] = "APPROVE"

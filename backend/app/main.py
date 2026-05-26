@@ -145,44 +145,124 @@ def dashboard_summary(db: Session = Depends(get_db)):
 def category_progress(db: Session = Depends(get_db)):
     return crud.get_category_progress(db)
 
-# ---------- Reports Endpoints ----------
+# ---------- Reports Endpoints (Updated with Format Support) ----------
+
 @app.get("/api/reports/summary")
-def download_summary_pdf(db: Session = Depends(get_db)):
+def download_summary_report(
+    format: str = "pdf",
+    db: Session = Depends(get_db)
+):
     try:
-        pdf_bytes = reports.generate_summary_pdf(db)
-        return StreamingResponse(
-            BytesIO(pdf_bytes),
-            media_type="application/pdf",
-            headers={"Content-Disposition": "attachment; filename=summary_report.pdf"}
-        )
+        if format == "excel":
+            excel_bytes = reports.generate_summary_excel(db)
+            return StreamingResponse(
+                BytesIO(excel_bytes),
+                media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                headers={"Content-Disposition": "attachment; filename=summary_report.xlsx"}
+            )
+        else:  # default pdf
+            pdf_bytes = reports.generate_summary_pdf(db)
+            return StreamingResponse(
+                BytesIO(pdf_bytes),
+                media_type="application/pdf",
+                headers={"Content-Disposition": "attachment; filename=summary_report.pdf"}
+            )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to generate report: {str(e)}")
 
 @app.get("/api/reports/ipc")
-def download_ipc_excel(db: Session = Depends(get_db)):
+def download_ipc_report(
+    format: str = "excel",
+    db: Session = Depends(get_db)
+):
     try:
-        excel_bytes = reports.generate_ipc_excel(db)
-        return StreamingResponse(
-            BytesIO(excel_bytes),
-            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            headers={"Content-Disposition": "attachment; filename=ipc_report.xlsx"}
-        )
+        if format == "pdf":
+            pdf_bytes = reports.generate_ipc_pdf(db)
+            return StreamingResponse(
+                BytesIO(pdf_bytes),
+                media_type="application/pdf",
+                headers={"Content-Disposition": "attachment; filename=ipc_report.pdf"}
+            )
+        else:  # default excel
+            excel_bytes = reports.generate_ipc_excel(db)
+            return StreamingResponse(
+                BytesIO(excel_bytes),
+                media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                headers={"Content-Disposition": "attachment; filename=ipc_report.xlsx"}
+            )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to generate report: {str(e)}")
 
 @app.get("/api/reports/remarks")
-def download_remarks_pdf(
+def download_remarks_report(
+    format: str = "pdf",
     from_date: Optional[datetime] = None,
     to_date: Optional[datetime] = None,
     db: Session = Depends(get_db)
 ):
     try:
-        pdf_bytes = reports.generate_remarks_pdf(db, from_date, to_date)
-        return StreamingResponse(
-            BytesIO(pdf_bytes),
-            media_type="application/pdf",
-            headers={"Content-Disposition": "attachment; filename=remarks_report.pdf"}
-        )
+        if format == "excel":
+            excel_bytes = reports.generate_remarks_excel(db, from_date, to_date)
+            return StreamingResponse(
+                BytesIO(excel_bytes),
+                media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                headers={"Content-Disposition": "attachment; filename=remarks_report.xlsx"}
+            )
+        else:  # default pdf
+            pdf_bytes = reports.generate_remarks_pdf(db, from_date, to_date)
+            return StreamingResponse(
+                BytesIO(pdf_bytes),
+                media_type="application/pdf",
+                headers={"Content-Disposition": "attachment; filename=remarks_report.pdf"}
+            )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to generate report: {str(e)}")
+
+@app.get("/api/reports/daily-logs")
+def download_daily_logs_report(
+    format: str = "pdf",
+    from_date: Optional[datetime] = None,
+    to_date: Optional[datetime] = None,
+    db: Session = Depends(get_db)
+):
+    try:
+        if format == "excel":
+            excel_bytes = reports.generate_daily_logs_excel(db, from_date, to_date)
+            return StreamingResponse(
+                BytesIO(excel_bytes),
+                media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                headers={"Content-Disposition": "attachment; filename=site_diary_report.xlsx"}
+            )
+        else:  # default pdf
+            pdf_bytes = reports.generate_daily_logs_pdf(db, from_date, to_date)
+            return StreamingResponse(
+                BytesIO(pdf_bytes),
+                media_type="application/pdf",
+                headers={"Content-Disposition": "attachment; filename=site_diary_report.pdf"}
+            )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to generate report: {str(e)}")
+
+@app.get("/api/reports/matrix")
+def download_matrix_report(
+    format: str = "excel",
+    db: Session = Depends(get_db)
+):
+    try:
+        if format == "pdf":
+            pdf_bytes = reports.generate_matrix_pdf(db)
+            return StreamingResponse(
+                BytesIO(pdf_bytes),
+                media_type="application/pdf",
+                headers={"Content-Disposition": "attachment; filename=matrix_report.pdf"}
+            )
+        else:  # default excel
+            excel_bytes = reports.generate_matrix_excel(db)
+            return StreamingResponse(
+                BytesIO(excel_bytes),
+                media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                headers={"Content-Disposition": "attachment; filename=matrix_report.xlsx"}
+            )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to generate report: {str(e)}")
 
@@ -376,6 +456,29 @@ def override_decision(decision_id: int, override_data: schemas.DecisionOverrideU
         raise HTTPException(status_code=404, detail="Decision record not found")
     return {"message": "Decision overridden successfully", "new_state": decision.final_state}
 
+@app.post("/api/admin/governance-backfill")
+def backfill_governance_decisions(db: Session = Depends(get_db)):
+    """
+    أداة صيانة (Maintenance Tool):
+    تقوم بالمرور على جميع البنود في قاعدة البيانات (التي ليس لها سجل قرار)،
+    وتقوم بتشغيل محرك القرارات عليها لإنشاء سجلات لها بأثر رجعي.
+    """
+    all_items = db.query(models.BoqItem).all()
+    processed_count = 0
+
+    for item in all_items:
+        decision = db.query(models.DecisionRecord).filter(models.DecisionRecord.boq_item_id == item.id).first()
+        if not decision:
+            crud.update_item_decision(db, item.id)
+            processed_count += 1
+
+    # إعادة حساب الإنجاز لجميع الحمامات
+    latrines = db.query(models.Latrine).all()
+    for latrine in latrines:
+        crud.recalc_latrine_progress(db, latrine.id)
+
+    return {"message": f"Successfully backfilled decisions for {processed_count} items."}
+
 # ---------- Legacy Seeding ----------
 @app.post("/api/seed-latrines")
 def seed_latrines(count: int = 110, db: Session = Depends(get_db)):
@@ -410,7 +513,7 @@ def get_no_cache_response(file_path: str):
     return response
 
 if os.path.exists(static_dir) and os.path.exists(os.path.join(static_dir, "index.html")):
-    
+
     @app.get("/")
     async def serve_react_root():
         return get_no_cache_response(os.path.join(static_dir, "index.html"))
@@ -419,14 +522,14 @@ if os.path.exists(static_dir) and os.path.exists(os.path.join(static_dir, "index
     async def serve_react_catchall(full_path: str):
         if full_path.startswith("api/"):
             raise HTTPException(status_code=404, detail="API Route Not Found")
-        
+
         file_path = os.path.join(static_dir, full_path)
-        
+
         if os.path.exists(file_path) and os.path.isfile(file_path):
             if full_path == "service-worker.js" or full_path == "index.html":
                 return get_no_cache_response(file_path)
             return FileResponse(file_path)
-        
+
         return get_no_cache_response(os.path.join(static_dir, "index.html"))
 else:
     @app.get("/")

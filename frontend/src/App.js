@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect } from 'react';
 import SeedLockScreen from './components/SeedLockScreen';
 import PinGate from './components/PinGate';
@@ -14,6 +13,7 @@ import ReportsPanel from './components/ReportsPanel';
 import AdminPanel from './components/AdminPanel';
 import SpeedEntryMatrix from './components/SpeedEntryMatrix';
 import GovernanceDashboard from './components/GovernanceDashboard';
+import BoqAnalytics from './components/BoqAnalytics';
 import { db, populateLocalDB } from './db';
 
 const API_BASE_URL = process.env.REACT_APP_API_URL || '/api';
@@ -168,6 +168,12 @@ function App() {
           label="📈 التقارير"
         />
         <NavButton 
+          active={currentView.name === 'BOQ_ANALYTICS'}
+          onClick={() => navigateTo('BOQ_ANALYTICS')}
+          label="📊 تحليل البنود"
+          style={{ background: currentView.name === 'BOQ_ANALYTICS' ? '#fff' : 'rgba(46, 204, 113, 0.2)', color: currentView.name === 'BOQ_ANALYTICS' ? '#1F4E78' : '#abebc6' }}
+        />
+        <NavButton 
           active={currentView.name === 'GOVERNANCE'}
           onClick={() => navigateTo('GOVERNANCE')}
           label="⚖️ الحوكمة"
@@ -241,6 +247,10 @@ function App() {
           <GovernanceDashboard onBack={() => navigateTo('LIST')} />
         )}
 
+        {currentView.name === 'BOQ_ANALYTICS' && (
+          <BoqAnalytics onBack={() => navigateTo('LIST')} />
+        )}
+
       </div>
     </div>
   );
@@ -270,5 +280,3 @@ function NavButton({ active, onClick, label, style = {} }) {
 }
 
 export default App;
-
-

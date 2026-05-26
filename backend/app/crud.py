@@ -1,3 +1,4 @@
+import json
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from typing import List
@@ -83,21 +84,32 @@ def bulk_update_boq_items(db: Session, updates: List[schemas.BoqItemBulkUpdate])
     return {"updated_count": len(updates), "affected_latrines": len(updated_latrine_ids)}
 
 # ==========================================
-# 🌟 محرك تحديث القرارات (The Governance Link)
+# 🌟 محرك تحديث القرارات (تم إصلاحه لضمان وجود سياسة)
 # ==========================================
+def seed_default_policies(db: Session):
+    count = db.query(models.PolicyProfile).count()
+    if count == 0:
+        for policy in DEFAULT_POLICIES:
+            db_policy = models.PolicyProfile(**policy)
+            db.add(db_policy)
+        db.commit()
+
 def update_item_decision(db: Session, boq_item_id: int):
     item = db.query(models.BoqItem).filter(models.BoqItem.id == boq_item_id).first()
     if not item: return
 
     latrine = db.query(models.Latrine).filter(models.Latrine.id == item.latrine_id).first()
     
+    # 🌟 إصلاح: التأكد من وجود سياسات في قاعدة البيانات
+    seed_default_policies(db)
+
     policy = None
     if latrine.policy_id:
         policy = db.query(models.PolicyProfile).filter(models.PolicyProfile.id == latrine.policy_id).first()
     if not policy:
         policy = db.query(models.PolicyProfile).filter(models.PolicyProfile.is_default == True).first()
     
-    if not policy: return
+    if not policy: return # لن يحدث هذا بعد الآن بفضل دالة seed
 
     open_remarks = db.query(models.Remark).filter(
         models.Remark.latrine_id == item.latrine_id,
@@ -138,7 +150,7 @@ def update_item_decision(db: Session, boq_item_id: int):
     db.commit()
 
 # ==========================================
-# 🌟 الحساب المالي المعتمد على القرارات (IPC Engine)
+# 🌟 الحساب المالي المعتمد على القرارات
 # ==========================================
 def recalc_latrine_progress(db: Session, latrine_id: int):
     latrine = db.query(models.Latrine).filter(models.Latrine.id == latrine_id).with_for_update().first()
@@ -373,37 +385,52 @@ def process_sync_queue(db: Session, sync_req: schemas.SyncRequest) -> schemas.Sy
 
     for op in sync_req.operations:
         try:
-            if isinstance(op.data, dict):
-                for key in list(op.data.keys()):
-                    if key in date_fields and isinstance(op.data[key], str):
+            # 🌟 إصلاح: تحويل الـ payload إلى قاموس إذا وصل كنص
+            op_data = op.payload
+            if isinstance(op_data, str):
+                try:
+                    op_data = json.loads(op_data)
+                except:
+                    pass # إذا فشل التحويل، نتركه كما هو
+
+            if isinstance(op_data, dict):
+                for key in list(op_data.keys()):
+                    if key in date_fields and isinstance(op_data[key], str):
                         try:
-                            clean_date_str = op.data[key].replace('Z', '+00:00')
-                            op.data[key] = datetime.fromisoformat(clean_date_str)
+                            clean_date_str = op_data[key].replace('Z', '+00:00')
+                            op_data[key] = datetime.fromisoformat(clean_date_str)
                         except ValueError:
                             pass
 
             if op.type == "UPDATE_BOQ":
-                item_id = op.data.get("id")
+                item_id = op_data.get("id")
                 item = db.query(models.BoqItem).filter(models.BoqItem.id == item_id).first()
                 if item:
-                    for key, value in op.data.items():
+                    for key, value in op_data.items():
                         if hasattr(item, key) and key != "id":
                             setattr(item, key, value)
                     if item.planned_qty and item.planned_qty > 0:
                         item.achievement_pct = round((item.achieved_qty / item.planned_qty) * 100, 2)
-                    item.last_update = op.timestamp
+                    item.last_update = datetime.utcnow()
                     latrines_to_recalc.add(item.latrine_id)
                     items_to_recalc_decision.add(item.id)
+                processed.append(op.seq)
 
             elif op.type == "CREATE_REMARK":
-                remark_data = op.data.copy()
+                remark_data = op_data.copy()
                 local_uuid = remark_data.pop('local_uuid', None)
                 remark_data.pop('sync_status', None)
                 remark_data.pop('id', None)
                 remark_data.pop('local_id', None)
 
+                # 🌟 إصلاح: تحويل الحقول المشفرة (JSON Strings) إلى نصوص عادية ليقبلها SQLAlchemy
+                if 'description' in remark_data and isinstance(remark_data['description'], dict):
+                    remark_data['description'] = json.dumps(remark_data['description'])
+                if 'action_required' in remark_data and isinstance(remark_data['action_required'], dict):
+                    remark_data['action_required'] = json.dumps(remark_data['action_required'])
+
                 new_remark = models.Remark(**remark_data)
-                new_remark.date_logged = op.timestamp
+                new_remark.date_logged = datetime.utcnow()
 
                 if local_uuid:
                     new_remark.remark_id = str(local_uuid)[:36]
@@ -411,8 +438,8 @@ def process_sync_queue(db: Session, sync_req: schemas.SyncRequest) -> schemas.Sy
                 db.add(new_remark)
                 db.flush()
 
-                processed.append(op.id)
-                latrines_to_recalc.add(op.data.get("latrine_id"))
+                processed.append(op.seq)
+                latrines_to_recalc.add(op_data.get("latrine_id"))
                 
                 if new_remark.boq_code:
                     related_item = db.query(models.BoqItem).filter(
@@ -422,7 +449,7 @@ def process_sync_queue(db: Session, sync_req: schemas.SyncRequest) -> schemas.Sy
                     if related_item: items_to_recalc_decision.add(related_item.id)
 
             elif op.type == "UPDATE_REMARK":
-                local_uuid = op.data.get("local_uuid")
+                local_uuid = op_data.get("local_uuid")
                 remark = None
 
                 if local_uuid:
@@ -430,18 +457,21 @@ def process_sync_queue(db: Session, sync_req: schemas.SyncRequest) -> schemas.Sy
                         models.Remark.remark_id == str(local_uuid)[:36]
                     ).first()
 
-                if not remark and op.data.get("id"):
-                    if int(op.data.get("id")) > 0:
+                if not remark and op_data.get("id"):
+                    if int(op_data.get("id")) > 0:
                         remark = db.query(models.Remark).filter(
-                            models.Remark.id == op.data.get("id")
+                            models.Remark.id == op_data.get("id")
                         ).first()
 
                 if remark:
-                    for key, value in op.data.items():
+                    for key, value in op_data.items():
                         if hasattr(remark, key) and key not in ["id", "local_uuid", "sync_status", "local_id"]:
+                            # 🌟 إصلاح: تحويل الحقول المشفرة
+                            if isinstance(value, dict):
+                                value = json.dumps(value)
                             setattr(remark, key, value)
-                    remark.last_update = op.timestamp
-                    processed.append(op.id)
+                    remark.last_update = datetime.utcnow()
+                    processed.append(op.seq)
                     
                     if remark.boq_code:
                         related_item = db.query(models.BoqItem).filter(
@@ -450,37 +480,41 @@ def process_sync_queue(db: Session, sync_req: schemas.SyncRequest) -> schemas.Sy
                         ).first()
                         if related_item: items_to_recalc_decision.add(related_item.id)
                 else:
-                    failed.append(op.id)
-                    errors[op.id] = "Remark not found on server"
+                    failed.append(op.seq)
+                    errors[str(op.seq)] = "Remark not found on server"
 
             elif op.type == "UPDATE_LATRINE":
-                latrine_id = op.data.get("id")
+                latrine_id = op_data.get("id")
                 latrine = db.query(models.Latrine).filter(models.Latrine.id == latrine_id).first()
                 if latrine:
-                    for key, value in op.data.items():
+                    for key, value in op_data.items():
                         if hasattr(latrine, key) and key != "id":
+                            if isinstance(value, dict):
+                                value = json.dumps(value)
                             setattr(latrine, key, value)
-                    latrine.last_update = op.timestamp
+                    latrine.last_update = datetime.utcnow()
+                processed.append(op.seq)
 
             elif op.type == "CREATE_DAILY_LOG":
-                log_data = op.data.copy()
+                log_data = op_data.copy()
                 log_data.pop('sync_status', None)
                 log_data.pop('id', None)
 
+                if 'notes' in log_data and isinstance(log_data['notes'], dict):
+                    log_data['notes'] = json.dumps(log_data['notes'])
+
                 new_log = models.DailyLog(**log_data)
                 if not new_log.date:
-                    new_log.date = op.timestamp
+                    new_log.date = datetime.utcnow()
                 db.add(new_log)
+                processed.append(op.seq)
 
             db.commit()
 
-            if op.type not in ["UPDATE_REMARK", "CREATE_REMARK"]: 
-                processed.append(op.id)
-
         except Exception as e:
             db.rollback()
-            failed.append(op.id)
-            errors[op.id] = f"Error processing {op.type}: {str(e)}"
+            failed.append(op.seq)
+            errors[str(op.seq)] = f"Error processing {op.type}: {str(e)}"
 
     for item_id in items_to_recalc_decision:
         update_item_decision(db, item_id)
@@ -495,19 +529,10 @@ def process_sync_queue(db: Session, sync_req: schemas.SyncRequest) -> schemas.Sy
         errors=errors
     )
 
-def seed_default_policies(db: Session):
-    count = db.query(models.PolicyProfile).count()
-    if count == 0:
-        for policy in DEFAULT_POLICIES:
-            db_policy = models.PolicyProfile(**policy)
-            db.add(db_policy)
-        db.commit()
-
 # ==========================================
-# 🌟 GOVERNANCE CRUD (جديد - للوحة التحكم)
+# 🌟 GOVERNANCE CRUD
 # ==========================================
 def get_governance_items(db: Session, status_filter: str = None):
-    """جلب البنود التي تحتاج إلى مراجعة إدارية مع بيانات الحمام"""
     query = db.query(models.DecisionRecord, models.BoqItem, models.Latrine)\
               .join(models.BoqItem, models.DecisionRecord.boq_item_id == models.BoqItem.id)\
               .join(models.Latrine, models.BoqItem.latrine_id == models.Latrine.id)
@@ -539,7 +564,6 @@ def get_governance_items(db: Session, status_filter: str = None):
     return output
 
 def override_item_decision(db: Session, decision_id: int, override_data: schemas.DecisionOverrideUpdate):
-    """تطبيق التجاوز البشري وإعادة حساب الإنجاز المالي"""
     decision = db.query(models.DecisionRecord).filter(models.DecisionRecord.id == decision_id).first()
     if not decision:
         return None
@@ -549,12 +573,11 @@ def override_item_decision(db: Session, decision_id: int, override_data: schemas
     decision.override_reason = override_data.override_reason
     decision.approved_by = override_data.approved_by
     decision.approved_at = datetime.utcnow()
-    decision.final_state = "LOCKED" # تم اتخاذ القرار النهائي
+    decision.final_state = "LOCKED"
     
     db.commit()
     db.refresh(decision)
     
-    # 🌟 إعادة حساب الإنجاز المالي للحمام بناءً على القرار الجديد
     item = db.query(models.BoqItem).filter(models.BoqItem.id == decision.boq_item_id).first()
     if item:
         recalc_latrine_progress(db, item.latrine_id)

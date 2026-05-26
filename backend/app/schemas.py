@@ -207,18 +207,19 @@ class DecisionOverrideUpdate(BaseModel):
     override_reason: str
     approved_by: str
 
-# ---------- Sync Engine Schemas ----------
+# ---------- Sync Engine Schemas (Updated for Hybrid E2EE) ----------
 class SyncOperation(BaseModel):
-    id: str
+    seq: int                  # 🌟 تم التغيير من id إلى seq
     type: str
-    timestamp: datetime
-    local_uuid: Optional[str] = None
-    data: Dict[str, Any]
+    payload: Dict[str, Any]   # 🌟 تم التغيير من data إلى payload
+    integrity: str            # 🌟 حقل التشفير
 
 class SyncRequest(BaseModel):
     operations: List[SyncOperation]
+    device_id: str            # 🌟 حقل الجهاز
+    protocol: int             # 🌟 حقل البروتوكول
 
 class SyncResponse(BaseModel):
-    processed_ids: List[str]
-    failed_ids: List[str]
+    processed_ids: List[int]  # 🌟 تم التغيير إلى int ليتوافق مع seq
+    failed_ids: List[int]
     errors: Dict[str, str]
