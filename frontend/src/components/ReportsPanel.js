@@ -10,7 +10,7 @@ const ReportsPanel = () => {
   const [fromDate, setFromDate] = useState('');
   const [toDate, setToDate] = useState('');
 
-  const handleDownload = async (endpoint, filename) => {
+  const handleDownload = async (endpoint, filename, format = 'pdf') => {
     if (!navigator.onLine) {
       setError('لا يمكن تحميل التقارير في وضع عدم الاتصال (Offline). يرجى الاتصال بالإنترنت.');
       return;
@@ -20,14 +20,15 @@ const ReportsPanel = () => {
     setError(null);
 
     try {
-      let url = `${API_BASE_URL}${endpoint}`;
+      let url = `${API_BASE_URL}${endpoint}?format=${format}`;
       
       // إضافة الفلاتر إذا كان التقرير يدعم ذلك
       if (endpoint === '/reports/remarks' || endpoint === '/reports/daily-logs') {
         const params = new URLSearchParams();
+        params.append('format', format);
         if (fromDate) params.append('from_date', new Date(fromDate).toISOString());
         if (toDate) params.append('to_date', new Date(toDate).toISOString());
-        if (params.toString()) url += `?${params.toString()}`;
+        url = `${API_BASE_URL}${endpoint}?${params.toString()}`;
       }
 
       const response = await fetch(url, { method: 'GET' });
@@ -40,7 +41,9 @@ const ReportsPanel = () => {
       const downloadUrl = window.URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = downloadUrl;
-      link.download = filename;
+      // تعديل الامتداد حسب الصيغة
+      const ext = format === 'excel' ? 'xlsx' : 'pdf';
+      link.download = filename.replace(/\.(pdf|xlsx)$/, `.${ext}`);
       document.body.appendChild(link);
       link.click();
       link.remove();
@@ -54,12 +57,38 @@ const ReportsPanel = () => {
     }
   };
 
+  // دالة مساعدة لإنشاء بطاقة تقرير مع أزرار PDF/Excel
+  const ReportCard = ({ title, description, color, endpoint, filenameBase, supportsDates = false }) => (
+    <div style={{ background: 'white', padding: '25px', borderRadius: '8px', boxShadow: '0 2px 8px rgba(0,0,0,0.08)', borderTop: `4px solid ${color}`, display: 'flex', flexDirection: 'column' }}>
+      <h3 style={{ color: color, marginTop: 0 }}>{title}</h3>
+      <p style={{ fontSize: '13px', color: '#666', flex: 1 }}>
+        {description}
+      </p>
+      <div style={{ display: 'flex', gap: '10px', marginTop: '15px' }}>
+        <button 
+          onClick={() => handleDownload(endpoint, filenameBase, 'pdf')}
+          disabled={isDownloading}
+          style={{ flex: 1, padding: '10px', background: '#e74c3c', color: 'white', border: 'none', borderRadius: '4px', cursor: isDownloading ? 'not-allowed' : 'pointer', fontWeight: 'bold', fontSize: '13px' }}
+        >
+          {isDownloading ? '⏳' : '📄 PDF'}
+        </button>
+        <button 
+          onClick={() => handleDownload(endpoint, filenameBase, 'excel')}
+          disabled={isDownloading}
+          style={{ flex: 1, padding: '10px', background: '#27ae60', color: 'white', border: 'none', borderRadius: '4px', cursor: isDownloading ? 'not-allowed' : 'pointer', fontWeight: 'bold', fontSize: '13px' }}
+        >
+          {isDownloading ? '⏳' : '📊 Excel'}
+        </button>
+      </div>
+    </div>
+  );
+
   return (
     <div style={{ direction: 'rtl', maxWidth: '1000px', margin: '0 auto' }}>
       <div style={{ marginBottom: '30px' }}>
         <h2 style={{ color: '#1F4E78', margin: 0 }}>📈 مركز التقارير والمخرجات</h2>
         <p style={{ color: '#7f8c8d', marginTop: '5px' }}>
-          توليد وتحميل التقارير المالية والهندسية المعتمدة (يجب الاتصال بالإنترنت).
+          توليد وتحميل التقارير المالية والهندسية المعتمدة. اختر الصيغة المفضلة (PDF أو Excel).
         </p>
       </div>
 
@@ -69,9 +98,9 @@ const ReportsPanel = () => {
         </div>
       )}
 
-      {/* شريط الفلاتر العامة */}
+      {/* شريط الفلاتر العامة (للتقارير التي تدعم التاريخ) */}
       <div style={{ background: 'white', padding: '15px', borderRadius: '8px', marginBottom: '20px', boxShadow: '0 2px 4px rgba(0,0,0,0.05)', display: 'flex', gap: '15px', alignItems: 'center', flexWrap: 'wrap' }}>
-        <strong style={{ color: '#2c3e50' }}>تحديد الفترة الزمنية للتقارير:</strong>
+        <strong style={{ color: '#2c3e50' }}>تحديد الفترة الزمنية (للتقارير المدعومة):</strong>
         <div style={{ display: 'flex', gap: '10px', flex: 1 }}>
           <div style={{ flex: 1 }}>
             <label style={{ display: 'block', fontSize: '11px', color: '#7f8c8d', marginBottom: '4px' }}>من تاريخ:</label>
@@ -86,65 +115,52 @@ const ReportsPanel = () => {
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '20px' }}>
         
-        {/* 1. تقرير المستخلص المالي (IPC) */}
-        <div style={{ background: 'white', padding: '25px', borderRadius: '8px', boxShadow: '0 2px 8px rgba(0,0,0,0.08)', borderTop: '4px solid #27ae60', display: 'flex', flexDirection: 'column' }}>
-          <h3 style={{ color: '#27ae60', marginTop: 0 }}>المستخلص المالي (IPC)</h3>
-          <p style={{ fontSize: '13px', color: '#666', flex: 1 }}>
-            تقرير Excel شامل يوضح الكميات المنفذة، المبالغ المستحقة للدفع، والمبالغ المحتجزة بناءً على قرارات الحوكمة والجودة.
-          </p>
-          <button 
-            onClick={() => handleDownload('/reports/ipc', `IPC_Report_${new Date().toISOString().split('T')[0]}.xlsx`)}
-            disabled={isDownloading}
-            style={{ width: '100%', padding: '12px', background: '#27ae60', color: 'white', border: 'none', borderRadius: '4px', cursor: isDownloading ? 'not-allowed' : 'pointer', fontWeight: 'bold', fontSize: '14px', marginTop: '15px' }}
-          >
-            {isDownloading ? '⏳ جاري التوليد...' : '📥 تحميل المستخلص (Excel)'}
-          </button>
-        </div>
+        {/* 1. المستخلص المالي (IPC) */}
+        <ReportCard
+          title="المستخلص المالي (IPC)"
+          description="شهادة دفع مؤقتة شاملة توضح الكميات المنفذة، المبالغ المستحقة والمحتجزة بناءً على قرارات الحوكمة والجودة."
+          color="#27ae60"
+          endpoint="/reports/ipc"
+          filenameBase={`IPC_Report_${new Date().toISOString().split('T')[0]}`}
+        />
 
-        {/* 2. الملخص التنفيذي (Executive Summary) */}
-        <div style={{ background: 'white', padding: '25px', borderRadius: '8px', boxShadow: '0 2px 8px rgba(0,0,0,0.08)', borderTop: '4px solid #1F4E78', display: 'flex', flexDirection: 'column' }}>
-          <h3 style={{ color: '#1F4E78', marginTop: 0 }}>الملخص التنفيذي</h3>
-          <p style={{ fontSize: '13px', color: '#666', flex: 1 }}>
-            تقرير PDF رسمي يحتوي على إحصائيات المشروع الكلية، نسب الإنجاز، وملخص قرارات الإدارة والجودة.
-          </p>
-          <button 
-            onClick={() => handleDownload('/reports/summary', `Executive_Summary_${new Date().toISOString().split('T')[0]}.pdf`)}
-            disabled={isDownloading}
-            style={{ width: '100%', padding: '12px', background: '#1F4E78', color: 'white', border: 'none', borderRadius: '4px', cursor: isDownloading ? 'not-allowed' : 'pointer', fontWeight: 'bold', fontSize: '14px', marginTop: '15px' }}
-          >
-            {isDownloading ? '⏳ جاري التوليد...' : '📄 تحميل الملخص (PDF)'}
-          </button>
-        </div>
+        {/* 2. الملخص التنفيذي */}
+        <ReportCard
+          title="الملخص التنفيذي"
+          description="تقرير رسمي يحتوي على إحصائيات المشروع الكلية، نسب الإنجاز، وملخص قرارات الإدارة والجودة."
+          color="#1F4E78"
+          endpoint="/reports/summary"
+          filenameBase={`Executive_Summary_${new Date().toISOString().split('T')[0]}`}
+        />
 
-        {/* 3. سجل الملاحظات (Remarks Log) */}
-        <div style={{ background: 'white', padding: '25px', borderRadius: '8px', boxShadow: '0 2px 8px rgba(0,0,0,0.08)', borderTop: '4px solid #e74c3c', display: 'flex', flexDirection: 'column' }}>
-          <h3 style={{ color: '#e74c3c', marginTop: 0 }}>سجل ملاحظات الجودة</h3>
-          <p style={{ fontSize: '13px', color: '#666', flex: 1 }}>
-            تقرير PDF مفصل بجميع الملاحظات المفتوحة والمغلقة. (يتأثر بالفترة الزمنية المحددة أعلاه).
-          </p>
-          <button 
-            onClick={() => handleDownload('/reports/remarks', `Remarks_Log_${new Date().toISOString().split('T')[0]}.pdf`)}
-            disabled={isDownloading}
-            style={{ width: '100%', padding: '12px', background: '#e74c3c', color: 'white', border: 'none', borderRadius: '4px', cursor: isDownloading ? 'not-allowed' : 'pointer', fontWeight: 'bold', fontSize: '14px', marginTop: '15px' }}
-          >
-            {isDownloading ? '⏳ جاري التوليد...' : '📑 تحميل سجل الملاحظات (PDF)'}
-          </button>
-        </div>
+        {/* 3. سجل الملاحظات */}
+        <ReportCard
+          title="سجل ملاحظات الجودة"
+          description="جميع الملاحظات المفتوحة والمغلقة مع إمكانية تحديد فترة زمنية. (يتأثر بالفترة المحددة أعلاه)."
+          color="#e74c3c"
+          endpoint="/reports/remarks"
+          filenameBase={`Remarks_Log_${new Date().toISOString().split('T')[0]}`}
+          supportsDates={true}
+        />
 
-        {/* 4. يوميات الموقع (Site Diary) - 🌟 جديد */}
-        <div style={{ background: 'white', padding: '25px', borderRadius: '8px', boxShadow: '0 2px 8px rgba(0,0,0,0.08)', borderTop: '4px solid #8e44ad', display: 'flex', flexDirection: 'column' }}>
-          <h3 style={{ color: '#8e44ad', marginTop: 0 }}>يوميات الموقع (Site Diary)</h3>
-          <p style={{ fontSize: '13px', color: '#666', flex: 1 }}>
-            تقرير PDF أفقي (Landscape) يعرض سجلات العمل اليومية، العمالة، المعدات، وإحصائيات الفحص. (يتأثر بالفترة الزمنية المحددة أعلاه).
-          </p>
-          <button 
-            onClick={() => handleDownload('/reports/daily-logs', `Site_Diary_${new Date().toISOString().split('T')[0]}.pdf`)}
-            disabled={isDownloading}
-            style={{ width: '100%', padding: '12px', background: '#8e44ad', color: 'white', border: 'none', borderRadius: '4px', cursor: isDownloading ? 'not-allowed' : 'pointer', fontWeight: 'bold', fontSize: '14px', marginTop: '15px' }}
-          >
-            {isDownloading ? '⏳ جاري التوليد...' : '👷 تحميل يوميات الموقع (PDF)'}
-          </button>
-        </div>
+        {/* 4. يوميات الموقع */}
+        <ReportCard
+          title="يوميات الموقع (Site Diary)"
+          description="سجلات العمل اليومية، العمالة، المعدات، وإحصائيات الفحص. (يتأثر بالفترة المحددة أعلاه)."
+          color="#8e44ad"
+          endpoint="/reports/daily-logs"
+          filenameBase={`Site_Diary_${new Date().toISOString().split('T')[0]}`}
+          supportsDates={true}
+        />
+
+        {/* 5. مصفوفة الإنجاز (Matrix) */}
+        <ReportCard
+          title="مصفوفة الإنجاز (Matrix)"
+          description="تقرير أفقي يعرض كل مستفيد في صف، وكل بند كعمودين (كمية منفذة / تكلفة)."
+          color="#f39c12"
+          endpoint="/reports/matrix"
+          filenameBase={`Matrix_Report_${new Date().toISOString().split('T')[0]}`}
+        />
 
       </div>
     </div>
