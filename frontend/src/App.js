@@ -12,7 +12,7 @@ import AdminPanel from './components/AdminPanel';
 import SpeedEntryMatrix from './components/SpeedEntryMatrix';
 import GovernanceDashboard from './components/GovernanceDashboard';
 import BoqAnalytics from './components/BoqAnalytics';
-import QualityInspector from './components/QualityInspector'; // ✅ إضافة الاستيراد
+import QualityInspector from './components/QualityInspector';
 import { db, populateLocalDB } from './db';
 
 const API_BASE_URL = process.env.REACT_APP_API_URL || '/api';
@@ -31,7 +31,7 @@ const ICONS = {
   boq: <path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zM9 17H7v-7h2v7zm4 0h-2V7h2v10zm4 0h-2v-4h2v4z"/>,
   governance: <path d="M12 1L3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-9-4zm0 10.99h7c-.53 4.12-3.28 7.79-7 8.94V12H5V6.3l7-3.11v8.8z"/>,
   admin: <path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.07.62-.07.94s.02.64.07.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"/>,
-  quality: <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/> // ✅ أيقونة فحص الجودة
+  quality: <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/>
 };
 
 function SvgIcon({ children, size = 24 }) {
@@ -42,9 +42,6 @@ function SvgIcon({ children, size = 24 }) {
   );
 }
 
-// ==========================================
-// الشريط الجانبي
-// ==========================================
 const navItems = [
   { name: 'LIST', label: 'سجل الحمامات', icon: ICONS.list, activeOn: ['LIST', 'BOQ', 'REMARKS'] },
   { name: 'BULK', label: 'الشبكة المتقدمة', icon: ICONS.bulk },
@@ -55,17 +52,82 @@ const navItems = [
   { name: 'REPORTS', label: 'التقارير', icon: ICONS.reports },
   { name: 'BOQ_ANALYTICS', label: 'تحليل البنود', icon: ICONS.boq },
   { name: 'GOVERNANCE', label: 'الحوكمة', icon: ICONS.governance },
-  { name: 'QUALITY_INSPECTOR', label: 'فحص الجودة', icon: ICONS.quality }, // ✅ إضافة العنصر الجديد
+  { name: 'QUALITY_INSPECTOR', label: 'فحص الجودة', icon: ICONS.quality },
   { name: 'ADMIN', label: 'الإدارة', icon: ICONS.admin },
 ];
 
 function App() {
-  // ... (جميع الحالات والوظائف تبقى كما هي)
+  const [currentView, setCurrentView] = useState({
+    name: 'LIST',
+    latrineId: null,
+    boqCode: null,
+    filterStatus: '',
+    previousView: 'LIST'
+  });
+  const [isInitializing, setIsInitializing] = useState(true);
+  const [sidebarExpanded, setSidebarExpanded] = useState(true);
 
-  // ===== المحتوى الرئيسي (مقتطف من جزء العرض فقط) =====
+  const initializeData = async () => {
+    try {
+      const count = await db.latrines.count();
+      if (count === 0 && navigator.onLine) {
+        const [latrinesRes, boqRes, remarksRes] = await Promise.all([
+          fetch(`${API_BASE_URL}/latrines?limit=200`),
+          fetch(`${API_BASE_URL}/boq-items`),
+          fetch(`${API_BASE_URL}/remarks`)
+        ]);
+
+        if (latrinesRes.ok && boqRes.ok) {
+          const latrines = await latrinesRes.json();
+          const boqItems = await boqRes.json();
+          const remarks = remarksRes.ok ? await remarksRes.json() : [];
+          await populateLocalDB(latrines, boqItems, remarks);
+        }
+      }
+    } catch (error) {
+      console.error("Failed to initialize:", error);
+    } finally {
+      setIsInitializing(false);
+    }
+  };
+
+  useEffect(() => {
+    initializeData();
+  }, []);
+
+  if (isInitializing) {
+    return (
+      <div style={{ padding: '50px', textAlign: 'center', direction: 'rtl' }}>
+        <div style={{ fontSize: '48px', marginBottom: '20px' }}>🏗️</div>
+        <h2>جاري تهيئة النظام الميداني...</h2>
+        <p style={{ color: '#7f8c8d' }}>يرجى الانتظار أثناء تحميل البيانات</p>
+      </div>
+    );
+  }
+
+  const navigateTo = (viewName, params = {}) => {
+    setCurrentView(prev => ({
+      name: viewName,
+      latrineId: params.latrineId !== undefined ? params.latrineId : prev.latrineId,
+      boqCode: params.boqCode !== undefined ? params.boqCode : null,
+      filterStatus: params.filterStatus !== undefined ? params.filterStatus : '',
+      previousView: prev.name
+    }));
+  };
+
+  const goBack = () => {
+    setCurrentView(prev => ({
+      name: prev.previousView || 'LIST',
+      latrineId: prev.latrineId,
+      boqCode: null,
+      filterStatus: '',
+      previousView: 'LIST'
+    }));
+  };
+
   return (
     <div style={{ display: 'flex', minHeight: '100vh', fontFamily: 'Tahoma, sans-serif', direction: 'rtl', backgroundColor: '#f5f6fa' }}>
-      {/* الشريط الجانبي (نفس التصميم السابق) */}
+      {/* الشريط الجانبي */}
       <div style={{
         width: sidebarExpanded ? '220px' : '70px',
         background: 'linear-gradient(180deg, #1A3A5C 0%, #1F4E78 100%)',
@@ -78,7 +140,6 @@ function App() {
         position: 'relative',
         zIndex: 10
       }}>
-        {/* ... زر الهامبرغر والقائمة كما هي */}
         <button
           onClick={() => setSidebarExpanded(!sidebarExpanded)}
           style={{
@@ -151,8 +212,56 @@ function App() {
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflowX: 'auto' }}>
         <SyncStatus />
         <div style={{ flex: 1, padding: '20px', maxWidth: '1200px', margin: '0 auto', width: '100%' }}>
-          {/* جميع الشاشات الموجودة */}
-          {/* ... ثم نضيف شاشة QualityInspector */}
+          {currentView.name === 'LIST' && (
+            <LatrineList
+              initialFilter={currentView.filterStatus}
+              onSelectLatrine={(id) => navigateTo('BOQ', { latrineId: id })}
+            />
+          )}
+          {currentView.name === 'BOQ' && (
+            <BoqUpdater
+              latrineId={currentView.latrineId}
+              onBack={goBack}
+              onOpenRemarks={(id, boqCode) => navigateTo('REMARKS', { latrineId: id, boqCode })}
+            />
+          )}
+          {currentView.name === 'REMARKS' && (
+            <RemarksManager
+              latrineId={currentView.latrineId}
+              boqCode={currentView.boqCode}
+              initialFilter={currentView.filterStatus}
+              onBack={goBack}
+            />
+          )}
+          {currentView.name === 'BULK' && (
+            <BulkUpdate
+              onOpenRemarks={(id, boqCode) => navigateTo('REMARKS', { latrineId: id, boqCode })}
+            />
+          )}
+          {currentView.name === 'SPEED_ENTRY' && (
+            <SpeedEntryMatrix onBack={() => navigateTo('LIST')} />
+          )}
+          {currentView.name === 'DAILY_LOG' && (
+            <DailyLogForm onSaved={() => navigateTo('DAILY_LOG_LIST')} />
+          )}
+          {currentView.name === 'DAILY_LOG_LIST' && (
+            <DailyLogList />
+          )}
+          {currentView.name === 'DASHBOARD' && (
+            <Dashboard navigateTo={navigateTo} />
+          )}
+          {currentView.name === 'REPORTS' && (
+            <ReportsPanel />
+          )}
+          {currentView.name === 'ADMIN' && (
+            <AdminPanel onBack={() => navigateTo('LIST')} />
+          )}
+          {currentView.name === 'GOVERNANCE' && (
+            <GovernanceDashboard onBack={() => navigateTo('LIST')} />
+          )}
+          {currentView.name === 'BOQ_ANALYTICS' && (
+            <BoqAnalytics onBack={() => navigateTo('LIST')} />
+          )}
           {currentView.name === 'QUALITY_INSPECTOR' && (
             <QualityInspector onBack={() => navigateTo('DASHBOARD')} initialFilter={currentView.filterStatus} />
           )}
