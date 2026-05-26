@@ -207,19 +207,19 @@ class DecisionOverrideUpdate(BaseModel):
     override_reason: str
     approved_by: str
 
-# ---------- Sync Engine Schemas (Updated to match new protocol) ----------
+# ---------- Sync Engine Schemas (Updated for Hybrid E2EE) ----------
 class SyncOperation(BaseModel):
-    seq: int                  # تم التغيير من id إلى seq
+    seq: int                  # 🌟 تم التغيير من id إلى seq
     type: str
-    payload: Dict[str, Any]   # تم التغيير من data إلى payload
-    integrity: str            # حقل جديد للتشفير الهجين
+    payload: Dict[str, Any]   # 🌟 تم التغيير من data إلى payload
+    integrity: str            # 🌟 حقل التشفير
 
 class SyncRequest(BaseModel):
     operations: List[SyncOperation]
-    device_id: str            # حقل جديد
-    protocol: int             # حقل جديد
+    device_id: str            # 🌟 حقل الجهاز
+    protocol: int             # 🌟 حقل البروتوكول
 
 class SyncResponse(BaseModel):
-    processed_ids: List[int]  # تم التغيير إلى int (seq)
+    processed_ids: List[int]  # 🌟 تم التغيير إلى int ليتوافق مع seq
     failed_ids: List[int]
     errors: Dict[str, str]
