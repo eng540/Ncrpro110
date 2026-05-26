@@ -15,7 +15,7 @@ db.version(2).stores({
 
   // Sensitive tables — encrypted envelopes (_env)
   latrines: 'id, latrine_id, block_no, status, overall_pct, last_update',
-  
+
   // 🌟 تم الإصلاح: إعادة local_uuid للفهارس لكي تعمل دوال البحث
   remarks: '++id, local_uuid, latrine_id, boq_code, status, severity, sync_status, date_logged',
 
