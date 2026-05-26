@@ -1,6 +1,6 @@
 # ==========================================
 # backend/app/engine.py
-# The Stateless Decision Engine 
+# The Stateless Decision Engine
 # ==========================================
 
 from typing import Dict, Any, Optional
@@ -86,7 +86,7 @@ DEFAULT_POLICIES = [
         "name": "NRC Strict",
         "description": "سياسة صارمة: لا دفع بدون فحص، الملاحظات الكبيرة توقف الدفع.",
         "is_default": True,
-        # 🌟 تم إزالة الحقل غير الموجود في قاعدة البيانات
+        "require_justification_on_override": True,
         "rules_json": {
             "quality_rules": {
                 "FAIL_PAYMENT_PCT": 0.0,
@@ -95,7 +95,7 @@ DEFAULT_POLICIES = [
             "remark_rules": {
                 "CRITICAL_PAYMENT_PCT": 0.0,
                 "MAJOR_PAYMENT_PCT": 0.0,
-                "MINOR_PAYMENT_PCT": 100.0
+                "MINOR_PAYMENT_PCT": 100.0 # يُسمح بالدفع الكامل إذا كانت الملاحظة طفيفة
             },
             "payment_rules": {
                 "PARTIAL_ALLOWED": True
@@ -106,15 +106,15 @@ DEFAULT_POLICIES = [
         "name": "Emergency Fast-Track",
         "description": "سياسة طوارئ: يُسمح بدفع 80% للبنود قيد الفحص لتسريع العمل.",
         "is_default": False,
-        # 🌟 تم إزالة الحقل غير الموجود في قاعدة البيانات
+        "require_justification_on_override": True,
         "rules_json": {
             "quality_rules": {
                 "FAIL_PAYMENT_PCT": 0.0,
-                "PENDING_PAYMENT_PCT": 80.0
+                "PENDING_PAYMENT_PCT": 80.0 # 🌟 السماح بدفع 80% قبل الفحص
             },
             "remark_rules": {
                 "CRITICAL_PAYMENT_PCT": 0.0,
-                "MAJOR_PAYMENT_PCT": 50.0,
+                "MAJOR_PAYMENT_PCT": 50.0, # 🌟 السماح بدفع 50% رغم وجود ملاحظة كبيرة
                 "MINOR_PAYMENT_PCT": 100.0
             },
             "payment_rules": {
