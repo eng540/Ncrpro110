@@ -1,3 +1,4 @@
+import json
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from typing import List
@@ -384,9 +385,14 @@ def process_sync_queue(db: Session, sync_req: schemas.SyncRequest) -> schemas.Sy
 
     for op in sync_req.operations:
         try:
-            # 🌟 الإصلاح: قراءة البيانات من payload بدلاً من data
-            op_data = op.payload 
-            
+            # 🌟 إصلاح: تحويل الـ payload إلى قاموس إذا وصل كنص
+            op_data = op.payload
+            if isinstance(op_data, str):
+                try:
+                    op_data = json.loads(op_data)
+                except:
+                    pass # إذا فشل التحويل، نتركه كما هو
+
             if isinstance(op_data, dict):
                 for key in list(op_data.keys()):
                     if key in date_fields and isinstance(op_data[key], str):
@@ -417,6 +423,12 @@ def process_sync_queue(db: Session, sync_req: schemas.SyncRequest) -> schemas.Sy
                 remark_data.pop('id', None)
                 remark_data.pop('local_id', None)
 
+                # 🌟 إصلاح: تحويل الحقول المشفرة (JSON Strings) إلى نصوص عادية ليقبلها SQLAlchemy
+                if 'description' in remark_data and isinstance(remark_data['description'], dict):
+                    remark_data['description'] = json.dumps(remark_data['description'])
+                if 'action_required' in remark_data and isinstance(remark_data['action_required'], dict):
+                    remark_data['action_required'] = json.dumps(remark_data['action_required'])
+
                 new_remark = models.Remark(**remark_data)
                 new_remark.date_logged = datetime.utcnow()
 
@@ -426,7 +438,7 @@ def process_sync_queue(db: Session, sync_req: schemas.SyncRequest) -> schemas.Sy
                 db.add(new_remark)
                 db.flush()
 
-                processed.append(op.seq) # 🌟 استخدام seq للرد
+                processed.append(op.seq)
                 latrines_to_recalc.add(op_data.get("latrine_id"))
                 
                 if new_remark.boq_code:
@@ -454,6 +466,9 @@ def process_sync_queue(db: Session, sync_req: schemas.SyncRequest) -> schemas.Sy
                 if remark:
                     for key, value in op_data.items():
                         if hasattr(remark, key) and key not in ["id", "local_uuid", "sync_status", "local_id"]:
+                            # 🌟 إصلاح: تحويل الحقول المشفرة
+                            if isinstance(value, dict):
+                                value = json.dumps(value)
                             setattr(remark, key, value)
                     remark.last_update = datetime.utcnow()
                     processed.append(op.seq)
@@ -474,6 +489,8 @@ def process_sync_queue(db: Session, sync_req: schemas.SyncRequest) -> schemas.Sy
                 if latrine:
                     for key, value in op_data.items():
                         if hasattr(latrine, key) and key != "id":
+                            if isinstance(value, dict):
+                                value = json.dumps(value)
                             setattr(latrine, key, value)
                     latrine.last_update = datetime.utcnow()
                 processed.append(op.seq)
@@ -482,6 +499,9 @@ def process_sync_queue(db: Session, sync_req: schemas.SyncRequest) -> schemas.Sy
                 log_data = op_data.copy()
                 log_data.pop('sync_status', None)
                 log_data.pop('id', None)
+
+                if 'notes' in log_data and isinstance(log_data['notes'], dict):
+                    log_data['notes'] = json.dumps(log_data['notes'])
 
                 new_log = models.DailyLog(**log_data)
                 if not new_log.date:
