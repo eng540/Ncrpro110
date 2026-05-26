@@ -1,6 +1,4 @@
 import React, { useState, useEffect } from 'react';
-import SeedLockScreen from './components/SeedLockScreen';
-import PinGate from './components/PinGate';
 import SyncStatus from './components/SyncStatus';
 import LatrineList from './components/LatrineList';
 import BoqUpdater from './components/BoqUpdater';
@@ -19,21 +17,15 @@ import { db, populateLocalDB } from './db';
 const API_BASE_URL = process.env.REACT_APP_API_URL || '/api';
 
 function App() {
-  // ====== حالات الأمان ======
-  const [seedUnlocked, setSeedUnlocked] = useState(false);
-  const [pinVerified, setPinVerified] = useState(false);
-
-  // ====== حالات التطبيق الأصلية ======
-  const [currentView, setCurrentView] = useState({ 
-    name: 'LIST', 
-    latrineId: null, 
-    boqCode: null, 
+  const [currentView, setCurrentView] = useState({
+    name: 'LIST',
+    latrineId: null,
+    boqCode: null,
     filterStatus: '',
-    previousView: 'LIST' 
+    previousView: 'LIST'
   });
   const [isInitializing, setIsInitializing] = useState(true);
 
-  // ====== تهيئة البيانات (تتم بعد اجتياز كلا البابين) ======
   const initializeData = async () => {
     try {
       const count = await db.latrines.count();
@@ -59,32 +51,9 @@ function App() {
   };
 
   useEffect(() => {
-    if (seedUnlocked && pinVerified) {
-      initializeData();
-    }
-  }, [seedUnlocked, pinVerified]);
+    initializeData();
+  }, []);
 
-  // ====== البوابة الأولى: فتح القفل بالـ Seed ======
-  if (!seedUnlocked) {
-    return (
-      <SeedLockScreen 
-        onUnlock={() => setSeedUnlocked(true)} 
-      />
-    );
-  }
-
-  // ====== البوابة الثانية: التحقق من PIN ======
-  if (!pinVerified) {
-    return (
-      <PinGate 
-        required={true} 
-        actionLabel="الوصول للبيانات" 
-        onSuccess={() => setPinVerified(true)} 
-      />
-    );
-  }
-
-  // ====== شاشة التحميل ======
   if (isInitializing) {
     return (
       <div style={{ padding: '50px', textAlign: 'center', direction: 'rtl' }}>
@@ -95,7 +64,6 @@ function App() {
     );
   }
 
-  // ====== دوال التنقل ======
   const navigateTo = (viewName, params = {}) => {
     setCurrentView(prev => ({
       name: viewName,
@@ -116,70 +84,69 @@ function App() {
     }));
   };
 
-  // ====== التطبيق الرئيسي ======
   return (
     <div style={{ fontFamily: 'Tahoma, sans-serif', backgroundColor: '#f5f6fa', minHeight: '100vh', direction: 'rtl' }}>
       <SyncStatus />
 
-      <div style={{ 
-        background: '#1F4E78', 
-        padding: '10px 20px', 
-        display: 'flex', 
-        gap: '10px', 
+      <div style={{
+        background: '#1F4E78',
+        padding: '10px 20px',
+        display: 'flex',
+        gap: '10px',
         flexWrap: 'wrap',
         position: 'sticky',
         top: '50px',
         zIndex: 999
       }}>
-        <NavButton 
+        <NavButton
           active={['LIST', 'BOQ', 'REMARKS'].includes(currentView.name)}
           onClick={() => navigateTo('LIST', { filterStatus: '' })}
           label="🏗️ سجل الحمامات"
         />
-        <NavButton 
+        <NavButton
           active={currentView.name === 'BULK'}
           onClick={() => navigateTo('BULK')}
           label="⚡ الشبكة المتقدمة"
         />
-        <NavButton 
+        <NavButton
           active={currentView.name === 'SPEED_ENTRY'}
           onClick={() => navigateTo('SPEED_ENTRY')}
           label="🚀 الإدخال السريع"
           style={{ background: currentView.name === 'SPEED_ENTRY' ? '#fff' : 'rgba(255,215,0,0.2)', color: currentView.name === 'SPEED_ENTRY' ? '#1F4E78' : '#ffd700' }}
         />
-        <NavButton 
+        <NavButton
           active={currentView.name === 'DAILY_LOG'}
           onClick={() => navigateTo('DAILY_LOG')}
           label="📝 التقرير اليومي"
         />
-        <NavButton 
+        <NavButton
           active={currentView.name === 'DAILY_LOG_LIST'}
           onClick={() => navigateTo('DAILY_LOG_LIST')}
           label="📋 سجل التقارير"
         />
-        <NavButton 
+        <NavButton
           active={currentView.name === 'DASHBOARD'}
           onClick={() => navigateTo('DASHBOARD')}
           label="📊 لوحة المؤشرات"
         />
-        <NavButton 
+        <NavButton
           active={currentView.name === 'REPORTS'}
           onClick={() => navigateTo('REPORTS')}
           label="📈 التقارير"
         />
-        <NavButton 
+        <NavButton
           active={currentView.name === 'BOQ_ANALYTICS'}
           onClick={() => navigateTo('BOQ_ANALYTICS')}
           label="📊 تحليل البنود"
           style={{ background: currentView.name === 'BOQ_ANALYTICS' ? '#fff' : 'rgba(46, 204, 113, 0.2)', color: currentView.name === 'BOQ_ANALYTICS' ? '#1F4E78' : '#abebc6' }}
         />
-        <NavButton 
+        <NavButton
           active={currentView.name === 'GOVERNANCE'}
           onClick={() => navigateTo('GOVERNANCE')}
           label="⚖️ الحوكمة"
           style={{ background: currentView.name === 'GOVERNANCE' ? '#fff' : 'rgba(142, 68, 173, 0.2)', color: currentView.name === 'GOVERNANCE' ? '#1F4E78' : '#e8bcf0' }}
         />
-        <NavButton 
+        <NavButton
           active={currentView.name === 'ADMIN'}
           onClick={() => navigateTo('ADMIN')}
           label="⚙️ الإدارة"
@@ -188,69 +155,56 @@ function App() {
       </div>
 
       <div style={{ maxWidth: '1200px', margin: '0 auto', padding: '20px' }}>
-
         {currentView.name === 'LIST' && (
-          <LatrineList 
+          <LatrineList
             initialFilter={currentView.filterStatus}
-            onSelectLatrine={(id) => navigateTo('BOQ', { latrineId: id })} 
+            onSelectLatrine={(id) => navigateTo('BOQ', { latrineId: id })}
           />
         )}
-
         {currentView.name === 'BOQ' && (
-          <BoqUpdater 
-            latrineId={currentView.latrineId} 
+          <BoqUpdater
+            latrineId={currentView.latrineId}
             onBack={goBack}
             onOpenRemarks={(id, boqCode) => navigateTo('REMARKS', { latrineId: id, boqCode })}
           />
         )}
-
         {currentView.name === 'REMARKS' && (
-          <RemarksManager 
-            latrineId={currentView.latrineId} 
+          <RemarksManager
+            latrineId={currentView.latrineId}
             boqCode={currentView.boqCode}
             initialFilter={currentView.filterStatus}
             onBack={goBack}
           />
         )}
-
         {currentView.name === 'BULK' && (
-          <BulkUpdate 
+          <BulkUpdate
             onOpenRemarks={(id, boqCode) => navigateTo('REMARKS', { latrineId: id, boqCode })}
           />
         )}
-
         {currentView.name === 'SPEED_ENTRY' && (
           <SpeedEntryMatrix onBack={() => navigateTo('LIST')} />
         )}
-
         {currentView.name === 'DAILY_LOG' && (
           <DailyLogForm onSaved={() => navigateTo('DAILY_LOG_LIST')} />
         )}
-
         {currentView.name === 'DAILY_LOG_LIST' && (
           <DailyLogList />
         )}
-
         {currentView.name === 'DASHBOARD' && (
           <Dashboard navigateTo={navigateTo} />
         )}
-
         {currentView.name === 'REPORTS' && (
           <ReportsPanel />
         )}
-
         {currentView.name === 'ADMIN' && (
           <AdminPanel onBack={() => navigateTo('LIST')} />
         )}
-
         {currentView.name === 'GOVERNANCE' && (
           <GovernanceDashboard onBack={() => navigateTo('LIST')} />
         )}
-
         {currentView.name === 'BOQ_ANALYTICS' && (
           <BoqAnalytics onBack={() => navigateTo('LIST')} />
         )}
-
       </div>
     </div>
   );
@@ -258,15 +212,15 @@ function App() {
 
 function NavButton({ active, onClick, label, style = {} }) {
   return (
-    <button 
+    <button
       onClick={onClick}
-      style={{ 
-        background: active ? 'white' : 'transparent', 
-        color: active ? '#1F4E78' : 'white', 
-        border: 'none', 
-        padding: '8px 16px', 
-        borderRadius: '4px', 
-        cursor: 'pointer', 
+      style={{
+        background: active ? 'white' : 'transparent',
+        color: active ? '#1F4E78' : 'white',
+        border: 'none',
+        padding: '8px 16px',
+        borderRadius: '4px',
+        cursor: 'pointer',
         fontWeight: 'bold',
         fontSize: '14px',
         transition: 'all 0.2s',
