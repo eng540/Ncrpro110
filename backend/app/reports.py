@@ -108,18 +108,13 @@ def generate_summary_pdf(db: Session, from_date: datetime = None, to_date: datet
     return buffer.getvalue()
 
 def generate_ipc_excel(db: Session) -> bytes:
-    """
-    شهادة دفع مؤقتة Excel (IPC)
-    مبنية بالكامل على طبقة القرارات (Decision Governance Layer).
-    لا يتم الدفع إلا للنسب المعتمدة من النظام أو المدير.
-    """
+    """شهادة دفع مؤقتة Excel (IPC)"""
     buffer = BytesIO()
     wb = Workbook()
     ws = wb.active
     ws.title = "IPC - Master Aggregation"
     ws.sheet_view.rightToLeft = True
     
-    # --- الترويسة ---
     ws['A1'] = "NRC Latrine Tracker - Governance IPC"
     ws['A1'].font = Font(size=16, bold=True, color="1F4E78")
     ws.merge_cells('A1:I1')
@@ -135,7 +130,6 @@ def generate_ipc_excel(db: Session) -> bytes:
     ws.merge_cells('A3:I3')
     ws['A3'].alignment = Alignment(horizontal='center')
     
-    # --- رؤوس الأعمدة ---
     headers = [
         'BoQ Code', 'Description (AR)', 'Unit', 'Unit Price ($)', 
         'Total Planned Qty', 'Total Executed Qty', 
@@ -150,15 +144,10 @@ def generate_ipc_excel(db: Session) -> bytes:
     
     ws.row_dimensions[5].height = 35
     
-    # --- تجميع البيانات ---
-    # جلب القاموس للأسعار
     dictionary = {d.boq_code: d for d in db.query(models.BoqDictionary).filter(models.BoqDictionary.is_active == True).all()}
-    
-    # جلب كل البنود مع قراراتها
     items = db.query(models.BoqItem).all()
     decisions = {d.boq_item_id: d for d in db.query(models.DecisionRecord).all()}
     
-    # تجميع حسب كود البند
     aggregation = {}
     for item in items:
         code = item.boq_code
@@ -176,7 +165,6 @@ def generate_ipc_excel(db: Session) -> bytes:
         aggregation[code]['planned'] += planned
         aggregation[code]['executed'] += executed
         
-        # 🌟 حساب الدفع بناءً على القرار
         decision = decisions.get(item.id)
         payment_pct = 0.0
         if decision:
@@ -186,11 +174,9 @@ def generate_ipc_excel(db: Session) -> bytes:
         aggregation[code]['approved_qty'] += payable_qty
         aggregation[code]['payable_usd'] += (payable_qty * price)
         
-        # حساب المبالغ المحتجزة (المنفذة ولكن لم تُعتمد بسبب الجودة/الملاحظات)
         if executed > payable_qty:
             aggregation[code]['blocked_usd'] += ((executed - payable_qty) * price)
 
-    # --- كتابة البيانات في الإكسل ---
     row = 6
     total_project_payable = 0.0
     total_project_blocked = 0.0
@@ -207,17 +193,14 @@ def generate_ipc_excel(db: Session) -> bytes:
         ws.cell(row=row, column=5, value=data['planned']).alignment = Alignment(horizontal='center')
         ws.cell(row=row, column=6, value=data['executed']).alignment = Alignment(horizontal='center')
         
-        # الكمية المعتمدة
         app_cell = ws.cell(row=row, column=7, value=round(data['approved_qty'], 2))
         app_cell.alignment = Alignment(horizontal='center')
         app_cell.font = Font(color="006100" if data['approved_qty'] == data['planned'] else "9C5700")
         
-        # المبلغ المستحق
         pay_cell = ws.cell(row=row, column=8, value=round(data['payable_usd'], 2))
         pay_cell.alignment = Alignment(horizontal='center')
         pay_cell.font = Font(bold=True)
         
-        # المبلغ المحتجز
         block_cell = ws.cell(row=row, column=9, value=round(data['blocked_usd'], 2))
         block_cell.alignment = Alignment(horizontal='center')
         if data['blocked_usd'] > 0:
@@ -231,7 +214,6 @@ def generate_ipc_excel(db: Session) -> bytes:
             ws.cell(row=row, column=col).border = Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
         row += 1
 
-    # --- صف الإجماليات ---
     ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=7)
     tot_label = ws.cell(row=row, column=1, value="GRAND TOTAL (USD)")
     tot_label.font = Font(bold=True, size=12)
@@ -246,7 +228,6 @@ def generate_ipc_excel(db: Session) -> bytes:
     if total_project_blocked > 0:
         tot_block.fill = PatternFill(start_color="FFC7CE", end_color="FFC7CE", fill_type="solid")
 
-    # تنسيق الأعمدة
     ws.column_dimensions['A'].width = 12
     ws.column_dimensions['B'].width = 40
     ws.column_dimensions['C'].width = 10
@@ -299,6 +280,83 @@ def generate_remarks_pdf(db: Session, from_date: datetime = None, to_date: datet
     else:
         elements.append(Paragraph("No open remarks found.", styles['Normal']))
     
+    doc.build(elements)
+    buffer.seek(0)
+    return buffer.getvalue()
+
+# ==========================================
+# 🌟 NEW: Site Diary Log (التقرير اليومي PDF)
+# ==========================================
+def generate_daily_logs_pdf(db: Session, from_date: datetime = None, to_date: datetime = None) -> bytes:
+    """تقرير يوميات الموقع PDF"""
+    buffer = BytesIO()
+    # نستخدم العرض الأفقي (Landscape) لأن الجدول يحتوي على أعمدة كثيرة
+    doc = SimpleDocTemplate(buffer, pagesize=landscape(A4), rightMargin=1.5*cm, leftMargin=1.5*cm, topMargin=1.5*cm, bottomMargin=1.5*cm)
+    elements = []
+    styles = getSampleStyleSheet()
+    
+    title_style = ParagraphStyle('CustomTitle', parent=styles['Heading1'], alignment=1, fontSize=18, textColor=colors.HexColor('#1F4E78'), spaceAfter=10)
+    subtitle_style = ParagraphStyle('CustomSubtitle', parent=styles['Normal'], alignment=1, fontSize=11, textColor=colors.HexColor('#7f8c8d'), spaceAfter=20)
+    
+    elements.append(Paragraph("Site Diary & Daily Operations Log", title_style))
+    
+    date_str = "All Records"
+    if from_date and to_date:
+        date_str = f"Period: {from_date.strftime('%Y-%m-%d')} to {to_date.strftime('%Y-%m-%d')}"
+    elements.append(Paragraph(date_str, subtitle_style))
+    
+    query = db.query(models.DailyLog).order_by(models.DailyLog.date.desc())
+    if from_date: query = query.filter(models.DailyLog.date >= from_date)
+    if to_date: query = query.filter(models.DailyLog.date <= to_date)
+    
+    logs = query.all()
+    
+    if not logs:
+        elements.append(Paragraph("No daily logs found for the selected period.", styles['Normal']))
+        doc.build(elements)
+        buffer.seek(0)
+        return buffer.getvalue()
+
+    # بناء الجدول
+    data = [['Date', 'Engineer', 'Weather', 'Manpower', 'Inspected', 'Accepted', 'Remarks', 'Equipment / Notes']]
+    
+    for log in logs:
+        # دمج المعدات والملاحظات في عمود واحد لتوفير المساحة
+        notes_text = ""
+        if log.equipment: notes_text += f"Eq: {log.equipment}\n"
+        if log.notes: notes_text += f"Note: {log.notes}"
+        
+        data.append([
+            log.date.strftime('%Y-%m-%d'),
+            log.engineer or '-',
+            log.weather or '-',
+            str(log.manpower or 0),
+            str(log.latrines_inspected or 0),
+            str(log.latrines_accepted or 0),
+            str(log.remarks_issued or 0),
+            notes_text or '-'
+        ])
+
+    # تحديد عرض الأعمدة (الإجمالي حوالي 26 سم للـ Landscape)
+    col_widths = [2.5*cm, 3.5*cm, 2*cm, 2*cm, 2*cm, 2*cm, 2*cm, 10*cm]
+    table = Table(data, colWidths=col_widths, repeatRows=1)
+    
+    table.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1F4E78')),
+        ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+        ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+        ('ALIGN', (7, 1), (7, -1), 'LEFT'), # محاذاة الملاحظات لليسار
+        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+        ('FONTSIZE', (0, 0), (-1, 0), 10),
+        ('FONTSIZE', (0, 1), (-1, -1), 9),
+        ('BOTTOMPADDING', (0, 0), (-1, 0), 8),
+        ('TOPPADDING', (0, 0), (-1, -1), 6),
+        ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
+        ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#f8f9fa')]),
+        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+    ]))
+    
+    elements.append(table)
     doc.build(elements)
     buffer.seek(0)
     return buffer.getvalue()
