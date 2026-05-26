@@ -145,60 +145,124 @@ def dashboard_summary(db: Session = Depends(get_db)):
 def category_progress(db: Session = Depends(get_db)):
     return crud.get_category_progress(db)
 
-# ---------- Reports Endpoints ----------
+# ---------- Reports Endpoints (Updated with Format Support) ----------
+
 @app.get("/api/reports/summary")
-def download_summary_pdf(db: Session = Depends(get_db)):
+def download_summary_report(
+    format: str = "pdf",
+    db: Session = Depends(get_db)
+):
     try:
-        pdf_bytes = reports.generate_summary_pdf(db)
-        return StreamingResponse(
-            BytesIO(pdf_bytes),
-            media_type="application/pdf",
-            headers={"Content-Disposition": "attachment; filename=summary_report.pdf"}
-        )
+        if format == "excel":
+            excel_bytes = reports.generate_summary_excel(db)
+            return StreamingResponse(
+                BytesIO(excel_bytes),
+                media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                headers={"Content-Disposition": "attachment; filename=summary_report.xlsx"}
+            )
+        else:  # default pdf
+            pdf_bytes = reports.generate_summary_pdf(db)
+            return StreamingResponse(
+                BytesIO(pdf_bytes),
+                media_type="application/pdf",
+                headers={"Content-Disposition": "attachment; filename=summary_report.pdf"}
+            )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to generate report: {str(e)}")
 
 @app.get("/api/reports/ipc")
-def download_ipc_excel(db: Session = Depends(get_db)):
+def download_ipc_report(
+    format: str = "excel",
+    db: Session = Depends(get_db)
+):
     try:
-        excel_bytes = reports.generate_ipc_excel(db)
-        return StreamingResponse(
-            BytesIO(excel_bytes),
-            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            headers={"Content-Disposition": "attachment; filename=ipc_report.xlsx"}
-        )
+        if format == "pdf":
+            pdf_bytes = reports.generate_ipc_pdf(db)
+            return StreamingResponse(
+                BytesIO(pdf_bytes),
+                media_type="application/pdf",
+                headers={"Content-Disposition": "attachment; filename=ipc_report.pdf"}
+            )
+        else:  # default excel
+            excel_bytes = reports.generate_ipc_excel(db)
+            return StreamingResponse(
+                BytesIO(excel_bytes),
+                media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                headers={"Content-Disposition": "attachment; filename=ipc_report.xlsx"}
+            )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to generate report: {str(e)}")
 
 @app.get("/api/reports/remarks")
-def download_remarks_pdf(
+def download_remarks_report(
+    format: str = "pdf",
     from_date: Optional[datetime] = None,
     to_date: Optional[datetime] = None,
     db: Session = Depends(get_db)
 ):
     try:
-        pdf_bytes = reports.generate_remarks_pdf(db, from_date, to_date)
-        return StreamingResponse(
-            BytesIO(pdf_bytes),
-            media_type="application/pdf",
-            headers={"Content-Disposition": "attachment; filename=remarks_report.pdf"}
-        )
+        if format == "excel":
+            excel_bytes = reports.generate_remarks_excel(db, from_date, to_date)
+            return StreamingResponse(
+                BytesIO(excel_bytes),
+                media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                headers={"Content-Disposition": "attachment; filename=remarks_report.xlsx"}
+            )
+        else:  # default pdf
+            pdf_bytes = reports.generate_remarks_pdf(db, from_date, to_date)
+            return StreamingResponse(
+                BytesIO(pdf_bytes),
+                media_type="application/pdf",
+                headers={"Content-Disposition": "attachment; filename=remarks_report.pdf"}
+            )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to generate report: {str(e)}")
 
 @app.get("/api/reports/daily-logs")
-def download_daily_logs_pdf(
+def download_daily_logs_report(
+    format: str = "pdf",
     from_date: Optional[datetime] = None,
     to_date: Optional[datetime] = None,
     db: Session = Depends(get_db)
 ):
     try:
-        pdf_bytes = reports.generate_daily_logs_pdf(db, from_date, to_date)
-        return StreamingResponse(
-            BytesIO(pdf_bytes),
-            media_type="application/pdf",
-            headers={"Content-Disposition": "attachment; filename=site_diary_report.pdf"}
-        )
+        if format == "excel":
+            excel_bytes = reports.generate_daily_logs_excel(db, from_date, to_date)
+            return StreamingResponse(
+                BytesIO(excel_bytes),
+                media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                headers={"Content-Disposition": "attachment; filename=site_diary_report.xlsx"}
+            )
+        else:  # default pdf
+            pdf_bytes = reports.generate_daily_logs_pdf(db, from_date, to_date)
+            return StreamingResponse(
+                BytesIO(pdf_bytes),
+                media_type="application/pdf",
+                headers={"Content-Disposition": "attachment; filename=site_diary_report.pdf"}
+            )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to generate report: {str(e)}")
+
+@app.get("/api/reports/matrix")
+def download_matrix_report(
+    format: str = "excel",
+    db: Session = Depends(get_db)
+):
+    try:
+        if format == "pdf":
+            pdf_bytes = reports.generate_matrix_pdf(db)
+            return StreamingResponse(
+                BytesIO(pdf_bytes),
+                media_type="application/pdf",
+                headers={"Content-Disposition": "attachment; filename=matrix_report.pdf"}
+            )
+        else:  # default excel
+            excel_bytes = reports.generate_matrix_excel(db)
+            return StreamingResponse(
+                BytesIO(excel_bytes),
+                media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                headers={"Content-Disposition": "attachment; filename=matrix_report.xlsx"}
+            )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to generate report: {str(e)}")
 
