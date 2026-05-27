@@ -97,7 +97,7 @@ const SmartRemarkForm = ({ initialData, boqCode, isSaving, onSubmit, onCancel, t
 
   const handleDescChange = (e) => {
     setDesc(e.target.value);
-    setSelectedTemplate(null);       // يسمح بتغيير القالب حتى في وضع التعديل
+    setSelectedTemplate(null);
     setShowSuggestions(true);
   };
 
@@ -230,6 +230,7 @@ const AggregatedRemarkCard = ({ group, getLatrineCode, isProcessing, onClose }) 
 
 // --- Single Card (مع أزرار تعديل وإغلاق وحفظ كقالب) ---
 const SingleRemarkCard = ({ r, getLatrineCode, isProcessing, onClose, onEdit, onSaveAsTemplate }) => {
+  // زر حفظ كقالب يظهر فقط للملاحظات اليدوية المفتوحة التي لا ترتبط بقالب
   const showSaveAsTemplate = r.status === 'open' && !r.template_id && r.description;
 
   return (
@@ -399,7 +400,65 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
     return { processedRemarks: filtered, counters: counts, aggregatedGroups: groups };
   }, [rawRemarks, statusFilter, severityFilter, syncFilter, searchQuery, sortBy, groupBy, allLatrines, latrineId]);
 
-  // --- Handlers ---
+  // --- حفظ القالب مع ربط الملاحظة ---
+  const createAndLinkTemplate = async (templateData, remarkId) => {
+    const existing = await db.remark_templates.where('title').equals(templateData.description).first();
+    if (existing) {
+      // إذا كان القالب موجوداً مسبقاً، نربط الملاحظة به مباشرة
+      await db.remarks.update(remarkId, {
+        template_id: existing.id,
+        description: null,
+        suffix_note: templateData.suffix_note || '',
+        action_required: existing.default_action,
+        severity: existing.default_severity,
+        sync_status: 'local'
+      });
+      return existing.id;
+    }
+
+    const newTemplate = {
+      template_code: `TPL-${uuidv4().slice(0, 8).toUpperCase()}`,
+      title: templateData.description,
+      description: templateData.description,
+      default_action: templateData.action_required || '',
+      default_severity: templateData.severity,
+      boq_tags: templateData.boq_code ? [templateData.boq_code] : ['ALL'],
+      is_active: true,
+      version: 1,
+      created_by: 'field_engineer',
+      created_at: new Date().toISOString()
+    };
+
+    const templateId = await db.remark_templates.add(newTemplate);
+
+    // ربط الملاحظة بالقالب الجديد
+    await db.remarks.update(remarkId, {
+      template_id: templateId,
+      description: null,
+      suffix_note: templateData.suffix_note || '',
+      action_required: newTemplate.default_action,
+      severity: newTemplate.default_severity,
+      sync_status: 'local'
+    });
+
+    try {
+      await pushToSyncQueue('CREATE_TEMPLATE', newTemplate);
+      await pushToSyncQueue('UPDATE_REMARK', {
+        id: remarkId,
+        local_uuid: '', // سنتركه فارغًا أو نأخذه من الملاحظة الأصلية
+        template_id: templateId,
+        description: null,
+        suffix_note: templateData.suffix_note || '',
+        severity: newTemplate.default_severity,
+        action_required: newTemplate.default_action
+      });
+    } catch (syncErr) {
+      console.warn('فشل دفع التحديثات للطابور:', syncErr);
+    }
+
+    return templateId;
+  };
+
   const handleAddOrEditRemark = async (formData) => {
     setIsSaving(true);
     setError(null);
@@ -432,7 +491,7 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
           local_uuid: localUuid,
           latrine_id: latrineId,
           boq_code: boqCode || null,
-          template_id: formData.template_id,
+          template_id: null, // مؤقتاً
           description: formData.description,
           suffix_note: formData.suffix_note,
           severity: formData.severity,
@@ -444,18 +503,25 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
           closed_date: null
         };
 
-        await db.remarks.add(newRemark);
-        await pushToSyncQueue('CREATE_REMARK', newRemark);
+        const remarkId = await db.remarks.add(newRemark);
 
         if (formData.save_as_template) {
           try {
-            await handleSaveAsTemplateFromForm(formData);
+            await createAndLinkTemplate({
+              description: formData.description,
+              severity: formData.severity,
+              action_required: formData.action_required,
+              boq_code: boqCode,
+              suffix_note: formData.suffix_note || ''
+            }, remarkId);
             setError({ type: 'success', message: '✅ تم تسجيل الملاحظة وحفظها كقالب جديد.' });
           } catch (templateErr) {
             console.error('Template save failed:', templateErr);
-            setError({ type: 'warning', message: '⚠️ تم تسجيل الملاحظة ولكن فشل حفظ القالب. يمكنك المحاولة لاحقاً.' });
+            setError({ type: 'warning', message: '⚠️ تم تسجيل الملاحظة ولكن فشل حفظ القالب.' });
           }
         } else {
+          // بدون قالب، فقط نضيف للطابور
+          await pushToSyncQueue('CREATE_REMARK', newRemark);
           setError({ type: 'success', message: '✅ تم تسجيل الملاحظة.' });
         }
       }
@@ -467,44 +533,25 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
     }
   };
 
-  const handleSaveAsTemplateFromForm = async (formData) => {
-    const existing = await db.remark_templates.where('title').equals(formData.description).first();
-    if (existing) {
-      throw new Error('هذا القالب موجود مسبقاً في المكتبة.');
-    }
-
-    const newTemplate = {
-      template_code: `TPL-${uuidv4().slice(0, 8).toUpperCase()}`,
-      title: formData.description,
-      description: formData.description,
-      default_action: formData.action_required || '',
-      default_severity: formData.severity,
-      boq_tags: formData.boq_code ? [formData.boq_code] : ['ALL'],
-      is_active: true,
-      version: 1,
-      created_by: 'field_engineer',
-      created_at: new Date().toISOString()
-    };
-
-    await db.remark_templates.add(newTemplate);
-    try {
-      await pushToSyncQueue('CREATE_TEMPLATE', newTemplate);
-    } catch (syncErr) {
-      console.warn('فشل دفع القالب لطابور المزامنة، لكنه محفوظ محلياً:', syncErr);
-    }
-  };
-
   const handleSaveAsTemplateFromCard = async (remark) => {
+    setProcessingIds(prev => new Set(prev).add(remark.id));
     try {
-      await handleSaveAsTemplateFromForm({
+      await createAndLinkTemplate({
         description: remark.description,
         severity: remark.severity,
         action_required: remark.action_required,
-        boq_code: remark.boq_code
-      });
-      setError({ type: 'success', message: 'تم حفظ الملاحظة كقالب جديد.' });
+        boq_code: remark.boq_code,
+        suffix_note: remark.suffix_note || ''
+      }, remark.id);
+      setError({ type: 'success', message: 'تم حفظ الملاحظة كقالب جديد وربطها به.' });
     } catch (err) {
-      setError({ type: 'warning', message: err.message || 'فشل حفظ القالب.' });
+      setError({ type: 'error', message: 'فشل حفظ القالب.' });
+    } finally {
+      setProcessingIds(prev => {
+        const next = new Set(prev);
+        next.delete(remark.id);
+        return next;
+      });
     }
   };
 
