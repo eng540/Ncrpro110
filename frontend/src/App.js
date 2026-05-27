@@ -13,7 +13,8 @@ import SpeedEntryMatrix from './components/SpeedEntryMatrix';
 import GovernanceDashboard from './components/GovernanceDashboard';
 import BoqAnalytics from './components/BoqAnalytics';
 import QualityInspector from './components/QualityInspector';
-import { db, populateLocalDB } from './db';
+import InstallPWA from './components/InstallPWA';
+import { db } from './db';
 
 const API_BASE_URL = process.env.REACT_APP_API_URL || '/api';
 
@@ -86,7 +87,7 @@ function App() {
           const boqItems = await boqRes.json();
           const remarks = remarksRes.ok ? await remarksRes.json() : [];
           const templates = templatesRes.ok ? await templatesRes.json() : [];
-          
+
           await db.transaction('rw', db.latrines, db.boq_items, db.remarks, db.remark_templates, async () => {
             await db.latrines.clear();
             await db.boq_items.clear();
@@ -96,7 +97,7 @@ function App() {
             if (latrines?.length > 0) await db.latrines.bulkAdd(latrines);  
             if (boqItems?.length > 0) await db.boq_items.bulkAdd(boqItems);  
             if (templates?.length > 0) await db.remark_templates.bulkAdd(templates); // 🌟 حفظ القوالب محلياً
-            
+
             if (remarks?.length > 0) {  
               const remarksWithSync = remarks.map(r => ({...r, sync_status: 'synced'}));  
               await db.remarks.bulkAdd(remarksWithSync);  
@@ -287,6 +288,9 @@ function App() {
           )}
         </div>
       </div>
+
+      {/* زر تثبيت التطبيق (PWA) */}
+      <InstallPWA />
     </div>
   );
 }
