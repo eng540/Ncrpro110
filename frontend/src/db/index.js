@@ -5,7 +5,7 @@
 
 import Dexie from 'dexie';
 
-export const db = new Dexie('NRCLatrineTracker_v3');
+export const db = new Dexie('NRCLatrineTracker_v4'); // 🌟 قاعدة جديدة تماماً
 
 // Schema v3: Smart Observation Engine Support
 db.version(3).stores({
@@ -13,8 +13,8 @@ db.version(3).stores({
   boq_items: 'id, latrine_id, boq_code, category, status, quality_pass',
   boq_dictionary: 'id, boq_code, category, is_active',
 
-  // 🌟 جديد: مكتبة القوالب
-  remark_templates: 'id, template_code, title, is_active',
+  // 🌟 جديد: مكتبة القوالب (تم التصحيح إلى ++id)
+  remark_templates: '++id, template_code, title, is_active',
 
   // Sensitive tables — encrypted envelopes (_env)
   latrines: 'id, latrine_id, block_no, status, overall_pct, last_update',
@@ -35,7 +35,6 @@ db.version(3).stores({
 });
 
 // ========== SETTINGS HELPERS ==========
-
 export async function getSetting(key) {
   const rec = await db.settings.get(key);
   return rec?.value || null;
@@ -50,7 +49,6 @@ export async function deleteSetting(key) {
 }
 
 // ========== CHAIN STATE HELPERS ==========
-
 export async function getChainHead(entity) {
   const rec = await db.chain_state.where('entity').equals(entity).first();
   return rec?.last_hash || null;
@@ -58,7 +56,6 @@ export async function getChainHead(entity) {
 
 export async function updateChainHead(entity, newHash) {
   const existing = await db.chain_state.where('entity').equals(entity).first();
-
   if (existing) {
     await db.chain_state.update(existing.id, {
       last_hash: newHash,
@@ -74,7 +71,6 @@ export async function updateChainHead(entity, newHash) {
 }
 
 // ========== LEGACY COMPATIBILITY ==========
-
 export async function populateLocalDB(latrines, boqItems, remarks) {
   try {
     await db.transaction('rw', db.latrines, db.boq_items, db.remarks, async () => {
