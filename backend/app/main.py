@@ -4,12 +4,13 @@ from fastapi.responses import FileResponse, StreamingResponse
 from sqlalchemy.orm import Session
 from typing import List, Optional
 from app import models, schemas, crud
-from app.database import engine, get_db, Base
+from app.database import engine, get_db, SessionLocal, Base # 🌟 استيراد SessionLocal
 from app import reports
 from io import BytesIO
 import os
 from datetime import datetime
 import openpyxl
+from contextlib import asynccontextmanager # 🌟 استيراد إدارة السياق
 
 # Create tables on startup (fallback for dev)
 try:
@@ -18,13 +19,28 @@ try:
 except Exception as e:
     print(f"Warning: Could not create tables: {e}")
 
+# 🌟 التصحيح 1: استخدام lifespan بدلاً من on_event("startup") لمنع تسرب الاتصالات
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    db = SessionLocal()
+    try:
+        crud.seed_default_policies(db)
+        crud.seed_default_remark_templates(db)
+        print("Default policies and remark templates seeded successfully.")
+        yield
+    except Exception as e:
+        print(f"Failed to seed defaults: {e}")
+    finally:
+        db.close() # 🌟 ضمان إغلاق الاتصال بقاعدة البيانات
+
 app = FastAPI(
     title="NRC Latrine Tracker",
     description="Dynamic SaaS Platform - Multi-Project WASH & Shelter Tracking",
-    version="2.0.0",
+    version="3.0.0",
     docs_url="/api/docs",
     redoc_url="/api/redoc",
-    openapi_url="/api/openapi.json"
+    openapi_url="/api/openapi.json",
+    lifespan=lifespan # 🌟 ربط دورة الحياة بالتطبيق
 )
 
 # CORS
@@ -36,21 +52,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# حقن السياسات الافتراضية عند الإقلاع
-@app.on_event("startup")
-def startup_event():
-    try:
-        db = next(get_db())
-        crud.seed_default_policies(db)
-        print("Default policies seeded successfully.")
-    except Exception as e:
-        print(f"Failed to seed policies: {e}")
-
 # ========== API ROUTES (all under /api) ==========
 
 @app.get("/api/health")
 def health_check():
-    return {"status": "healthy", "service": "running", "version": "2.0.0", "mode": "dynamic_saas"}
+    return {"status": "healthy", "service": "running", "version": "3.0.0", "mode": "dynamic_saas"}
 
 @app.get("/api/latrines", response_model=List[schemas.LatrineOut])
 def list_latrines(skip: int = 0, limit: int = 100, status: Optional[str] = None, db: Session = Depends(get_db)):
@@ -145,124 +151,72 @@ def dashboard_summary(db: Session = Depends(get_db)):
 def category_progress(db: Session = Depends(get_db)):
     return crud.get_category_progress(db)
 
-# ---------- Reports Endpoints (Updated with Format Support) ----------
-
+# ---------- Reports Endpoints ----------
 @app.get("/api/reports/summary")
-def download_summary_report(
-    format: str = "pdf",
-    db: Session = Depends(get_db)
-):
+def download_summary_pdf(db: Session = Depends(get_db)):
     try:
-        if format == "excel":
-            excel_bytes = reports.generate_summary_excel(db)
-            return StreamingResponse(
-                BytesIO(excel_bytes),
-                media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                headers={"Content-Disposition": "attachment; filename=summary_report.xlsx"}
-            )
-        else:  # default pdf
-            pdf_bytes = reports.generate_summary_pdf(db)
-            return StreamingResponse(
-                BytesIO(pdf_bytes),
-                media_type="application/pdf",
-                headers={"Content-Disposition": "attachment; filename=summary_report.pdf"}
-            )
+        pdf_bytes = reports.generate_summary_pdf(db)
+        return StreamingResponse(
+            BytesIO(pdf_bytes),
+            media_type="application/pdf",
+            headers={"Content-Disposition": "attachment; filename=summary_report.pdf"}
+        )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to generate report: {str(e)}")
 
 @app.get("/api/reports/ipc")
-def download_ipc_report(
-    format: str = "excel",
-    db: Session = Depends(get_db)
-):
+def download_ipc_excel(db: Session = Depends(get_db)):
     try:
-        if format == "pdf":
-            pdf_bytes = reports.generate_ipc_pdf(db)
-            return StreamingResponse(
-                BytesIO(pdf_bytes),
-                media_type="application/pdf",
-                headers={"Content-Disposition": "attachment; filename=ipc_report.pdf"}
-            )
-        else:  # default excel
-            excel_bytes = reports.generate_ipc_excel(db)
-            return StreamingResponse(
-                BytesIO(excel_bytes),
-                media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                headers={"Content-Disposition": "attachment; filename=ipc_report.xlsx"}
-            )
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to generate report: {str(e)}")
-
-@app.get("/api/reports/remarks")
-def download_remarks_report(
-    format: str = "pdf",
-    from_date: Optional[datetime] = None,
-    to_date: Optional[datetime] = None,
-    db: Session = Depends(get_db)
-):
-    try:
-        if format == "excel":
-            excel_bytes = reports.generate_remarks_excel(db, from_date, to_date)
-            return StreamingResponse(
-                BytesIO(excel_bytes),
-                media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                headers={"Content-Disposition": "attachment; filename=remarks_report.xlsx"}
-            )
-        else:  # default pdf
-            pdf_bytes = reports.generate_remarks_pdf(db, from_date, to_date)
-            return StreamingResponse(
-                BytesIO(pdf_bytes),
-                media_type="application/pdf",
-                headers={"Content-Disposition": "attachment; filename=remarks_report.pdf"}
-            )
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to generate report: {str(e)}")
-
-@app.get("/api/reports/daily-logs")
-def download_daily_logs_report(
-    format: str = "pdf",
-    from_date: Optional[datetime] = None,
-    to_date: Optional[datetime] = None,
-    db: Session = Depends(get_db)
-):
-    try:
-        if format == "excel":
-            excel_bytes = reports.generate_daily_logs_excel(db, from_date, to_date)
-            return StreamingResponse(
-                BytesIO(excel_bytes),
-                media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                headers={"Content-Disposition": "attachment; filename=site_diary_report.xlsx"}
-            )
-        else:  # default pdf
-            pdf_bytes = reports.generate_daily_logs_pdf(db, from_date, to_date)
-            return StreamingResponse(
-                BytesIO(pdf_bytes),
-                media_type="application/pdf",
-                headers={"Content-Disposition": "attachment; filename=site_diary_report.pdf"}
-            )
+        excel_bytes = reports.generate_ipc_excel(db)
+        return StreamingResponse(
+            BytesIO(excel_bytes),
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": "attachment; filename=ipc_report.xlsx"}
+        )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to generate report: {str(e)}")
 
 @app.get("/api/reports/matrix")
-def download_matrix_report(
-    format: str = "excel",
+def download_matrix_excel(db: Session = Depends(get_db)):
+    try:
+        excel_bytes = reports.generate_matrix_excel(db)
+        return StreamingResponse(
+            BytesIO(excel_bytes),
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": "attachment; filename=matrix_report.xlsx"}
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to generate report: {str(e)}")
+
+@app.get("/api/reports/remarks")
+def download_remarks_pdf(
+    from_date: Optional[datetime] = None,
+    to_date: Optional[datetime] = None,
     db: Session = Depends(get_db)
 ):
     try:
-        if format == "pdf":
-            pdf_bytes = reports.generate_matrix_pdf(db)
-            return StreamingResponse(
-                BytesIO(pdf_bytes),
-                media_type="application/pdf",
-                headers={"Content-Disposition": "attachment; filename=matrix_report.pdf"}
-            )
-        else:  # default excel
-            excel_bytes = reports.generate_matrix_excel(db)
-            return StreamingResponse(
-                BytesIO(excel_bytes),
-                media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                headers={"Content-Disposition": "attachment; filename=matrix_report.xlsx"}
-            )
+        pdf_bytes = reports.generate_remarks_pdf(db, from_date, to_date)
+        return StreamingResponse(
+            BytesIO(pdf_bytes),
+            media_type="application/pdf",
+            headers={"Content-Disposition": "attachment; filename=remarks_report.pdf"}
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to generate report: {str(e)}")
+
+@app.get("/api/reports/daily-logs")
+def download_daily_logs_pdf(
+    from_date: Optional[datetime] = None,
+    to_date: Optional[datetime] = None,
+    db: Session = Depends(get_db)
+):
+    try:
+        pdf_bytes = reports.generate_daily_logs_pdf(db, from_date, to_date)
+        return StreamingResponse(
+            BytesIO(pdf_bytes),
+            media_type="application/pdf",
+            headers={"Content-Disposition": "attachment; filename=site_diary_report.pdf"}
+        )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to generate report: {str(e)}")
 
@@ -441,16 +395,14 @@ async def import_boq_dictionary(file: UploadFile = File(...), db: Session = Depe
         raise HTTPException(status_code=500, detail=f"خطأ أثناء معالجة الملف: {str(e)}")
 
 # ==========================================
-# 🌟 GOVERNANCE ENDPOINTS (مسارات الحوكمة الجديدة)
+# 🌟 GOVERNANCE ENDPOINTS
 # ==========================================
 @app.get("/api/admin/governance-items", response_model=List[schemas.GovernanceItemOut])
 def get_governance_items(status_filter: Optional[str] = None, db: Session = Depends(get_db)):
-    """جلب البنود التي تحتاج إلى قرار إداري (أو كل القرارات السابقة)"""
     return crud.get_governance_items(db, status_filter)
 
 @app.post("/api/admin/governance-items/{decision_id}/override")
 def override_decision(decision_id: int, override_data: schemas.DecisionOverrideUpdate, db: Session = Depends(get_db)):
-    """تطبيق التجاوز البشري (Override) على قرار النظام"""
     decision = crud.override_item_decision(db, decision_id, override_data)
     if not decision:
         raise HTTPException(status_code=404, detail="Decision record not found")
@@ -458,26 +410,42 @@ def override_decision(decision_id: int, override_data: schemas.DecisionOverrideU
 
 @app.post("/api/admin/governance-backfill")
 def backfill_governance_decisions(db: Session = Depends(get_db)):
-    """
-    أداة صيانة (Maintenance Tool):
-    تقوم بالمرور على جميع البنود في قاعدة البيانات (التي ليس لها سجل قرار)،
-    وتقوم بتشغيل محرك القرارات عليها لإنشاء سجلات لها بأثر رجعي.
-    """
     all_items = db.query(models.BoqItem).all()
     processed_count = 0
-
     for item in all_items:
         decision = db.query(models.DecisionRecord).filter(models.DecisionRecord.boq_item_id == item.id).first()
         if not decision:
             crud.update_item_decision(db, item.id)
             processed_count += 1
-
-    # إعادة حساب الإنجاز لجميع الحمامات
     latrines = db.query(models.Latrine).all()
     for latrine in latrines:
         crud.recalc_latrine_progress(db, latrine.id)
-
     return {"message": f"Successfully backfilled decisions for {processed_count} items."}
+
+# ==========================================
+# 🌟 SMART OBSERVATION ENGINE ENDPOINTS
+# ==========================================
+@app.get("/api/remark-templates", response_model=List[schemas.RemarkTemplateOut])
+def list_remark_templates(db: Session = Depends(get_db)):
+    return crud.get_remark_templates(db)
+
+@app.post("/api/admin/remark-templates", response_model=schemas.RemarkTemplateOut)
+def create_remark_template(template: schemas.RemarkTemplateCreate, db: Session = Depends(get_db)):
+    return crud.create_remark_template(db, template)
+
+@app.patch("/api/admin/remark-templates/{template_code}", response_model=schemas.RemarkTemplateOut)
+def update_remark_template(template_code: str, updates: schemas.RemarkTemplateUpdate, db: Session = Depends(get_db)):
+    template = crud.update_remark_template(db, template_code, updates)
+    if not template:
+        raise HTTPException(status_code=404, detail="Template not found")
+    return template
+
+@app.delete("/api/admin/remark-templates/{template_code}")
+def delete_remark_template(template_code: str, db: Session = Depends(get_db)):
+    template = crud.delete_remark_template(db, template_code)
+    if not template:
+        raise HTTPException(status_code=404, detail="Template not found")
+    return {"message": f"Template {template_code} archived successfully"}
 
 # ---------- Legacy Seeding ----------
 @app.post("/api/seed-latrines")
@@ -513,7 +481,7 @@ def get_no_cache_response(file_path: str):
     return response
 
 if os.path.exists(static_dir) and os.path.exists(os.path.join(static_dir, "index.html")):
-
+    
     @app.get("/")
     async def serve_react_root():
         return get_no_cache_response(os.path.join(static_dir, "index.html"))
@@ -522,16 +490,16 @@ if os.path.exists(static_dir) and os.path.exists(os.path.join(static_dir, "index
     async def serve_react_catchall(full_path: str):
         if full_path.startswith("api/"):
             raise HTTPException(status_code=404, detail="API Route Not Found")
-
+        
         file_path = os.path.join(static_dir, full_path)
-
+        
         if os.path.exists(file_path) and os.path.isfile(file_path):
             if full_path == "service-worker.js" or full_path == "index.html":
                 return get_no_cache_response(file_path)
             return FileResponse(file_path)
-
+        
         return get_no_cache_response(os.path.join(static_dir, "index.html"))
 else:
     @app.get("/")
     def root():
-        return {"message": "NRC Latrine Tracker API", "version": "2.0.0", "status": "running", "frontend": "not built"}
+        return {"message": "NRC Latrine Tracker API", "version": "3.0.0", "status": "running", "frontend": "not built"}
