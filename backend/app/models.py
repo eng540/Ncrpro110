@@ -1,5 +1,5 @@
-from sqlalchemy import Column, Integer, String, Float, DateTime, Text, ForeignKey, Enum, Boolean
-from sqlalchemy.dialects.postgresql import JSONB # 🌟 استخدام JSONB لقوة الأداء في PostgreSQL
+from sqlalchemy import Column, Integer, String, Float, DateTime, Text, ForeignKey, Enum, Boolean, CheckConstraint, Index
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import relationship
 from app.database import Base
 import enum
@@ -36,6 +36,11 @@ class RemarkStatus(str, enum.Enum):
     CLOSED = "closed"
     OVERDUE = "overdue"
 
+class MediaType(str, enum.Enum):
+    IMAGE = "image"
+    PDF = "pdf"
+    VIDEO = "video"
+
 # ==========================================
 # 1. MASTER REGISTRY
 # ==========================================
@@ -47,7 +52,7 @@ class Latrine(Base):
     block_no = Column(String(10), default="B01")
     gps_coordinates = Column(String(50))
     beneficiary_hh = Column(String(100))
-    status = Column(String(20), default=LatrineStatus.NOT_STARTED)
+    status = Column(String(20), default=LatrineStatus.NOT_STARTED.value)
     overall_pct = Column(Float, default=0.0)
     start_date = Column(DateTime, nullable=True)
     expected_completion = Column(DateTime, nullable=True)
@@ -55,7 +60,6 @@ class Latrine(Base):
     last_update = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     remarks_count = Column(Integer, default=0)
 
-    # 🌟 ربط الحمام بسياسة معينة (اختياري، إذا كان فارغاً يأخذ السياسة الافتراضية)
     policy_id = Column(Integer, ForeignKey("policy_profiles.id"), nullable=True)
 
     boq_items = relationship("BoqItem", back_populates="latrine", cascade="all, delete-orphan")
@@ -78,37 +82,87 @@ class BoqItem(Base):
     planned_qty = Column(Float, default=0.0)
     achieved_qty = Column(Float, default=0.0)
     achievement_pct = Column(Float, default=0.0)
-    status = Column(String(20), default=BoqStatus.NOT_STARTED)
+    status = Column(String(20), default=BoqStatus.NOT_STARTED.value)
     inspection_date = Column(DateTime, nullable=True)
     inspector = Column(String(50))
-    quality_pass = Column(String(10), default=QualityPass.PENDING)
+    quality_pass = Column(String(10), default=QualityPass.PENDING.value)
     last_update = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     latrine = relationship("Latrine", back_populates="boq_items")
     decision_record = relationship("DecisionRecord", back_populates="boq_item", uselist=False, cascade="all, delete-orphan")
 
 # ==========================================
-# 3. REMARKS / DEFECTS
+# 3. SMART OBSERVATION ENGINE (V3.0.0)
 # ==========================================
+
+class RemarkTemplate(Base):
+    """مكتبة القوالب القياسية للملاحظات (Governed Knowledge Base)"""
+    __tablename__ = "remark_templates"
+
+    id = Column(Integer, primary_key=True, index=True)
+    template_code = Column(String(20), unique=True, index=True, nullable=False) # e.g., TPL-001
+    title = Column(String(200), nullable=False)
+    description = Column(Text, nullable=False)
+    default_action = Column(Text)
+    default_severity = Column(String(20), default=RemarkSeverity.MINOR.value)
+    
+    boq_tags = Column(JSONB, default=list) 
+    
+    reference_media_url = Column(String(500), nullable=True)
+    # 🌟 التصحيح 2: استخدام Enum الحقيقي لفرض القيود في قاعدة البيانات
+    media_type = Column(Enum(MediaType, name="media_type_enum", create_type=True), nullable=True) 
+    
+    is_active = Column(Boolean, default=True)
+    version = Column(Integer, default=1)
+    created_by = Column(String(100), index=True, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    archived_at = Column(DateTime, nullable=True)
+
+    # 🌟 التصحيح 3: إضافة passive_deletes=True لمنع تحميل السجلات للذاكرة عند الحذف
+    remarks = relationship("Remark", back_populates="template", passive_deletes=True)
+
+Index("ix_remark_templates_boq_tags", RemarkTemplate.boq_tags, postgresql_using="gin")
+
 class Remark(Base):
+    """سجل التنفيذ (Observation Instances)"""
     __tablename__ = "remarks"
+
+    # 🌟 التصحيح 1: تشديد القيد ليكون حصرياً (XOR Logic)
+    # إما (قديمة: لها وصف وليس لها قالب) أو (جديدة: لها قالب وليس لها وصف)
+    __table_args__ = (
+        CheckConstraint(
+            "((template_id IS NULL) AND (description IS NOT NULL)) OR "
+            "((template_id IS NOT NULL) AND (description IS NULL))",
+            name="ck_remark_mode_strict"
+        ),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
     remark_id = Column(String(36), unique=True)
     latrine_id = Column(Integer, ForeignKey("latrines.id"), nullable=False)
     boq_code = Column(String(10))
+    
+    template_id = Column(Integer, ForeignKey("remark_templates.id", ondelete="SET NULL"), nullable=True)
+    
     date_logged = Column(DateTime, default=datetime.utcnow)
     type = Column(String(50))
-    severity = Column(String(20), default=RemarkSeverity.MINOR)
-    description = Column(Text)
+    severity = Column(String(20), default=RemarkSeverity.MINOR.value)
+    
+    description = Column(Text, nullable=True) # للملاحظات الحرة القديمة (Legacy)
+    suffix_note = Column(Text, nullable=True) # إضافة نصية للقالب القياسي (Smart)
+    
     action_required = Column(Text)
     deadline = Column(DateTime)
-    status = Column(String(20), default=RemarkStatus.OPEN)
+    status = Column(String(20), default=RemarkStatus.OPEN.value)
     closed_date = Column(DateTime, nullable=True)
-    photo_ref = Column(String(100))
+    
+    evidence_photo_ref = Column(String(100), nullable=True) 
+    
     last_update = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     latrine = relationship("Latrine", back_populates="remarks")
+    template = relationship("RemarkTemplate", back_populates="remarks")
 
 # ==========================================
 # 4. DAILY LOG
@@ -145,46 +199,38 @@ class BoqDictionary(Base):
     is_active = Column(Boolean, default=True)
 
 # ==========================================
-# 6. GOVERNANCE & POLICIES (الطبقة الجديدة)
+# 6. GOVERNANCE & POLICIES
 # ==========================================
 class PolicyProfile(Base):
-    """جدول السياسات (يخزن القواعد كـ JSON)"""
     __tablename__ = "policy_profiles"
 
     id = Column(Integer, primary_key=True, index=True)
-    name = Column(String(50), unique=True, nullable=False) # e.g., "NRC Strict", "Emergency"
+    name = Column(String(50), unique=True, nullable=False)
     description = Column(Text)
     is_default = Column(Boolean, default=False)
-    
-    # 🌟 هنا يكمن السحر: تخزين مصفوفة القرار كـ JSON
     rules_json = Column(JSONB, nullable=False) 
 
 class DecisionRecord(Base):
-    """سجل القرار لكل بند (المصدر الوحيد للحقيقة)"""
     __tablename__ = "decision_records"
 
     id = Column(Integer, primary_key=True, index=True)
     boq_item_id = Column(Integer, ForeignKey("boq_items.id"), unique=True, nullable=False)
     
-    # --- 1. المدخلات الخام (Snapshot of Reality) ---
     execution_pct = Column(Float)
     quality_status = Column(String(20))
     highest_remark_severity = Column(String(20), nullable=True)
     
-    # --- 2. توصية النظام (Immutable Advisor) ---
-    system_recommendation_code = Column(String(50)) # APPROVE, REWORK, HOLD, STOP
+    system_recommendation_code = Column(String(50))
     system_recommendation_note = Column(Text)
     system_payment_pct = Column(Float)
     
-    # --- 3. القرار البشري (Mutable Decider) ---
-    human_decision_code = Column(String(50), nullable=True) # APPROVE, REJECT, OVERRIDE, HOLD
+    human_decision_code = Column(String(50), nullable=True)
     human_payment_pct = Column(Float, nullable=True)
     override_reason = Column(Text, nullable=True)
     
     approved_by = Column(String(100), nullable=True)
     approved_at = Column(DateTime, nullable=True)
     
-    # --- 4. الحالة النهائية (Derived State) ---
-    final_state = Column(String(20), default="OPEN") # LOCKED, OPEN, DISPUTED
+    final_state = Column(String(20), default="OPEN")
 
     boq_item = relationship("BoqItem", back_populates="decision_record")
