@@ -1,11 +1,14 @@
 import json
 from sqlalchemy.orm import Session
 from sqlalchemy import func
-from typing import List
+from typing import List, Optional
 from app import models, schemas
 from app.engine import generate_recommendation, DEFAULT_POLICIES
 from datetime import datetime, timedelta
 
+# ==========================================
+#  LATRINE CRUD
+# ==========================================
 def get_latrine(db: Session, latrine_id: int):
     return db.query(models.Latrine).filter(models.Latrine.id == latrine_id).first()
 
@@ -36,6 +39,9 @@ def update_latrine(db: Session, latrine_id: int, updates: schemas.LatrineUpdate)
     db.refresh(db_latrine)
     return db_latrine
 
+# ==========================================
+#  BOQ ITEMS CRUD
+# ==========================================
 def get_boq_items(db: Session, latrine_id: int = None):
     query = db.query(models.BoqItem)
     if latrine_id:
@@ -84,121 +90,8 @@ def bulk_update_boq_items(db: Session, updates: List[schemas.BoqItemBulkUpdate])
     return {"updated_count": len(updates), "affected_latrines": len(updated_latrine_ids)}
 
 # ==========================================
-# 🌟 محرك تحديث القرارات (تم إصلاحه لضمان وجود سياسة)
+#  REMARKS CRUD
 # ==========================================
-def seed_default_policies(db: Session):
-    count = db.query(models.PolicyProfile).count()
-    if count == 0:
-        for policy in DEFAULT_POLICIES:
-            db_policy = models.PolicyProfile(**policy)
-            db.add(db_policy)
-        db.commit()
-
-def update_item_decision(db: Session, boq_item_id: int):
-    item = db.query(models.BoqItem).filter(models.BoqItem.id == boq_item_id).first()
-    if not item: return
-
-    latrine = db.query(models.Latrine).filter(models.Latrine.id == item.latrine_id).first()
-    
-    # 🌟 إصلاح: التأكد من وجود سياسات في قاعدة البيانات
-    seed_default_policies(db)
-
-    policy = None
-    if latrine.policy_id:
-        policy = db.query(models.PolicyProfile).filter(models.PolicyProfile.id == latrine.policy_id).first()
-    if not policy:
-        policy = db.query(models.PolicyProfile).filter(models.PolicyProfile.is_default == True).first()
-    
-    if not policy: return # لن يحدث هذا بعد الآن بفضل دالة seed
-
-    open_remarks = db.query(models.Remark).filter(
-        models.Remark.latrine_id == item.latrine_id,
-        models.Remark.boq_code == item.boq_code,
-        models.Remark.status == 'open'
-    ).all()
-
-    highest_severity = None
-    if open_remarks:
-        severities = [r.severity for r in open_remarks]
-        if 'critical' in severities: highest_severity = 'critical'
-        elif 'major' in severities: highest_severity = 'major'
-        else: highest_severity = 'minor'
-
-    recommendation = generate_recommendation(
-        execution_pct=item.achievement_pct,
-        quality_status=item.quality_pass,
-        highest_remark_severity=highest_severity,
-        policy_rules=policy.rules_json
-    )
-
-    decision = db.query(models.DecisionRecord).filter(models.DecisionRecord.boq_item_id == item.id).first()
-    if not decision:
-        decision = models.DecisionRecord(boq_item_id=item.id)
-        db.add(decision)
-
-    decision.execution_pct = item.achievement_pct
-    decision.quality_status = item.quality_pass
-    decision.highest_remark_severity = highest_severity
-    
-    decision.system_recommendation_code = recommendation["code"]
-    decision.system_recommendation_note = recommendation["note"]
-    decision.system_payment_pct = recommendation["payment_pct"]
-    
-    if not decision.human_decision_code:
-        decision.final_state = "OPEN"
-
-    db.commit()
-
-# ==========================================
-# 🌟 الحساب المالي المعتمد على القرارات
-# ==========================================
-def recalc_latrine_progress(db: Session, latrine_id: int):
-    latrine = db.query(models.Latrine).filter(models.Latrine.id == latrine_id).with_for_update().first()
-    if not latrine: return
-
-    items = db.query(models.BoqItem).filter(models.BoqItem.latrine_id == latrine_id).all()
-    if not items: return
-
-    dictionary_items = db.query(models.BoqDictionary).filter(models.BoqDictionary.is_active == True).all()
-    dynamic_prices = {item.boq_code: item.unit_price for item in dictionary_items}
-
-    fallback_prices = {
-        'A1': 10.0, 'A2': 14.0, 'A3': 5.0, 'A4': 70.0, 'A5': 40.0, 'A6': 5.0,
-        'B1': 5.0, 'B2': 3.0, 'B3': 30.0,
-        'C1': 70.0, 'C2': 20.0, 'C3': 40.0, 'C4': 30.0,
-    }
-
-    total_planned_cost = 0.0
-    total_earned_value = 0.0
-    total_physical_progress = 0.0
-
-    for item in items:
-        price = dynamic_prices.get(item.boq_code, fallback_prices.get(item.boq_code, 0.0))
-        planned_qty = item.planned_qty or 0.0
-        total_planned_cost += (planned_qty * price)
-
-        achieved_qty = item.achieved_qty or 0.0
-        total_physical_progress += (achieved_qty * price)
-
-        decision = db.query(models.DecisionRecord).filter(models.DecisionRecord.boq_item_id == item.id).first()
-        if decision:
-            payment_pct = decision.human_payment_pct if decision.human_payment_pct is not None else decision.system_payment_pct
-            total_earned_value += (planned_qty * (payment_pct / 100.0) * price)
-
-    if total_planned_cost > 0:
-        latrine.overall_pct = round((total_physical_progress / total_planned_cost) * 100, 2)
-    else:
-        latrine.overall_pct = 0.0
-
-    if latrine.overall_pct >= 99.9:
-        latrine.status = 'completed'
-    elif latrine.overall_pct > 0:
-        latrine.status = 'in_progress'
-    else:
-        latrine.status = 'not_started'
-
-    db.commit()
-
 def create_remark(db: Session, remark: schemas.RemarkCreate):
     db_remark = models.Remark(**remark.dict())
     db.add(db_remark)
@@ -232,7 +125,9 @@ def update_remark(db: Session, remark_id: int, updates: schemas.RemarkUpdate):
     db.refresh(remark)
     return remark
 
-# ---------- Daily Log CRUD ----------
+# ==========================================
+#  DAILY LOG CRUD
+# ==========================================
 def create_daily_log(db: Session, log: schemas.DailyLogCreate):
     db_log = models.DailyLog(**log.dict())
     db.add(db_log)
@@ -274,7 +169,9 @@ def get_daily_log_stats(db: Session, target_date: datetime):
         remarks_issued=remarks
     )
 
-# ---------- Dashboard ----------
+# ==========================================
+#  DASHBOARD
+# ==========================================
 def get_dashboard_summary(db: Session):
     total = db.query(models.Latrine).count()
     completed = db.query(models.Latrine).filter(models.Latrine.status == 'completed').count()
@@ -304,7 +201,9 @@ def get_category_progress(db: Session):
     ).group_by(models.BoqItem.category).all()
     return [schemas.CategoryProgress(category=r[0], avg_achievement_pct=round(float(r[1] or 0), 2)) for r in result]
 
-# ---------- BoQ Dictionary CRUD ----------
+# ==========================================
+#  BOQ DICTIONARY CRUD
+# ==========================================
 def get_boq_dictionary(db: Session):
     return db.query(models.BoqDictionary).filter(models.BoqDictionary.is_active == True).all()
 
@@ -337,6 +236,7 @@ def delete_boq_dictionary_item(db: Session, boq_code: str):
     return item
 
 def seed_boq_items(db: Session, latrine_id: int):
+    """تغذية بنود الـ BoQ للحمام من القاموس أو من قائمة احتياطية"""
     dictionary = get_boq_dictionary(db)
 
     if not dictionary:
@@ -373,7 +273,242 @@ def seed_boq_items(db: Session, latrine_id: int):
         db.add(db_item)
     db.commit()
 
-# ---------- Sync Engine Processor ----------
+# ==========================================
+#  GOVERNANCE & DECISION ENGINE
+# ==========================================
+def seed_default_policies(db: Session):
+    """حقن السياسات الافتراضية (Idempotent - لا يكرر الإدخال)"""
+    existing_names = {p.name for p in db.query(models.PolicyProfile.name).all()}
+    new_policies = []
+    for policy in DEFAULT_POLICIES:
+        if policy["name"] not in existing_names:
+            new_policies.append(models.PolicyProfile(**policy))
+    if new_policies:
+        db.bulk_save_objects(new_policies)
+        db.commit()
+
+def update_item_decision(db: Session, boq_item_id: int):
+    item = db.query(models.BoqItem).filter(models.BoqItem.id == boq_item_id).first()
+    if not item:
+        return
+
+    latrine = db.query(models.Latrine).filter(models.Latrine.id == item.latrine_id).first()
+
+    seed_default_policies(db)
+
+    policy = None
+    if latrine.policy_id:
+        policy = db.query(models.PolicyProfile).filter(models.PolicyProfile.id == latrine.policy_id).first()
+    if not policy:
+        policy = db.query(models.PolicyProfile).filter(models.PolicyProfile.is_default == True).first()
+
+    if not policy:
+        return
+
+    open_remarks = db.query(models.Remark).filter(
+        models.Remark.latrine_id == item.latrine_id,
+        models.Remark.boq_code == item.boq_code,
+        models.Remark.status == 'open'
+    ).all()
+
+    highest_severity = None
+    if open_remarks:
+        severities = [r.severity for r in open_remarks]
+        if 'critical' in severities:
+            highest_severity = 'critical'
+        elif 'major' in severities:
+            highest_severity = 'major'
+        else:
+            highest_severity = 'minor'
+
+    recommendation = generate_recommendation(
+        execution_pct=item.achievement_pct,
+        quality_status=item.quality_pass,
+        highest_remark_severity=highest_severity,
+        policy_rules=policy.rules_json
+    )
+
+    decision = db.query(models.DecisionRecord).filter(models.DecisionRecord.boq_item_id == item.id).first()
+    if not decision:
+        decision = models.DecisionRecord(boq_item_id=item.id)
+        db.add(decision)
+
+    decision.execution_pct = item.achievement_pct
+    decision.quality_status = item.quality_pass
+    decision.highest_remark_severity = highest_severity
+
+    decision.system_recommendation_code = recommendation["code"]
+    decision.system_recommendation_note = recommendation["note"]
+    decision.system_payment_pct = recommendation["payment_pct"]
+
+    if not decision.human_decision_code:
+        decision.final_state = "OPEN"
+
+    db.commit()
+
+def recalc_latrine_progress(db: Session, latrine_id: int):
+    latrine = db.query(models.Latrine).filter(models.Latrine.id == latrine_id).with_for_update().first()
+    if not latrine:
+        return
+
+    items = db.query(models.BoqItem).filter(models.BoqItem.latrine_id == latrine_id).all()
+    if not items:
+        return
+
+    dictionary_items = db.query(models.BoqDictionary).filter(models.BoqDictionary.is_active == True).all()
+    dynamic_prices = {item.boq_code: item.unit_price for item in dictionary_items}
+
+    fallback_prices = {
+        'A1': 10.0, 'A2': 14.0, 'A3': 5.0, 'A4': 70.0, 'A5': 40.0, 'A6': 5.0,
+        'B1': 5.0, 'B2': 3.0, 'B3': 30.0,
+        'C1': 70.0, 'C2': 20.0, 'C3': 40.0, 'C4': 30.0,
+    }
+
+    total_planned_cost = 0.0
+    total_earned_value = 0.0
+    total_physical_progress = 0.0
+
+    for item in items:
+        price = dynamic_prices.get(item.boq_code, fallback_prices.get(item.boq_code, 0.0))
+        planned_qty = item.planned_qty or 0.0
+        total_planned_cost += (planned_qty * price)
+
+        achieved_qty = item.achieved_qty or 0.0
+        total_physical_progress += (achieved_qty * price)
+
+        decision = db.query(models.DecisionRecord).filter(models.DecisionRecord.boq_item_id == item.id).first()
+        if decision:
+            payment_pct = decision.human_payment_pct if decision.human_payment_pct is not None else decision.system_payment_pct
+            total_earned_value += (planned_qty * (payment_pct / 100.0) * price)
+
+    if total_planned_cost > 0:
+        latrine.overall_pct = round((total_physical_progress / total_planned_cost) * 100, 2)
+    else:
+        latrine.overall_pct = 0.0
+
+    if latrine.overall_pct >= 99.9:
+        latrine.status = 'completed'
+    elif latrine.overall_pct > 0:
+        latrine.status = 'in_progress'
+    else:
+        latrine.status = 'not_started'
+
+    db.commit()
+
+def get_governance_items(db: Session, status_filter: str = None):
+    query = db.query(models.DecisionRecord, models.BoqItem, models.Latrine)\
+              .join(models.BoqItem, models.DecisionRecord.boq_item_id == models.BoqItem.id)\
+              .join(models.Latrine, models.BoqItem.latrine_id == models.Latrine.id)
+
+    if status_filter:
+        query = query.filter(models.DecisionRecord.system_recommendation_code == status_filter)
+
+    results = query.all()
+
+    output = []
+    for decision, item, latrine in results:
+        output.append(schemas.GovernanceItemOut(
+            decision_id=decision.id,
+            boq_item_id=item.id,
+            latrine_id=latrine.latrine_id,
+            beneficiary_hh=latrine.beneficiary_hh,
+            boq_code=item.boq_code,
+            execution_pct=decision.execution_pct or 0.0,
+            quality_status=decision.quality_status or "pending",
+            highest_remark_severity=decision.highest_remark_severity,
+            system_recommendation_code=decision.system_recommendation_code or "HOLD",
+            system_recommendation_note=decision.system_recommendation_note,
+            system_payment_pct=decision.system_payment_pct or 0.0,
+            human_decision_code=decision.human_decision_code,
+            human_payment_pct=decision.human_payment_pct,
+            override_reason=decision.override_reason,
+            final_state=decision.final_state or "OPEN"
+        ))
+    return output
+
+def override_item_decision(db: Session, decision_id: int, override_data: schemas.DecisionOverrideUpdate):
+    decision = db.query(models.DecisionRecord).filter(models.DecisionRecord.id == decision_id).first()
+    if not decision:
+        return None
+
+    decision.human_decision_code = override_data.human_decision_code
+    decision.human_payment_pct = override_data.human_payment_pct
+    decision.override_reason = override_data.override_reason
+    decision.approved_by = override_data.approved_by
+    decision.approved_at = datetime.utcnow()
+    decision.final_state = "LOCKED"
+
+    db.commit()
+    db.refresh(decision)
+
+    item = db.query(models.BoqItem).filter(models.BoqItem.id == decision.boq_item_id).first()
+    if item:
+        recalc_latrine_progress(db, item.latrine_id)
+
+    return decision
+
+# ==========================================
+#  SMART OBSERVATION ENGINE (قوالب الملاحظات)
+# ==========================================
+def get_remark_templates(db: Session):
+    return db.query(models.RemarkTemplate).filter(models.RemarkTemplate.is_active == True).all()
+
+def create_remark_template(db: Session, template: schemas.RemarkTemplateCreate):
+    db_template = models.RemarkTemplate(**template.dict())
+    db.add(db_template)
+    db.commit()
+    db.refresh(db_template)
+    return db_template
+
+def update_remark_template(db: Session, template_code: str, updates: schemas.RemarkTemplateUpdate):
+    template = db.query(models.RemarkTemplate).filter(
+        models.RemarkTemplate.template_code == template_code
+    ).with_for_update().first()
+    if not template:
+        return None
+    for key, value in updates.dict(exclude_unset=True).items():
+        setattr(template, key, value)
+    template.version += 1
+    db.commit()
+    db.refresh(template)
+    return template
+
+def delete_remark_template(db: Session, template_code: str):
+    template = db.query(models.RemarkTemplate).filter(
+        models.RemarkTemplate.template_code == template_code
+    ).first()
+    if not template:
+        return None
+    template.is_active = False
+    template.archived_at = datetime.utcnow()
+    db.commit()
+    return template
+
+def seed_default_remark_templates(db: Session):
+    """إدراج القوالب الافتراضية عند التشغيل الأول (Idempotent)"""
+    default_templates = [
+        {"template_code": "TPL-001", "title": "تطبيل في البلاط", "description": "وجود فراغات تحت البلاط تسبب صوتاً أجوفاً عند الطرق.", "default_action": "إزالة البلاط المطبل وإعادة تركيبه بمونة كافية.", "default_severity": "major", "boq_tags": ["A6"]},
+        {"template_code": "TPL-002", "title": "تسريب مياه من التوصيلات", "description": "وجود تسريب مياه واضح من نقاط لحام المواسير أو المحابس.", "default_action": "فك الوصلة، وضع التيفلون/الغراء بشكل صحيح وإعادة الربط.", "default_severity": "critical", "boq_tags": ["B2", "E10"]},
+        {"template_code": "TPL-003", "title": "عدم استواء اللياسة", "description": "سطح اللياسة غير مستوٍ ويظهر تموجات عند الفحص بالقدة.", "default_action": "صنفرة المناطق البارزة أو إعادة التلبيس للمناطق المعيبة.", "default_severity": "minor", "boq_tags": ["A3"]},
+        {"template_code": "TPL-004", "title": "ميول غير كافٍ في الأرضية", "description": "تجمع مياه في أرضية الحمام بسبب عدم توجيه الميول نحو الصفاية.", "default_action": "إعادة تبليط الأرضية مع ضبط الميول بشكل صحيح.", "default_severity": "major", "boq_tags": ["A6"]},
+        {"template_code": "GEN-001", "title": "مخلفات بناء في الموقع", "description": "ترك المقاول لمخلفات البناء والأنقاض داخل أو حول الحمام.", "default_action": "تنظيف الموقع بالكامل وترحيل المخلفات للمقالب المعتمدة.", "default_severity": "minor", "boq_tags": ["ALL"]},
+        {"template_code": "GEN-002", "title": "عدم الالتزام بمعدات السلامة", "description": "العمال لا يرتدون معدات السلامة المهنية (خوذة، حذاء، قفازات).", "default_action": "إيقاف العمال المخالفين وتوفير معدات السلامة فوراً.", "default_severity": "major", "boq_tags": ["ALL"]},
+    ]
+
+    existing_codes = {t.template_code for t in db.query(models.RemarkTemplate.template_code).all()}
+
+    new_templates = []
+    for tpl in default_templates:
+        if tpl["template_code"] not in existing_codes:
+            new_templates.append(models.RemarkTemplate(**tpl, created_by="System Auto-Seeder"))
+
+    if new_templates:
+        db.bulk_save_objects(new_templates)
+        db.commit()
+
+# ==========================================
+#  SYNC ENGINE PROCESSOR (مع دعم JSON والتحويلات الكاملة)
+# ==========================================
 def process_sync_queue(db: Session, sync_req: schemas.SyncRequest) -> schemas.SyncResponse:
     processed = []
     failed = []
@@ -385,13 +520,14 @@ def process_sync_queue(db: Session, sync_req: schemas.SyncRequest) -> schemas.Sy
 
     for op in sync_req.operations:
         try:
-            # 🌟 إصلاح: تحويل الـ payload إلى قاموس إذا وصل كنص
             op_data = op.payload
+
+            # تحويل النص إلى قاموس إذا لزم الأمر
             if isinstance(op_data, str):
                 try:
                     op_data = json.loads(op_data)
                 except:
-                    pass # إذا فشل التحويل، نتركه كما هو
+                    pass
 
             if isinstance(op_data, dict):
                 for key in list(op_data.keys()):
@@ -423,7 +559,7 @@ def process_sync_queue(db: Session, sync_req: schemas.SyncRequest) -> schemas.Sy
                 remark_data.pop('id', None)
                 remark_data.pop('local_id', None)
 
-                # 🌟 إصلاح: تحويل الحقول المشفرة (JSON Strings) إلى نصوص عادية ليقبلها SQLAlchemy
+                # تحويل الحقول المعقدة إلى نصوص JSON إذا لزم الأمر
                 if 'description' in remark_data and isinstance(remark_data['description'], dict):
                     remark_data['description'] = json.dumps(remark_data['description'])
                 if 'action_required' in remark_data and isinstance(remark_data['action_required'], dict):
@@ -440,13 +576,14 @@ def process_sync_queue(db: Session, sync_req: schemas.SyncRequest) -> schemas.Sy
 
                 processed.append(op.seq)
                 latrines_to_recalc.add(op_data.get("latrine_id"))
-                
+
                 if new_remark.boq_code:
                     related_item = db.query(models.BoqItem).filter(
                         models.BoqItem.latrine_id == new_remark.latrine_id,
                         models.BoqItem.boq_code == new_remark.boq_code
                     ).first()
-                    if related_item: items_to_recalc_decision.add(related_item.id)
+                    if related_item:
+                        items_to_recalc_decision.add(related_item.id)
 
             elif op.type == "UPDATE_REMARK":
                 local_uuid = op_data.get("local_uuid")
@@ -466,19 +603,19 @@ def process_sync_queue(db: Session, sync_req: schemas.SyncRequest) -> schemas.Sy
                 if remark:
                     for key, value in op_data.items():
                         if hasattr(remark, key) and key not in ["id", "local_uuid", "sync_status", "local_id"]:
-                            # 🌟 إصلاح: تحويل الحقول المشفرة
                             if isinstance(value, dict):
                                 value = json.dumps(value)
                             setattr(remark, key, value)
                     remark.last_update = datetime.utcnow()
                     processed.append(op.seq)
-                    
+
                     if remark.boq_code:
                         related_item = db.query(models.BoqItem).filter(
                             models.BoqItem.latrine_id == remark.latrine_id,
                             models.BoqItem.boq_code == remark.boq_code
                         ).first()
-                        if related_item: items_to_recalc_decision.add(related_item.id)
+                        if related_item:
+                            items_to_recalc_decision.add(related_item.id)
                 else:
                     failed.append(op.seq)
                     errors[str(op.seq)] = "Remark not found on server"
@@ -528,58 +665,3 @@ def process_sync_queue(db: Session, sync_req: schemas.SyncRequest) -> schemas.Sy
         failed_ids=failed,
         errors=errors
     )
-
-# ==========================================
-# 🌟 GOVERNANCE CRUD
-# ==========================================
-def get_governance_items(db: Session, status_filter: str = None):
-    query = db.query(models.DecisionRecord, models.BoqItem, models.Latrine)\
-              .join(models.BoqItem, models.DecisionRecord.boq_item_id == models.BoqItem.id)\
-              .join(models.Latrine, models.BoqItem.latrine_id == models.Latrine.id)
-    
-    if status_filter:
-        query = query.filter(models.DecisionRecord.system_recommendation_code == status_filter)
-        
-    results = query.all()
-    
-    output = []
-    for decision, item, latrine in results:
-        output.append(schemas.GovernanceItemOut(
-            decision_id=decision.id,
-            boq_item_id=item.id,
-            latrine_id=latrine.latrine_id,
-            beneficiary_hh=latrine.beneficiary_hh,
-            boq_code=item.boq_code,
-            execution_pct=decision.execution_pct or 0.0,
-            quality_status=decision.quality_status or "pending",
-            highest_remark_severity=decision.highest_remark_severity,
-            system_recommendation_code=decision.system_recommendation_code or "HOLD",
-            system_recommendation_note=decision.system_recommendation_note,
-            system_payment_pct=decision.system_payment_pct or 0.0,
-            human_decision_code=decision.human_decision_code,
-            human_payment_pct=decision.human_payment_pct,
-            override_reason=decision.override_reason,
-            final_state=decision.final_state or "OPEN"
-        ))
-    return output
-
-def override_item_decision(db: Session, decision_id: int, override_data: schemas.DecisionOverrideUpdate):
-    decision = db.query(models.DecisionRecord).filter(models.DecisionRecord.id == decision_id).first()
-    if not decision:
-        return None
-        
-    decision.human_decision_code = override_data.human_decision_code
-    decision.human_payment_pct = override_data.human_payment_pct
-    decision.override_reason = override_data.override_reason
-    decision.approved_by = override_data.approved_by
-    decision.approved_at = datetime.utcnow()
-    decision.final_state = "LOCKED"
-    
-    db.commit()
-    db.refresh(decision)
-    
-    item = db.query(models.BoqItem).filter(models.BoqItem.id == decision.boq_item_id).first()
-    if item:
-        recalc_latrine_progress(db, item.latrine_id)
-        
-    return decision
