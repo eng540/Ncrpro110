@@ -504,7 +504,7 @@ def seed_default_remark_templates(db: Session):
         db.commit()
 
 # ==========================================
-#  SYNC ENGINE PROCESSOR (مع تعقيم البيانات)
+#  SYNC ENGINE PROCESSOR (مع تعقيم البيانات + معالج CREATE_TEMPLATE)
 # ==========================================
 def process_sync_queue(db: Session, sync_req: schemas.SyncRequest) -> schemas.SyncResponse:
     processed = []
@@ -644,6 +644,30 @@ def process_sync_queue(db: Session, sync_req: schemas.SyncRequest) -> schemas.Sy
                     new_log.date = datetime.utcnow()
                 db.add(new_log)
                 processed.append(op.seq)
+
+            # 🌟 معالج CREATE_TEMPLATE (إضافة القوالب من الأجهزة المحمولة)
+            elif op.type == "CREATE_TEMPLATE":
+                template_data = op_data.copy()
+                if not template_data.get('template_code'):
+                    failed.append(op.seq)
+                    errors[str(op.seq)] = "Missing template_code"
+                    continue
+
+                existing = db.query(models.RemarkTemplate).filter(
+                    models.RemarkTemplate.template_code == template_data['template_code']
+                ).first()
+                if existing:
+                    processed.append(op.seq)  # موجود مسبقاً، نعتبره نجاح
+                else:
+                    try:
+                        new_tpl = models.RemarkTemplate(**template_data)
+                        db.add(new_tpl)
+                        db.flush()
+                        processed.append(op.seq)
+                    except Exception as e:
+                        failed.append(op.seq)
+                        errors[str(op.seq)] = f"Template creation error: {str(e)}"
+                db.commit()
 
             db.commit()
 
