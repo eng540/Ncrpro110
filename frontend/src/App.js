@@ -67,21 +67,41 @@ function App() {
   const [isInitializing, setIsInitializing] = useState(true);
   const [sidebarExpanded, setSidebarExpanded] = useState(true);
 
+  // ==========================================
+  // 🌟 التحديث: جلب القوالب الذكية مع البيانات
+  // ==========================================
   const initializeData = async () => {
     try {
       const count = await db.latrines.count();
       if (count === 0 && navigator.onLine) {
-        const [latrinesRes, boqRes, remarksRes] = await Promise.all([
+        const [latrinesRes, boqRes, remarksRes, templatesRes] = await Promise.all([
           fetch(`${API_BASE_URL}/latrines?limit=200`),
           fetch(`${API_BASE_URL}/boq-items`),
-          fetch(`${API_BASE_URL}/remarks`)
+          fetch(`${API_BASE_URL}/remarks`),
+          fetch(`${API_BASE_URL}/remark-templates`)
         ]);
 
         if (latrinesRes.ok && boqRes.ok) {
           const latrines = await latrinesRes.json();
           const boqItems = await boqRes.json();
           const remarks = remarksRes.ok ? await remarksRes.json() : [];
-          await populateLocalDB(latrines, boqItems, remarks);
+          const templates = templatesRes.ok ? await templatesRes.json() : [];
+          
+          await db.transaction('rw', db.latrines, db.boq_items, db.remarks, db.remark_templates, async () => {
+            await db.latrines.clear();
+            await db.boq_items.clear();
+            await db.remarks.clear();
+            await db.remark_templates.clear();
+
+            if (latrines?.length > 0) await db.latrines.bulkAdd(latrines);  
+            if (boqItems?.length > 0) await db.boq_items.bulkAdd(boqItems);  
+            if (templates?.length > 0) await db.remark_templates.bulkAdd(templates); // 🌟 حفظ القوالب محلياً
+            
+            if (remarks?.length > 0) {  
+              const remarksWithSync = remarks.map(r => ({...r, sync_status: 'synced'}));  
+              await db.remarks.bulkAdd(remarksWithSync);  
+            }  
+          });
         }
       }
     } catch (error) {
@@ -203,7 +223,7 @@ function App() {
 
         {sidebarExpanded && (
           <div style={{ padding: '15px', fontSize: '11px', color: 'rgba(255,255,255,0.5)', textAlign: 'center', borderTop: '1px solid rgba(255,255,255,0.1)' }}>
-            NRC Latrine Tracker v2.0
+            NRC Latrine Tracker v3.0
           </div>
         )}
       </div>
