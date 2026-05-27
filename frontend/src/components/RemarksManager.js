@@ -48,7 +48,7 @@ const LoadingSkeleton = () => (
   </div>
 );
 
-// --- Smart Remark Form (with initialData for editing) ---
+// --- Smart Remark Form (with initialData, saveAsTemplate) ---
 const SmartRemarkForm = ({ initialData, boqCode, isSaving, onSubmit, onCancel, templates }) => {
   const [desc, setDesc] = useState(initialData?.description || initialData?.template?.title || '');
   const [suffix, setSuffix] = useState(initialData?.suffix_note || '');
@@ -57,6 +57,7 @@ const SmartRemarkForm = ({ initialData, boqCode, isSaving, onSubmit, onCancel, t
   const [dead, setDead] = useState(initialData?.deadline ? initialData.deadline.split('T')[0] : '');
   const [selectedTemplate, setSelectedTemplate] = useState(initialData?.template || null);
   const [showSuggestions, setShowSuggestions] = useState(false);
+  const [saveAsTemplate, setSaveAsTemplate] = useState(false);
   const wrapperRef = useRef(null);
 
   useEffect(() => {
@@ -90,6 +91,7 @@ const SmartRemarkForm = ({ initialData, boqCode, isSaving, onSubmit, onCancel, t
     setSev(tpl.default_severity || 'minor');
     setAction(tpl.default_action || '');
     setShowSuggestions(false);
+    setSaveAsTemplate(false);
   };
 
   const handleDescChange = (e) => {
@@ -111,11 +113,12 @@ const SmartRemarkForm = ({ initialData, boqCode, isSaving, onSubmit, onCancel, t
       severity: sev,
       action_required: action.trim(),
       deadline: dead,
-      status: initialData?.status || 'open'
+      status: initialData?.status || 'open',
+      save_as_template: !selectedTemplate && saveAsTemplate
     });
     
     if (!initialData) {
-      setDesc(''); setSuffix(''); setAction(''); setDead(''); setSev('minor'); setSelectedTemplate(null);
+      setDesc(''); setSuffix(''); setAction(''); setDead(''); setSev('minor'); setSelectedTemplate(null); setSaveAsTemplate(false);
     }
   };
 
@@ -169,6 +172,13 @@ const SmartRemarkForm = ({ initialData, boqCode, isSaving, onSubmit, onCancel, t
         <input type="text" placeholder="الإجراء المطلوب..." value={action} onChange={(e) => setAction(e.target.value)} style={{ flex: 1, padding: '10px', borderRadius: '4px', border: '1px solid #ccc', minWidth: '200px' }} disabled={isSaving} />
         <input type="date" value={dead} onChange={(e) => setDead(e.target.value)} style={{ padding: '10px', borderRadius: '4px', border: '1px solid #ccc' }} disabled={isSaving} />
         
+        {!selectedTemplate && !isEdit && (
+          <label style={{ display: 'flex', alignItems: 'center', gap: '5px', fontSize: '12px', color: '#8e44ad', cursor: 'pointer', whiteSpace: 'nowrap' }}>
+            <input type="checkbox" checked={saveAsTemplate} onChange={(e) => setSaveAsTemplate(e.target.checked)} disabled={isSaving} />
+            حفظ كقالب جديد
+          </label>
+        )}
+
         <div style={{ display: 'flex', gap: '10px', marginLeft: 'auto' }}>
           {onCancel && (
             <button type="button" onClick={onCancel} disabled={isSaving} style={{ padding: '10px 20px', background: '#ecf0f1', color: '#333', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>إلغاء</button>
@@ -182,7 +192,7 @@ const SmartRemarkForm = ({ initialData, boqCode, isSaving, onSubmit, onCancel, t
   );
 };
 
-// --- Aggregated Card with boq_code in chips ---
+// --- Aggregated Card (unchanged but with boq_code chips as before) ---
 const AggregatedRemarkCard = ({ group, getLatrineCode, isProcessing, onClose }) => {
   const tpl = group.template;
   const remarks = group.remarks;
@@ -239,8 +249,8 @@ const AggregatedRemarkCard = ({ group, getLatrineCode, isProcessing, onClose }) 
   );
 };
 
-// --- Single Card (with edit) ---
-const SingleRemarkCard = ({ r, getLatrineCode, isProcessing, onClose, onEdit }) => (
+// --- Single Card (with Save as Template) ---
+const SingleRemarkCard = ({ r, getLatrineCode, isProcessing, onClose, onEdit, onSaveAsTemplate }) => (
   <div style={{ background: 'white', borderRadius: '8px', padding: '16px', boxShadow: '0 2px 8px rgba(0,0,0,0.08)', borderRight: `4px solid ${UI_COLORS.severity[r.severity]}`, opacity: r.status === 'closed' ? 0.7 : 1, display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '10px', alignItems: 'flex-start', flexWrap: 'wrap', gap: '5px' }}>
@@ -271,10 +281,15 @@ const SingleRemarkCard = ({ r, getLatrineCode, isProcessing, onClose, onEdit }) 
           {UI_LABELS.status[r.status] || r.status}
         </span>
         {r.status === 'open' && (
-          <div style={{ display: 'flex', gap: '5px' }}>
+          <div style={{ display: 'flex', gap: '5px', flexWrap: 'wrap' }}>
             <button onClick={() => onEdit(r)} disabled={isProcessing} style={{ padding: '6px 12px', background: '#f39c12', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold' }}>
               ✏️ تعديل
             </button>
+            {!r.template_id && (
+              <button onClick={() => onSaveAsTemplate(r)} disabled={isProcessing} style={{ padding: '6px 12px', background: '#8e44ad', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold' }}>
+                📋 حفظ كقالب
+              </button>
+            )}
             <button onClick={() => onClose([r])} disabled={isProcessing} style={{ padding: '6px 16px', background: isProcessing ? '#95a5a6' : '#70AD47', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold' }}>
               {isProcessing ? '⏳' : '✓ إغلاق'}
             </button>
@@ -293,7 +308,7 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
   const [severityFilter, setSeverityFilter] = useState('');
   const [syncFilter, setSyncFilter] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
-  const [sortBy, setSortBy] = useState('smart'); // smart, newest, oldest, severity, frequency
+  const [sortBy, setSortBy] = useState('smart');
   const [error, setError] = useState(null);
   const [isSaving, setIsSaving] = useState(false);
   const [isRetrying, setIsRetrying] = useState(false);
@@ -345,50 +360,29 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
       );
     }
 
-    if (statusFilter) {
-      filtered = filtered.filter(r => r.status === statusFilter);
-    }
-    if (severityFilter) {
-      filtered = filtered.filter(r => r.severity === severityFilter);
-    }
-    if (syncFilter) {
-      filtered = filtered.filter(r => r.sync_status === syncFilter);
-    }
+    if (statusFilter) filtered = filtered.filter(r => r.status === statusFilter);
+    if (severityFilter) filtered = filtered.filter(r => r.severity === severityFilter);
+    if (syncFilter) filtered = filtered.filter(r => r.sync_status === syncFilter);
 
-    // Apply sorting
-    if (sortBy === 'newest') {
-      filtered.sort((a, b) => new Date(b.date_logged) - new Date(a.date_logged));
-    } else if (sortBy === 'oldest') {
-      filtered.sort((a, b) => new Date(a.date_logged) - new Date(b.date_logged));
-    } else if (sortBy === 'severity') {
-      filtered.sort((a, b) => (SEVERITY_WEIGHT[b.severity] || 0) - (SEVERITY_WEIGHT[a.severity] || 0));
-    } else if (sortBy === 'frequency') {
+    if (sortBy === 'newest') filtered.sort((a, b) => new Date(b.date_logged) - new Date(a.date_logged));
+    else if (sortBy === 'oldest') filtered.sort((a, b) => new Date(a.date_logged) - new Date(b.date_logged));
+    else if (sortBy === 'severity') filtered.sort((a, b) => (SEVERITY_WEIGHT[b.severity] || 0) - (SEVERITY_WEIGHT[a.severity] || 0));
+    else if (sortBy === 'frequency') {
       const countMap = {};
-      filtered.forEach(r => {
-        const key = r.template_id || r.description;
-        countMap[key] = (countMap[key] || 0) + 1;
-      });
-      filtered.sort((a, b) => {
-        const countA = countMap[a.template_id || a.description] || 0;
-        const countB = countMap[b.template_id || b.description] || 0;
-        return countB - countA;
-      });
-    } else { // smart
+      filtered.forEach(r => { const key = r.template_id || r.description; countMap[key] = (countMap[key] || 0) + 1; });
+      filtered.sort((a, b) => (countMap[b.template_id || b.description] || 0) - (countMap[a.template_id || a.description] || 0));
+    } else {
       filtered.sort((a, b) => {
         if (a.status === 'open' && b.status !== 'open') return -1;
         if (a.status !== 'open' && b.status === 'open') return 1;
-        const weightA = SEVERITY_WEIGHT[a.severity] || 0;
-        const weightB = SEVERITY_WEIGHT[b.severity] || 0;
-        if (weightA !== weightB) return weightB - weightA;
+        const wA = SEVERITY_WEIGHT[a.severity] || 0, wB = SEVERITY_WEIGHT[b.severity] || 0;
+        if (wA !== wB) return wB - wA;
         return new Date(b.date_logged) - new Date(a.date_logged);
       });
     }
 
     const counts = rawRemarks.reduce((acc, r) => {
-      acc.total++;
-      if (r.status === 'open') acc.open++;
-      if (r.status === 'closed') acc.closed++;
-      if (r.sync_status === 'failed') acc.failed++;
+      acc.total++; if (r.status === 'open') acc.open++; if (r.status === 'closed') acc.closed++; if (r.sync_status === 'failed') acc.failed++;
       return acc;
     }, { total: 0, open: 0, closed: 0, failed: 0 });
 
@@ -397,9 +391,7 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
       const groupMap = {};
       filtered.forEach(r => {
         const key = r.template_id ? `TPL_${r.template_id}` : `TXT_${r.description}`;
-        if (!groupMap[key]) {
-          groupMap[key] = { template: r.template, remarks: [] };
-        }
+        if (!groupMap[key]) groupMap[key] = { template: r.template, remarks: [] };
         groupMap[key].remarks.push(r);
       });
       groups = Object.values(groupMap).sort((a, b) => b.remarks.length - a.remarks.length);
@@ -409,17 +401,12 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
   }, [rawRemarks, statusFilter, severityFilter, syncFilter, searchQuery, sortBy, latrineId]);
 
   const handleAddOrUpdateRemark = async (formData) => {
-    setIsSaving(true);
-    setError(null);
+    setIsSaving(true); setError(null);
     try {
       if (formData.id) {
-        // Edit existing
         const updatedFields = {
-          template_id: formData.template_id,
-          description: formData.description,
-          suffix_note: formData.suffix_note,
-          severity: formData.severity,
-          action_required: formData.action_required,
+          template_id: formData.template_id, description: formData.description, suffix_note: formData.suffix_note,
+          severity: formData.severity, action_required: formData.action_required,
           deadline: formData.deadline ? new Date(formData.deadline).toISOString() : null,
           sync_status: formData.sync_status === 'synced' ? 'pending' : 'local'
         };
@@ -428,31 +415,62 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
         setEditingRemark(null);
         setError({ type: 'success', message: 'تم تحديث الملاحظة.' });
       } else {
-        // Add new
         const localUuid = uuidv4();
         const newRemark = {
-          local_uuid: localUuid,
-          latrine_id: latrineId,
-          boq_code: boqCode || null,
-          template_id: formData.template_id,
-          description: formData.description,
-          suffix_note: formData.suffix_note,
-          severity: formData.severity,
-          action_required: formData.action_required || null,
+          local_uuid: localUuid, latrine_id: latrineId, boq_code: boqCode || null,
+          template_id: formData.template_id, description: formData.description, suffix_note: formData.suffix_note,
+          severity: formData.severity, action_required: formData.action_required || null,
           deadline: formData.deadline ? new Date(formData.deadline).toISOString() : null,
-          status: 'open',
-          sync_status: 'local',
-          date_logged: new Date().toISOString(),
-          closed_date: null
+          status: 'open', sync_status: 'local', date_logged: new Date().toISOString(), closed_date: null
         };
         await db.remarks.add(newRemark);
         await pushToSyncQueue('CREATE_REMARK', newRemark);
-        setError({ type: 'success', message: 'تم تسجيل الملاحظة محلياً.' });
+        
+        if (formData.save_as_template) {
+          await handleSaveAsTemplateFromData({
+            description: formData.description,
+            severity: formData.severity,
+            action_required: formData.action_required,
+            boq_code: boqCode
+          });
+          setError({ type: 'success', message: 'تم تسجيل الملاحظة وحفظها كقالب جديد.' });
+        } else {
+          setError({ type: 'success', message: 'تم تسجيل الملاحظة محلياً.' });
+        }
       }
     } catch (err) {
       setError({ type: 'error', message: 'فشل حفظ الملاحظة.' });
-    } finally {
-      setIsSaving(false);
+    } finally { setIsSaving(false); }
+  };
+
+  const handleSaveAsTemplateFromData = async (data) => {
+    const newTemplate = {
+      template_code: `TMP-${uuidv4().slice(0, 8).toUpperCase()}`,
+      title: data.description,
+      description: data.action_required || '',
+      default_action: data.action_required || '',
+      default_severity: data.severity,
+      boq_tags: data.boq_code ? [data.boq_code] : ['ALL'],
+      is_active: true,
+      version: 1,
+      created_by: 'field_engineer',
+      created_at: new Date().toISOString()
+    };
+    await db.remark_templates.add(newTemplate);
+    await pushToSyncQueue('CREATE_TEMPLATE', newTemplate);
+  };
+
+  const handleSaveAsTemplate = async (remark) => {
+    try {
+      await handleSaveAsTemplateFromData({
+        description: remark.description,
+        severity: remark.severity,
+        action_required: remark.action_required,
+        boq_code: remark.boq_code
+      });
+      setError({ type: 'success', message: 'تم حفظ الملاحظة كقالب جديد.' });
+    } catch (err) {
+      setError({ type: 'error', message: 'فشل حفظ القالب.' });
     }
   };
 
@@ -471,15 +489,11 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
     } catch (err) {
       setError({ type: 'error', message: 'فشل إغلاق الملاحظات.' });
     } finally {
-      setProcessingIds(prev => {
-        const next = new Set(prev);
-        ids.forEach(id => next.delete(id));
-        return next;
-      });
+      setProcessingIds(prev => { const next = new Set(prev); ids.forEach(id => next.delete(id)); return next; });
     }
   };
 
-  const handleRetrySync = async () => { /* كما هي */ };
+  const handleRetrySync = async () => { /* ... unchanged ... */ };
 
   const getLatrineCode = useCallback((id) => {
     if (latrineId && latrine) return latrine.latrine_id;
@@ -502,14 +516,12 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
 
       <ErrorBanner error={error} onDismiss={() => setError(null)} />
 
-      {/* Edit form or add form */}
       {editingRemark ? (
         <SmartRemarkForm initialData={editingRemark} boqCode={boqCode || editingRemark.boq_code} isSaving={isSaving} onSubmit={handleAddOrUpdateRemark} onCancel={() => setEditingRemark(null)} templates={templates} />
       ) : latrineId && (
         <SmartRemarkForm boqCode={boqCode} isSaving={isSaving} onSubmit={handleAddOrUpdateRemark} templates={templates} />
       )}
 
-      {/* Filters bar */}
       <div style={{ background: 'white', padding: '15px', borderRadius: '8px', marginBottom: '20px', boxShadow: '0 2px 4px rgba(0,0,0,0.05)', display: 'flex', flexWrap: 'wrap', gap: '15px', alignItems: 'center', justifyContent: 'space-between' }}>
         <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', flex: 1 }}>
           <input type="text" placeholder="🔍 بحث..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} style={{ padding: '8px 12px', borderRadius: '4px', border: '1px solid #ccc', minWidth: '150px', flex: 1 }} />
@@ -521,23 +533,16 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
           </select>
           <select value={severityFilter} onChange={e => setSeverityFilter(e.target.value)} style={{ padding: '8px', borderRadius: '4px', border: '1px solid #ccc' }}>
             <option value="">الشدة (الكل)</option>
-            <option value="minor">طفيفة</option>
-            <option value="major">كبيرة</option>
-            <option value="critical">حرجة</option>
+            <option value="minor">طفيفة</option><option value="major">كبيرة</option><option value="critical">حرجة</option>
           </select>
           <select value={syncFilter} onChange={e => setSyncFilter(e.target.value)} style={{ padding: '8px', borderRadius: '4px', border: '1px solid #ccc' }}>
             <option value="">المزامنة (الكل)</option>
-            <option value="local">محلي</option>
-            <option value="pending">قيد الإرسال</option>
-            <option value="synced">مُزامن</option>
-            <option value="failed">فشل الإرسال</option>
+            <option value="local">محلي</option><option value="pending">قيد الإرسال</option><option value="synced">مُزامن</option><option value="failed">فشل الإرسال</option>
           </select>
           <select value={sortBy} onChange={e => setSortBy(e.target.value)} style={{ padding: '8px', borderRadius: '4px', border: '2px solid #3498db', fontWeight: 'bold', color: '#2c3e50' }}>
             <option value="smart">ترتيب ذكي</option>
-            <option value="newest">الأحدث</option>
-            <option value="oldest">الأقدم</option>
-            <option value="severity">حسب الخطورة</option>
-            <option value="frequency">حسب التكرار</option>
+            <option value="newest">الأحدث</option><option value="oldest">الأقدم</option>
+            <option value="severity">حسب الخطورة</option><option value="frequency">حسب التكرار</option>
           </select>
         </div>
         {counters.failed > 0 && (
@@ -547,10 +552,7 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
         )}
       </div>
 
-      {/* Display */}
-      {!rawRemarks ? (
-        <LoadingSkeleton />
-      ) : processedRemarks.length === 0 ? (
+      {!rawRemarks ? <LoadingSkeleton /> : processedRemarks.length === 0 ? (
         <div style={{ padding: '60px', textAlign: 'center', color: '#7f8c8d', background: 'white', borderRadius: '8px', boxShadow: '0 2px 8px rgba(0,0,0,0.05)' }}>
           <div style={{ fontSize: '48px', marginBottom: '15px' }}>📭</div>
           <h3 style={{ margin: 0 }}>لا توجد ملاحظات مطابقة للبحث أو الفلتر.</h3>
@@ -558,7 +560,7 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
       ) : latrineId ? (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))', gap: '16px' }}>
           {processedRemarks.map(r => (
-            <SingleRemarkCard key={r.id} r={r} getLatrineCode={getLatrineCode} isProcessing={processingIds.has(r.id)} onClose={handleBulkClose} onEdit={setEditingRemark} />
+            <SingleRemarkCard key={r.id} r={r} getLatrineCode={getLatrineCode} isProcessing={processingIds.has(r.id)} onClose={handleBulkClose} onEdit={setEditingRemark} onSaveAsTemplate={handleSaveAsTemplate} />
           ))}
         </div>
       ) : (
