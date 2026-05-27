@@ -51,8 +51,8 @@ const LoadingSkeleton = () => (
   </div>
 );
 
-// --- Smart Remark Form (تعديل طفيف لدعم الحفظ كقالب) ---
-const SmartRemarkForm = ({ initialData, boqCode, isSaving, onSubmit, onCancel, templates, onSaveAsTemplate }) => {
+// --- Smart Remark Form (إضافة، تعديل، حفظ كقالب) ---
+const SmartRemarkForm = ({ initialData, boqCode, isSaving, onSubmit, onCancel, templates }) => {
   const [desc, setDesc] = useState(initialData?.description || (initialData?.template ? initialData.template.title : ''));
   const [suffix, setSuffix] = useState(initialData?.suffix_note || '');
   const [sev, setSev] = useState(initialData?.severity || 'minor');
@@ -61,7 +61,6 @@ const SmartRemarkForm = ({ initialData, boqCode, isSaving, onSubmit, onCancel, t
   const [selectedTemplate, setSelectedTemplate] = useState(initialData?.template || null);
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [saveAsTemplate, setSaveAsTemplate] = useState(false);
-
   const wrapperRef = useRef(null);
 
   useEffect(() => {
@@ -185,7 +184,7 @@ const SmartRemarkForm = ({ initialData, boqCode, isSaving, onSubmit, onCancel, t
   );
 };
 
-// --- Aggregated Card (من كود المطور) ---
+// --- Aggregated Card (للمشروع الشامل) ---
 const AggregatedRemarkCard = ({ group, getLatrineCode, isProcessing, onClose }) => {
   const tpl = group.template;
   const remarks = group.remarks;
@@ -229,8 +228,8 @@ const AggregatedRemarkCard = ({ group, getLatrineCode, isProcessing, onClose }) 
   );
 };
 
-// --- Single Card (مع زر تعديل) ---
-const SingleRemarkCard = ({ r, getLatrineCode, isProcessing, onClose, onEdit }) => (
+// --- Single Card (مع أزرار تعديل وإغلاق وحفظ كقالب) ---
+const SingleRemarkCard = ({ r, getLatrineCode, isProcessing, onClose, onEdit, onSaveAsTemplate }) => (
   <div style={{ background: 'white', borderRadius: '8px', padding: '16px', boxShadow: '0 2px 8px rgba(0,0,0,0.08)', borderRight: `4px solid ${UI_COLORS.severity[r.severity]}`, opacity: r.status === 'closed' ? 0.7 : 1, display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '10px', alignItems: 'flex-start', flexWrap: 'wrap', gap: '5px' }}>
@@ -261,11 +260,16 @@ const SingleRemarkCard = ({ r, getLatrineCode, isProcessing, onClose, onEdit }) 
           {UI_LABELS.status[r.status] || r.status}
         </span>
         {r.status === 'open' && (
-          <div style={{ display: 'flex', gap: '5px' }}>
-            <button onClick={() => onEdit(r)} disabled={isProcessing} style={{ padding: '6px 12px', background: '#f39c12', color: 'white', border: 'none', borderRadius: '4px', cursor: isProcessing ? 'not-allowed' : 'pointer', fontSize: '12px', fontWeight: 'bold' }}>
+          <div style={{ display: 'flex', gap: '5px', flexWrap: 'wrap' }}>
+            <button onClick={() => onEdit(r)} disabled={isProcessing} style={{ padding: '6px 12px', background: '#f39c12', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold' }}>
               ✏️ تعديل
             </button>
-            <button onClick={() => onClose([r])} disabled={isProcessing} style={{ padding: '6px 12px', background: isProcessing ? '#95a5a6' : '#70AD47', color: 'white', border: 'none', borderRadius: '4px', cursor: isProcessing ? 'not-allowed' : 'pointer', fontSize: '12px', fontWeight: 'bold' }}>
+            {!r.template_id && r.description && (
+              <button onClick={() => onSaveAsTemplate(r)} disabled={isProcessing} style={{ padding: '6px 12px', background: '#8e44ad', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold' }}>
+                📋 حفظ كقالب
+              </button>
+            )}
+            <button onClick={() => onClose([r])} disabled={isProcessing} style={{ padding: '6px 12px', background: isProcessing ? '#95a5a6' : '#70AD47', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold' }}>
               {isProcessing ? '⏳' : '✓ إغلاق'}
             </button>
           </div>
@@ -276,10 +280,12 @@ const SingleRemarkCard = ({ r, getLatrineCode, isProcessing, onClose, onEdit }) 
 );
 
 // ==========================================
-// 3. Main Component (مُصلح بالكامل)
+// 3. Main Component
 // ==========================================
 const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
-  const [filter, setFilter] = useState(initialFilter);
+  const [statusFilter, setStatusFilter] = useState(initialFilter);
+  const [severityFilter, setSeverityFilter] = useState('');
+  const [syncFilter, setSyncFilter] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
   const [sortBy, setSortBy] = useState('smart');
   const [groupBy, setGroupBy] = useState('none');
@@ -329,29 +335,32 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
       filtered = filtered.filter(r => 
         (r.remark_id && r.remark_id.toLowerCase().includes(q)) ||
         (r.description && r.description.toLowerCase().includes(q)) ||
-        (r.template && r.template.title.toLowerCase().includes(q))
+        (r.template && r.template.title.toLowerCase().includes(q)) ||
+        (r.suffix_note && r.suffix_note.toLowerCase().includes(q))
       );
     }
 
-    if (filter) {
-      if (['open', 'closed', 'overdue'].includes(filter)) filtered = filtered.filter(r => r.status === filter);
-      else if (['minor', 'major', 'critical'].includes(filter)) filtered = filtered.filter(r => r.severity === filter);
-      else if (['local', 'pending', 'synced', 'failed'].includes(filter)) filtered = filtered.filter(r => r.sync_status === filter);
-    }
+    if (statusFilter) filtered = filtered.filter(r => r.status === statusFilter);
+    if (severityFilter) filtered = filtered.filter(r => r.severity === severityFilter);
+    if (syncFilter) filtered = filtered.filter(r => r.sync_status === syncFilter);
 
-    filtered.sort((a, b) => {
-      if (sortBy === 'newest') return new Date(b.date_logged) - new Date(a.date_logged);
-      if (sortBy === 'oldest') return new Date(a.date_logged) - new Date(b.date_logged);
-      
-      if (a.status === 'open' && b.status !== 'open') return -1;
-      if (a.status !== 'open' && b.status === 'open') return 1;
-      
-      const weightA = SEVERITY_WEIGHT[a.severity] || 0;
-      const weightB = SEVERITY_WEIGHT[b.severity] || 0;
-      if (weightA !== weightB) return weightB - weightA;
-      
-      return new Date(b.date_logged) - new Date(a.date_logged);
-    });
+    // Sorting
+    if (sortBy === 'newest') filtered.sort((a, b) => new Date(b.date_logged) - new Date(a.date_logged));
+    else if (sortBy === 'oldest') filtered.sort((a, b) => new Date(a.date_logged) - new Date(b.date_logged));
+    else if (sortBy === 'severity') filtered.sort((a, b) => (SEVERITY_WEIGHT[b.severity] || 0) - (SEVERITY_WEIGHT[a.severity] || 0));
+    else if (sortBy === 'frequency') {
+      const countMap = {};
+      filtered.forEach(r => { const key = r.template_id || r.description; countMap[key] = (countMap[key] || 0) + 1; });
+      filtered.sort((a, b) => (countMap[b.template_id || b.description] || 0) - (countMap[a.template_id || a.description] || 0));
+    } else {
+      filtered.sort((a, b) => {
+        if (a.status === 'open' && b.status !== 'open') return -1;
+        if (a.status !== 'open' && b.status === 'open') return 1;
+        const wA = SEVERITY_WEIGHT[a.severity] || 0, wB = SEVERITY_WEIGHT[b.severity] || 0;
+        if (wA !== wB) return wB - wA;
+        return new Date(b.date_logged) - new Date(a.date_logged);
+      });
+    }
 
     const counts = rawRemarks.reduce((acc, r) => {
       acc.total++;
@@ -384,15 +393,15 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
     }
 
     return { processedRemarks: filtered, counters: counts, aggregatedGroups: groups };
-  }, [rawRemarks, filter, searchQuery, sortBy, groupBy, allLatrines, latrineId]);
+  }, [rawRemarks, statusFilter, severityFilter, syncFilter, searchQuery, sortBy, groupBy, allLatrines, latrineId]);
 
-  // --- دمج حفظ الملاحظة والقالب في تدفق واحد ---
+  // --- Handlers ---
   const handleAddOrEditRemark = async (formData) => {
     setIsSaving(true);
     setError(null);
     try {
       if (formData.id) {
-        // تعديل ملاحظة موجودة
+        // تعديل
         const updatedFields = {
           template_id: formData.template_id,
           description: formData.description,
@@ -405,9 +414,9 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
         await db.remarks.update(formData.id, updatedFields);
         await pushToSyncQueue('UPDATE_REMARK', { id: formData.id, local_uuid: formData.local_uuid, ...updatedFields });
         setEditingRemark(null);
-        setError({ type: 'success', message: 'تم تحديث الملاحظة بنجاح.' });
+        setError({ type: 'success', message: 'تم تحديث الملاحظة.' });
       } else {
-        // إضافة ملاحظة جديدة
+        // إضافة جديدة
         const localUuid = uuidv4();
         const newRemark = {
           local_uuid: localUuid,
@@ -428,7 +437,6 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
         await db.remarks.add(newRemark);
         await pushToSyncQueue('CREATE_REMARK', newRemark);
 
-        // محاولة حفظ كقالب إذا طلب المستخدم
         if (formData.save_as_template) {
           try {
             await handleSaveAsTemplateFromForm(formData);
@@ -438,7 +446,7 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
             setError({ type: 'warning', message: '⚠️ تم تسجيل الملاحظة ولكن فشل حفظ القالب. يمكنك المحاولة لاحقاً.' });
           }
         } else {
-          setError({ type: 'success', message: '✅ تم تسجيل الملاحظة بنجاح.' });
+          setError({ type: 'success', message: '✅ تم تسجيل الملاحظة.' });
         }
       }
     } catch (err) {
@@ -449,7 +457,6 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
     }
   };
 
-  // دالة مساعدة لحفظ القالب (تستخدم طابور المزامنة)
   const handleSaveAsTemplateFromForm = async (formData) => {
     const newTemplate = {
       template_code: `TPL-${uuidv4().slice(0, 8).toUpperCase()}`,
@@ -464,13 +471,16 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
       created_at: new Date().toISOString()
     };
 
-    // حفظ محلياً
+    // حفظ محلياً (مضمون)
     await db.remark_templates.add(newTemplate);
-    // إضافة إلى طابور المزامنة ليصل الخادم لاحقاً
-    await pushToSyncQueue('CREATE_TEMPLATE', newTemplate);
+    // محاولة دفع إلى طابور المزامنة بدون مقاطعة التدفق
+    try {
+      await pushToSyncQueue('CREATE_TEMPLATE', newTemplate);
+    } catch (syncErr) {
+      console.warn('فشل دفع القالب لطابور المزامنة، لكنه محفوظ محلياً:', syncErr);
+    }
   };
 
-  // حفظ كقالب من بطاقة منفردة (للملاحظات الموجودة سابقاً)
   const handleSaveAsTemplateFromCard = async (remark) => {
     try {
       await handleSaveAsTemplateFromForm({
@@ -545,33 +555,45 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
 
       {editingRemark ? (
         <div style={{ background: 'white', padding: '20px', borderRadius: '8px', marginBottom: '20px', boxShadow: '0 4px 15px rgba(0,0,0,0.1)', border: '2px solid #3498db' }}>
-          <SmartRemarkForm initialData={editingRemark} isSaving={isSaving} onSubmit={handleAddOrEditRemark} onCancel={() => setEditingRemark(null)} templates={templates} />
+          <SmartRemarkForm initialData={editingRemark} boqCode={boqCode || editingRemark.boq_code} isSaving={isSaving} onSubmit={handleAddOrEditRemark} onCancel={() => setEditingRemark(null)} templates={templates} />
         </div>
-      ) : (
-        latrineId && <SmartRemarkForm boqCode={boqCode} isSaving={isSaving} onSubmit={handleAddOrEditRemark} templates={templates} />
+      ) : latrineId && (
+        <SmartRemarkForm boqCode={boqCode} isSaving={isSaving} onSubmit={handleAddOrEditRemark} templates={templates} />
       )}
 
-      {/* الفلاتر */}
+      {/* فلاتر متكاملة */}
       <div style={{ background: 'white', padding: '15px', borderRadius: '8px', marginBottom: '20px', boxShadow: '0 2px 4px rgba(0,0,0,0.05)', display: 'flex', flexWrap: 'wrap', gap: '15px', alignItems: 'center', justifyContent: 'space-between' }}>
         <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', flex: 1 }}>
           <input type="text" placeholder="🔍 بحث..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} style={{ padding: '8px 12px', borderRadius: '4px', border: '1px solid #ccc', minWidth: '150px', flex: 1 }} />
-          <select value={filter} onChange={e => setFilter(e.target.value)} style={{ padding: '8px', borderRadius: '4px', border: '1px solid #ccc' }}>
-            <option value="">الكل ({counters.total})</option>
+          <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)} style={{ padding: '8px', borderRadius: '4px', border: '1px solid #ccc' }}>
+            <option value="">الحالة (الكل)</option>
             <option value="open">مفتوحة ({counters.open})</option>
             <option value="closed">مغلقة ({counters.closed})</option>
-            <option value="critical">حرجة</option>
-            <option value="major">كبيرة</option>
-            <option value="minor">بسيطة</option>
-            <option value="failed">فشل الإرسال ({counters.failed})</option>
+            <option value="overdue">متأخرة</option>
           </select>
-          <select value={sortBy} onChange={e => setSortBy(e.target.value)} style={{ padding: '8px', borderRadius: '4px', border: '1px solid #ccc' }}>
+          <select value={severityFilter} onChange={e => setSeverityFilter(e.target.value)} style={{ padding: '8px', borderRadius: '4px', border: '1px solid #ccc' }}>
+            <option value="">الشدة (الكل)</option>
+            <option value="minor">طفيفة</option>
+            <option value="major">كبيرة</option>
+            <option value="critical">حرجة</option>
+          </select>
+          <select value={syncFilter} onChange={e => setSyncFilter(e.target.value)} style={{ padding: '8px', borderRadius: '4px', border: '1px solid #ccc' }}>
+            <option value="">المزامنة (الكل)</option>
+            <option value="local">محلي</option>
+            <option value="pending">قيد الإرسال</option>
+            <option value="synced">مُزامن</option>
+            <option value="failed">فشل الإرسال</option>
+          </select>
+          <select value={sortBy} onChange={e => setSortBy(e.target.value)} style={{ padding: '8px', borderRadius: '4px', border: '2px solid #3498db', fontWeight: 'bold', color: '#2c3e50' }}>
             <option value="smart">ترتيب ذكي</option>
             <option value="newest">الأحدث</option>
             <option value="oldest">الأقدم</option>
+            <option value="severity">حسب الخطورة</option>
+            <option value="frequency">حسب التكرار</option>
           </select>
           {!latrineId && (
-            <select value={groupBy} onChange={e => setGroupBy(e.target.value)} style={{ padding: '8px', borderRadius: '4px', border: '2px solid #3498db', fontWeight: 'bold', color: '#2c3e50' }}>
-              <option value="none">عرض مجمع (حسب المشكلة)</option>
+            <select value={groupBy} onChange={e => setGroupBy(e.target.value)} style={{ padding: '8px', borderRadius: '4px', border: '2px solid #8e44ad', fontWeight: 'bold', color: '#2c3e50' }}>
+              <option value="none">تجميع حسب المشكلة</option>
               <option value="latrine">تجميع حسب الحمام</option>
               <option value="boq">تجميع حسب البند</option>
             </select>
@@ -592,10 +614,10 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
           <div style={{ fontSize: '48px', marginBottom: '15px' }}>📭</div>
           <h3 style={{ margin: 0 }}>لا توجد ملاحظات مطابقة للبحث أو الفلتر.</h3>
         </div>
-      ) : latrineId || groupBy === 'none' ? (
+      ) : latrineId || groupBy !== 'none' ? (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))', gap: '16px' }}>
           {latrineId 
-            ? processedRemarks.map(r => <SingleRemarkCard key={r.id} r={r} getLatrineCode={getLatrineCode} isProcessing={processingIds.has(r.id)} onClose={handleBulkClose} onEdit={setEditingRemark} />)
+            ? processedRemarks.map(r => <SingleRemarkCard key={r.id} r={r} getLatrineCode={getLatrineCode} isProcessing={processingIds.has(r.id)} onClose={handleBulkClose} onEdit={setEditingRemark} onSaveAsTemplate={handleSaveAsTemplateFromCard} />)
             : aggregatedGroups.map((group, idx) => <AggregatedRemarkCard key={idx} group={group} getLatrineCode={getLatrineCode} isProcessing={group.remarks.some(r => processingIds.has(r.id))} onClose={handleBulkClose} />)
           }
         </div>
@@ -609,7 +631,7 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
               </div>
               <div style={{ padding: '20px', display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))', gap: '16px', background: '#f8f9fa' }}>
                 {group.remarks.map(r => (
-                  <SingleRemarkCard key={r.id} r={r} getLatrineCode={getLatrineCode} isProcessing={processingIds.has(r.id)} onClose={handleBulkClose} onEdit={setEditingRemark} />
+                  <SingleRemarkCard key={r.id} r={r} getLatrineCode={getLatrineCode} isProcessing={processingIds.has(r.id)} onClose={handleBulkClose} onEdit={setEditingRemark} onSaveAsTemplate={handleSaveAsTemplateFromCard} />
                 ))}
               </div>
             </div>
