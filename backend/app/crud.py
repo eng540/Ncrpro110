@@ -236,7 +236,6 @@ def delete_boq_dictionary_item(db: Session, boq_code: str):
     return item
 
 def seed_boq_items(db: Session, latrine_id: int):
-    """تغذية بنود الـ BoQ للحمام من القاموس أو من قائمة احتياطية"""
     dictionary = get_boq_dictionary(db)
 
     if not dictionary:
@@ -277,7 +276,6 @@ def seed_boq_items(db: Session, latrine_id: int):
 #  GOVERNANCE & DECISION ENGINE
 # ==========================================
 def seed_default_policies(db: Session):
-    """حقن السياسات الافتراضية (Idempotent - لا يكرر الإدخال)"""
     existing_names = {p.name for p in db.query(models.PolicyProfile.name).all()}
     new_policies = []
     for policy in DEFAULT_POLICIES:
@@ -485,7 +483,6 @@ def delete_remark_template(db: Session, template_code: str):
     return template
 
 def seed_default_remark_templates(db: Session):
-    """إدراج القوالب الافتراضية عند التشغيل الأول (Idempotent)"""
     default_templates = [
         {"template_code": "TPL-001", "title": "تطبيل في البلاط", "description": "وجود فراغات تحت البلاط تسبب صوتاً أجوفاً عند الطرق.", "default_action": "إزالة البلاط المطبل وإعادة تركيبه بمونة كافية.", "default_severity": "major", "boq_tags": ["A6"]},
         {"template_code": "TPL-002", "title": "تسريب مياه من التوصيلات", "description": "وجود تسريب مياه واضح من نقاط لحام المواسير أو المحابس.", "default_action": "فك الوصلة، وضع التيفلون/الغراء بشكل صحيح وإعادة الربط.", "default_severity": "critical", "boq_tags": ["B2", "E10"]},
@@ -507,7 +504,7 @@ def seed_default_remark_templates(db: Session):
         db.commit()
 
 # ==========================================
-#  SYNC ENGINE PROCESSOR (مع دعم JSON والتحويلات الكاملة)
+#  SYNC ENGINE PROCESSOR (مع تعقيم البيانات)
 # ==========================================
 def process_sync_queue(db: Session, sync_req: schemas.SyncRequest) -> schemas.SyncResponse:
     processed = []
@@ -522,7 +519,6 @@ def process_sync_queue(db: Session, sync_req: schemas.SyncRequest) -> schemas.Sy
         try:
             op_data = op.payload
 
-            # تحويل النص إلى قاموس إذا لزم الأمر
             if isinstance(op_data, str):
                 try:
                     op_data = json.loads(op_data)
@@ -559,11 +555,13 @@ def process_sync_queue(db: Session, sync_req: schemas.SyncRequest) -> schemas.Sy
                 remark_data.pop('id', None)
                 remark_data.pop('local_id', None)
 
-                # تحويل الحقول المعقدة إلى نصوص JSON إذا لزم الأمر
-                if 'description' in remark_data and isinstance(remark_data['description'], dict):
-                    remark_data['description'] = json.dumps(remark_data['description'])
-                if 'action_required' in remark_data and isinstance(remark_data['action_required'], dict):
-                    remark_data['action_required'] = json.dumps(remark_data['action_required'])
+                # 🌟 تعقيم البيانات: تحويل النصوص الفارغة إلى None لتفادي انتهاك القيد
+                if remark_data.get('description') == "":
+                    remark_data['description'] = None
+                if remark_data.get('suffix_note') == "":
+                    remark_data['suffix_note'] = None
+                if remark_data.get('template_id') == "":
+                    remark_data['template_id'] = None
 
                 new_remark = models.Remark(**remark_data)
                 new_remark.date_logged = datetime.utcnow()
@@ -603,8 +601,9 @@ def process_sync_queue(db: Session, sync_req: schemas.SyncRequest) -> schemas.Sy
                 if remark:
                     for key, value in op_data.items():
                         if hasattr(remark, key) and key not in ["id", "local_uuid", "sync_status", "local_id"]:
-                            if isinstance(value, dict):
-                                value = json.dumps(value)
+                            # 🌟 تعقيم البيانات: تحويل النصوص الفارغة للحقول الحساسة إلى None
+                            if value == "" and key in ['description', 'suffix_note', 'template_id']:
+                                value = None
                             setattr(remark, key, value)
                     remark.last_update = datetime.utcnow()
                     processed.append(op.seq)
