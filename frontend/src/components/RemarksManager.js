@@ -97,7 +97,7 @@ const SmartRemarkForm = ({ initialData, boqCode, isSaving, onSubmit, onCancel, t
 
   const handleDescChange = (e) => {
     setDesc(e.target.value);
-    setSelectedTemplate(null);
+    setSelectedTemplate(null);       // يسمح بتغيير القالب حتى في وضع التعديل
     setShowSuggestions(true);
   };
 
@@ -137,9 +137,9 @@ const SmartRemarkForm = ({ initialData, boqCode, isSaving, onSubmit, onCancel, t
             onFocus={() => setShowSuggestions(true)}
             style={{ width: '100%', padding: '10px', borderRadius: '4px', border: '1px solid #ccc', boxSizing: 'border-box', background: selectedTemplate ? '#e8f8f5' : 'white' }}
             required 
-            disabled={isSaving || (isEdit && selectedTemplate)}
+            disabled={isSaving}
           />
-          {showSuggestions && filteredTemplates.length > 0 && !isEdit && (
+          {showSuggestions && filteredTemplates.length > 0 && (
             <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, background: 'white', border: '1px solid #ccc', borderRadius: '4px', zIndex: 100, maxHeight: '200px', overflowY: 'auto', boxShadow: '0 4px 12px rgba(0,0,0,0.1)' }}>
               {filteredTemplates.map(tpl => (
                 <div key={tpl.id} onClick={() => handleSelectTemplate(tpl)} style={{ padding: '10px', borderBottom: '1px solid #eee', cursor: 'pointer' }} onMouseOver={(e) => e.currentTarget.style.background = '#f8f9fa'} onMouseOut={(e) => e.currentTarget.style.background = 'white'}>
@@ -229,55 +229,59 @@ const AggregatedRemarkCard = ({ group, getLatrineCode, isProcessing, onClose }) 
 };
 
 // --- Single Card (مع أزرار تعديل وإغلاق وحفظ كقالب) ---
-const SingleRemarkCard = ({ r, getLatrineCode, isProcessing, onClose, onEdit, onSaveAsTemplate }) => (
-  <div style={{ background: 'white', borderRadius: '8px', padding: '16px', boxShadow: '0 2px 8px rgba(0,0,0,0.08)', borderRight: `4px solid ${UI_COLORS.severity[r.severity]}`, opacity: r.status === 'closed' ? 0.7 : 1, display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
-    <div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '10px', alignItems: 'flex-start', flexWrap: 'wrap', gap: '5px' }}>
-        <span style={{ fontWeight: 'bold', fontSize: '14px', color: '#1F4E78' }}>
-          {r.remark_id || `REM-${r.local_uuid?.slice(0, 8) || r.id}`}
-        </span>
-        <div style={{ display: 'flex', gap: '5px' }}>
-          <span style={{ background: UI_COLORS.severity[r.severity], color: 'white', padding: '2px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: 'bold' }}>{r.severity}</span>
-          <span style={{ background: UI_COLORS.sync[r.sync_status || 'local'], color: 'white', padding: '2px 8px', borderRadius: '4px', fontSize: '11px' }}>{UI_LABELS.sync[r.sync_status || 'local']}</span>
+const SingleRemarkCard = ({ r, getLatrineCode, isProcessing, onClose, onEdit, onSaveAsTemplate }) => {
+  const showSaveAsTemplate = r.status === 'open' && !r.template_id && r.description;
+
+  return (
+    <div style={{ background: 'white', borderRadius: '8px', padding: '16px', boxShadow: '0 2px 8px rgba(0,0,0,0.08)', borderRight: `4px solid ${UI_COLORS.severity[r.severity]}`, opacity: r.status === 'closed' ? 0.7 : 1, display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
+      <div>
+        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '10px', alignItems: 'flex-start', flexWrap: 'wrap', gap: '5px' }}>
+          <span style={{ fontWeight: 'bold', fontSize: '14px', color: '#1F4E78' }}>
+            {r.remark_id || `REM-${r.local_uuid?.slice(0, 8) || r.id}`}
+          </span>
+          <div style={{ display: 'flex', gap: '5px' }}>
+            <span style={{ background: UI_COLORS.severity[r.severity], color: 'white', padding: '2px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: 'bold' }}>{r.severity}</span>
+            <span style={{ background: UI_COLORS.sync[r.sync_status || 'local'], color: 'white', padding: '2px 8px', borderRadius: '4px', fontSize: '11px' }}>{UI_LABELS.sync[r.sync_status || 'local']}</span>
+          </div>
         </div>
-      </div>
-      <div style={{ fontSize: '13px', color: '#666', marginBottom: '8px', background: '#f8f9fa', padding: '4px 8px', borderRadius: '4px' }}>
-        الحمام: <strong style={{color: '#2c3e50'}}>{getLatrineCode(r.latrine_id)}</strong> {r.boq_code ? `| البند: ${r.boq_code}` : '| عام'}
-      </div>
-      <div style={{ marginBottom: '12px', fontWeight: r.status === 'open' ? 'bold' : 'normal', fontSize: '14px', lineHeight: '1.5' }}>
-        {r.template ? `📋 ${r.template.title}` : r.description}
-        {r.suffix_note && <div style={{ fontSize: '12px', color: '#e67e22', marginTop: '4px' }}>💬 {r.suffix_note}</div>}
-      </div>
-      {(r.action_required || r.template?.default_action) && (
-        <div style={{ fontSize: '12px', color: '#666', marginBottom: '12px', background: '#e8f4f8', padding: '8px', borderRadius: '4px', borderRight: '2px solid #3498db' }}>
-          <strong>الإجراء:</strong> {r.action_required || r.template?.default_action}
+        <div style={{ fontSize: '13px', color: '#666', marginBottom: '8px', background: '#f8f9fa', padding: '4px 8px', borderRadius: '4px' }}>
+          الحمام: <strong style={{color: '#2c3e50'}}>{getLatrineCode(r.latrine_id)}</strong> {r.boq_code ? `| البند: ${r.boq_code}` : '| عام'}
         </div>
-      )}
-    </div>
-    <div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '10px', paddingTop: '10px', borderTop: '1px solid #eee' }}>
-        <span style={{ background: UI_COLORS.status[r.status] || UI_COLORS.sync.local, padding: '4px 8px', borderRadius: '4px', fontSize: '12px', fontWeight: 'bold', color: r.status === 'open' ? '#856404' : r.status === 'overdue' ? '#721c24' : '#155724' }}>
-          {UI_LABELS.status[r.status] || r.status}
-        </span>
-        {r.status === 'open' && (
-          <div style={{ display: 'flex', gap: '5px', flexWrap: 'wrap' }}>
-            <button onClick={() => onEdit(r)} disabled={isProcessing} style={{ padding: '6px 12px', background: '#f39c12', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold' }}>
-              ✏️ تعديل
-            </button>
-            {!r.template_id && r.description && (
-              <button onClick={() => onSaveAsTemplate(r)} disabled={isProcessing} style={{ padding: '6px 12px', background: '#8e44ad', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold' }}>
-                📋 حفظ كقالب
-              </button>
-            )}
-            <button onClick={() => onClose([r])} disabled={isProcessing} style={{ padding: '6px 12px', background: isProcessing ? '#95a5a6' : '#70AD47', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold' }}>
-              {isProcessing ? '⏳' : '✓ إغلاق'}
-            </button>
+        <div style={{ marginBottom: '12px', fontWeight: r.status === 'open' ? 'bold' : 'normal', fontSize: '14px', lineHeight: '1.5' }}>
+          {r.template ? `📋 ${r.template.title}` : r.description}
+          {r.suffix_note && <div style={{ fontSize: '12px', color: '#e67e22', marginTop: '4px' }}>💬 {r.suffix_note}</div>}
+        </div>
+        {(r.action_required || r.template?.default_action) && (
+          <div style={{ fontSize: '12px', color: '#666', marginBottom: '12px', background: '#e8f4f8', padding: '8px', borderRadius: '4px', borderRight: '2px solid #3498db' }}>
+            <strong>الإجراء:</strong> {r.action_required || r.template?.default_action}
           </div>
         )}
       </div>
+      <div>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '10px', paddingTop: '10px', borderTop: '1px solid #eee' }}>
+          <span style={{ background: UI_COLORS.status[r.status] || UI_COLORS.sync.local, padding: '4px 8px', borderRadius: '4px', fontSize: '12px', fontWeight: 'bold', color: r.status === 'open' ? '#856404' : r.status === 'overdue' ? '#721c24' : '#155724' }}>
+            {UI_LABELS.status[r.status] || r.status}
+          </span>
+          {r.status === 'open' && (
+            <div style={{ display: 'flex', gap: '5px', flexWrap: 'wrap' }}>
+              <button onClick={() => onEdit(r)} disabled={isProcessing} style={{ padding: '6px 12px', background: '#f39c12', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold' }}>
+                ✏️ تعديل
+              </button>
+              {showSaveAsTemplate && (
+                <button onClick={() => onSaveAsTemplate(r)} disabled={isProcessing} style={{ padding: '6px 12px', background: '#8e44ad', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold' }}>
+                  📋 حفظ كقالب
+                </button>
+              )}
+              <button onClick={() => onClose([r])} disabled={isProcessing} style={{ padding: '6px 12px', background: isProcessing ? '#95a5a6' : '#70AD47', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold' }}>
+                {isProcessing ? '⏳' : '✓ إغلاق'}
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
     </div>
-  </div>
-);
+  );
+};
 
 // ==========================================
 // 3. Main Component
@@ -401,20 +405,26 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
     setError(null);
     try {
       if (formData.id) {
-        // تعديل
+        // تعديل ملاحظة موجودة (دعم ربط القالب واستبدال الوصف)
         const updatedFields = {
           template_id: formData.template_id,
-          description: formData.description,
-          suffix_note: formData.suffix_note,
+          description: formData.template_id ? null : formData.description,
+          suffix_note: formData.template_id ? formData.suffix_note : null,
           severity: formData.severity,
           action_required: formData.action_required || null,
           deadline: formData.deadline ? new Date(formData.deadline).toISOString() : null,
-          sync_status: formData.sync_status === 'synced' ? 'pending' : 'local'
+          sync_status: 'local'
         };
+
         await db.remarks.update(formData.id, updatedFields);
-        await pushToSyncQueue('UPDATE_REMARK', { id: formData.id, local_uuid: formData.local_uuid, ...updatedFields });
+        await pushToSyncQueue('UPDATE_REMARK', {
+          id: formData.id,
+          local_uuid: formData.local_uuid,
+          ...updatedFields
+        });
+
         setEditingRemark(null);
-        setError({ type: 'success', message: 'تم تحديث الملاحظة.' });
+        setError({ type: 'success', message: 'تم تحديث الملاحظة وربطها بالقالب بنجاح.' });
       } else {
         // إضافة جديدة
         const localUuid = uuidv4();
@@ -458,6 +468,11 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
   };
 
   const handleSaveAsTemplateFromForm = async (formData) => {
+    const existing = await db.remark_templates.where('title').equals(formData.description).first();
+    if (existing) {
+      throw new Error('هذا القالب موجود مسبقاً في المكتبة.');
+    }
+
     const newTemplate = {
       template_code: `TPL-${uuidv4().slice(0, 8).toUpperCase()}`,
       title: formData.description,
@@ -471,9 +486,7 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
       created_at: new Date().toISOString()
     };
 
-    // حفظ محلياً (مضمون)
     await db.remark_templates.add(newTemplate);
-    // محاولة دفع إلى طابور المزامنة بدون مقاطعة التدفق
     try {
       await pushToSyncQueue('CREATE_TEMPLATE', newTemplate);
     } catch (syncErr) {
@@ -491,7 +504,7 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
       });
       setError({ type: 'success', message: 'تم حفظ الملاحظة كقالب جديد.' });
     } catch (err) {
-      setError({ type: 'error', message: 'فشل حفظ القالب.' });
+      setError({ type: 'warning', message: err.message || 'فشل حفظ القالب.' });
     }
   };
 
