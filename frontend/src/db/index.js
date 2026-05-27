@@ -1,25 +1,28 @@
 /**
  * db/index.js
- * IndexedDB schema — Hybrid E2EE Support + Full Operational Tables
+ * IndexedDB schema — Hybrid E2EE Support + Full Operational Tables + Smart Observation Engine (v3)
  */
 
 import Dexie from 'dexie';
 
-export const db = new Dexie('NRCLatrineTracker_v2');
+export const db = new Dexie('NRCLatrineTracker_v3');
 
-// Schema v2: _env support, no hooks + Restored Missing Tables/Indexes
-db.version(2).stores({
+// Schema v3: Smart Observation Engine Support
+db.version(3).stores({
   // Technical tables — cleartext (no encryption needed)
   boq_items: 'id, latrine_id, boq_code, category, status, quality_pass',
   boq_dictionary: 'id, boq_code, category, is_active',
 
+  // 🌟 جديد: مكتبة القوالب
+  remark_templates: 'id, template_code, title, is_active',
+
   // Sensitive tables — encrypted envelopes (_env)
   latrines: 'id, latrine_id, block_no, status, overall_pct, last_update',
 
-  // 🌟 تم الإصلاح: إعادة local_uuid للفهارس لكي تعمل دوال البحث
-  remarks: '++id, local_uuid, latrine_id, boq_code, status, severity, sync_status, date_logged',
+  // 🌟 تحديث: إضافة template_id للفهارس
+  remarks: '++id, local_uuid, latrine_id, boq_code, status, severity, sync_status, date_logged, template_id',
 
-  // 🌟 تم الإصلاح: إعادة جدول التقارير اليومية المفقود
+  // Daily logs
   daily_logs: '++id, date, engineer',
 
   // Sync queue — encrypted payloads
@@ -94,7 +97,6 @@ export async function populateLocalDB(latrines, boqItems, remarks) {
 
 export async function updateRemarkSyncStatus(localUuid, status) {
   try {
-    // هذه الدالة كانت ستفشل لولا إعادتنا لـ local_uuid في الفهارس أعلاه
     await db.remarks.where('local_uuid').equals(localUuid).modify({ sync_status: status });
   } catch (error) {
     console.error("Failed to update sync status:", error);
