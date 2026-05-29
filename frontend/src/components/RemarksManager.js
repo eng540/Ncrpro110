@@ -70,7 +70,7 @@ const LoadingSkeleton = () => (
   </div>
 );
 
-// --- SmartRemarkForm (مع template_code) ---
+// ✅ SmartRemarkForm: إرسال id, latrine_id, boq_code عند التعديل
 const SmartRemarkForm = ({ initialData, boqCode, isSaving, onSubmit, onCancel, templates }) => {
   const [desc, setDesc] = useState(initialData?.description || (initialData?.template ? initialData.template.title : ''));
   const [suffix, setSuffix] = useState(initialData?.suffix_note || '');
@@ -119,13 +119,19 @@ const SmartRemarkForm = ({ initialData, boqCode, isSaving, onSubmit, onCancel, t
   const handleSubmit = (e) => {
     e.preventDefault();
     if (!desc.trim()) return;
-    // ✅ تمرير template_code مع template_id
+
+    // ✅ إرسال id, latrine_id, boq_code عند التعديل
     onSubmit({ 
+      id: initialData?.id || null,
+      latrine_id: initialData?.latrine_id || null,
+      boq_code: initialData?.boq_code || boqCode || null,
       template_id: selectedTemplate ? selectedTemplate.id : null,
       template_code: selectedTemplate ? selectedTemplate.template_code : null,
       description: selectedTemplate ? null : desc.trim(),
       suffix_note: selectedTemplate ? suffix.trim() : null,
-      severity: sev, action_required: action.trim(), deadline: dead,
+      severity: sev, 
+      action_required: action.trim(), 
+      deadline: dead,
       save_as_template: saveAsTemplate && !selectedTemplate
     });
     if (!initialData) {
@@ -345,7 +351,7 @@ const AnalyticsPanel = ({ filteredRemarks, onFilterByBoq, onFilterByIssue }) => 
   );
 };
 
-// --- QuickAddRemark (مع template_code) ---
+// ✅ QuickAddRemark: تدعم template_code
 const QuickAddRemark = ({ allLatrines, templates, onAdd }) => {
   const [selectedLatrine, setSelectedLatrine] = useState('');
   const [desc, setDesc] = useState('');
@@ -429,7 +435,7 @@ const QuickAddRemark = ({ allLatrines, templates, onAdd }) => {
 };
 
 // ==========================================
-// 3. Main Component
+// 3. Main Component (الخيار ج - Reset ذكي)
 // ==========================================
 const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
   const [viewMode, setViewMode] = useState('contractor');
@@ -652,17 +658,17 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
     return templateId;
   };
 
-  // ✅ تعديل الملاحظات القديمة بقالب مع template_code
+  // ✅ إصلاح كامل لمسار التعديل
   const handleAddOrEditRemark = async (formData) => {
     setIsSaving(true);
     setError(null);
     try {
       if (formData.id) {
-        // تعديل ملاحظة موجودة
+        // --- تعديل ملاحظة موجودة ---
         const original = await db.remarks.get(formData.id);
         if (!original) throw new Error('الملاحظة غير موجودة');
 
-        // تأكد من وجود local_uuid للملاحظات التي تفتقده
+        // تأكد من وجود local_uuid للملاحظات القديمة
         let localUuid = original.local_uuid || original.remark_id;
         if (!localUuid) {
           localUuid = uuidv4();
@@ -677,7 +683,7 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
           action_required: formData.action_required || null,
           deadline: formData.deadline ? new Date(formData.deadline).toISOString() : null,
           sync_status: 'local',
-          boq_code: original.boq_code // الحفاظ على البند الأصلي
+          boq_code: original.boq_code || formData.boq_code || boqCode || null  // ✅ احتياطي مزدوج
         };
 
         await db.remarks.update(formData.id, updatedFields);
@@ -693,7 +699,7 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
         setEditingRemark(null);
         setError({ type: 'success', message: 'تم التحديث.' });
       } else {
-        // إضافة ملاحظة جديدة
+        // --- إضافة ملاحظة جديدة ---
         const localUuid = uuidv4();
         const newRemark = {
           local_uuid: localUuid,
