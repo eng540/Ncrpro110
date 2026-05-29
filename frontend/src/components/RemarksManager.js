@@ -465,9 +465,9 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
   // ✅ الخيار ج: Reset ذكي - يحتفظ فقط بالفلاتر المدعومة في الواجهة الجديدة
   const handleViewModeChange = useCallback((newMode) => {
     setViewMode(newMode);
-    
+
     // الفلاتر المشتركة (searchQuery, severityFilter) تبقى دائماً
-    
+
     if (newMode === 'contractor') {
       // المقاول: يعرض دائماً المفتوحة فقط، لا يحتاج statusFilter
       setStatusFilter('');
@@ -628,6 +628,7 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
     return templateId;
   };
 
+  // ✅ إصلاح 1: إرسال CREATE_REMARK أولاً ثم استدعاء createAndLinkTemplate
   const handleAddOrEditRemark = async (formData) => {
     setIsSaving(true); setError(null);
     try {
@@ -655,17 +656,26 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
           status: 'open', sync_status: 'local', date_logged: new Date().toISOString(), closed_date: null
         };
         const remarkId = await db.remarks.add(newRemark);
+
+        // ✅ أرسل CREATE_REMARK أولاً في كل الأحوال (يدوي أو قالب)
         await pushToSyncQueue('CREATE_REMARK', newRemark);
+
         if (formData.save_as_template) {
           try {
             await createAndLinkTemplate({ description: formData.description, severity: formData.severity, action_required: formData.action_required, boq_code: newRemark.boq_code, suffix_note: formData.suffix_note }, remarkId, localUuid);
             setError({ type: 'success', message: '✅ تم الحفظ كقالب.' });
-          } catch (err) { setError({ type: 'warning', message: '⚠️ تم الحفظ لكن فشل القالب: ' + err.message }); }
+          } catch (err) { 
+            console.error('فشل حفظ القالب:', err);
+            setError({ type: 'warning', message: '⚠️ تم التسجيل لكن فشل حفظ القالب: ' + err.message }); 
+          }
         } else {
           setError({ type: 'success', message: '✅ تم التسجيل.' });
         }
       }
-    } catch (err) { setError({ type: 'error', message: 'فشل: ' + err.message }); }
+    } catch (err) { 
+      console.error('Add/Edit remark error:', err);
+      setError({ type: 'error', message: 'فشل: ' + err.message }); 
+    }
     finally { setIsSaving(false); }
   };
 
@@ -701,11 +711,25 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
     finally { setProcessingIds(prev => { const n = new Set(prev); ids.forEach(id => n.delete(id)); return n; }); }
   };
 
+  // ✅ إصلاح 2: دالة handleRetrySync معالجة رسالة undefined
   const handleRetrySync = async () => {
-    if (!navigator.onLine) { setError({ type: 'error', message: 'غير متصل.' }); return; }
+    if (!navigator.onLine) { 
+      setError({ type: 'error', message: 'غير متصل.' }); 
+      return; 
+    }
     setIsRetrying(true);
-    try { const result = await retryFailedSync(); setError({ type: 'success', message: `تمت المزامنة: ${result.processed} ناجحة.` }); }
-    catch (err) { setError({ type: 'error', message: 'فشل: ' + err.message }); }
+    try { 
+      const result = await retryFailedSync(); 
+      if (result && result.processed !== undefined) {
+        setError({ type: 'success', message: `تمت المزامنة: ${result.processed} ناجحة، ${result.failed || 0} فاشلة.` });
+      } else {
+        setError({ type: 'success', message: 'تمت المزامنة بنجاح.' });
+      }
+    }
+    catch (err) { 
+      console.error('Sync error:', err);
+      setError({ type: 'error', message: 'فشل المزامنة: ' + (err.message || 'خطأ غير معروف') }); 
+    }
     finally { setIsRetrying(false); }
   };
 
@@ -791,26 +815,26 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
       <div style={{ background: 'white', padding: '10px', borderRadius: '8px', marginBottom: '20px', display: 'flex', gap: '10px', flexWrap: 'wrap', alignItems: 'center' }}>
         {/* البحث: مدعوم في كل الواجهات */}
         <input type="text" placeholder="🔍 بحث..." value={searchQuery} onChange={e => setSearchQuery(e.target.value)} style={{ flex: 2, padding: '8px', borderRadius: '4px', border: '1px solid #ccc' }} />
-        
+
         {/* الشدة: مدعومة في كل الواجهات */}
         <select value={severityFilter} onChange={e => setSeverityFilter(e.target.value)} style={{ padding: '8px', borderRadius: '4px', border: '1px solid #ccc' }}>
           <option value="">الشدة</option><option value="critical">حرجة</option><option value="major">كبيرة</option><option value="minor">طفيفة</option>
         </select>
-        
+
         {/* الحالة: مدعومة في inspection, raw, analytics */}
         {(viewMode === 'inspection' || viewMode === 'raw' || viewMode === 'analytics') && (
           <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)} style={{ padding: '8px', borderRadius: '4px', border: '1px solid #ccc' }}>
             <option value="">الحالة</option><option value="open">مفتوحة</option><option value="closed">مغلقة</option>
           </select>
         )}
-        
+
         {/* المزامنة: raw فقط */}
         {viewMode === 'raw' && (
           <select value={syncFilter} onChange={e => setSyncFilter(e.target.value)} style={{ padding: '8px', borderRadius: '4px', border: '1px solid #ccc' }}>
             <option value="">المزامنة</option><option value="local">محلي</option><option value="synced">مُزامن</option><option value="failed">فشل</option>
           </select>
         )}
-        
+
         {/* الترتيب: raw فقط */}
         {viewMode === 'raw' && (
           <select value={sortBy} onChange={e => setSortBy(e.target.value)} style={{ padding: '8px', borderRadius: '4px', border: '2px solid #3498db', fontWeight: 'bold' }}>
@@ -820,7 +844,7 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
             <option value="severity">حسب الخطورة</option>
           </select>
         )}
-        
+
         {/* التجميع: raw فقط */}
         {viewMode === 'raw' && (
           <select value={groupBy} onChange={e => setGroupBy(e.target.value)} style={{ padding: '8px', borderRadius: '4px', border: '2px solid #8e44ad', fontWeight: 'bold', color: '#2c3e50' }}>
