@@ -240,13 +240,15 @@ const ContractorBoqCard = ({ boqCode, issues, getLatrineCode, onClose, processin
   );
 };
 
-// --- Inspection Card (مع فلتر حالة) ---
+// --- Inspection Card (مع فلتر حالة عرض فقط) ---
 const InspectionCard = ({ latrineId, remarks, getLatrineCode, onClose, onEdit, onSaveAsTemplate, processingIds, statusFilter }) => {
+  // تصفية للعرض فقط
   let filtered = remarks;
   if (statusFilter) {
     filtered = remarks.filter(r => r.status === statusFilter);
   }
   const sorted = [...filtered].sort((a, b) => (SEVERITY_WEIGHT[b.severity] || 0) - (SEVERITY_WEIGHT[a.severity] || 0));
+  // عدد المفتوحة يُحسب من كامل الملاحظات
   const openCount = remarks.filter(r => r.status === 'open').length;
   return (
     <div style={{ background: 'white', borderRadius: '8px', padding: '16px', marginBottom: '12px', boxShadow: '0 2px 8px rgba(0,0,0,0.05)' }}>
@@ -273,7 +275,7 @@ const InspectionCard = ({ latrineId, remarks, getLatrineCode, onClose, onEdit, o
   );
 };
 
-// --- Analytics Panel (مستقل بفلتراته) ---
+// --- Analytics Panel (تفاعلي، يدعم البحث والفلاتر) ---
 const AnalyticsPanel = ({ analyticsData, onFilterByBoq, onFilterByIssue }) => {
   const { topBoqs, topIssues, counters } = useMemo(() => {
     if (!analyticsData) return { topBoqs: [], topIssues: [], counters: { open: 0, closed: 0, failed: 0 } };
@@ -431,7 +433,7 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
   // فلاتر مستقلة لكل وضع عرض
   const [contractorFilters, setContractorFilters] = useState({ search: '', severity: '' });
   const [inspectionFilters, setInspectionFilters] = useState({ search: '', severity: '', status: '' });
-  const [analyticsFilters, setAnalyticsFilters] = useState({ severity: '', status: '' });
+  const [analyticsFilters, setAnalyticsFilters] = useState({ search: '', severity: '', status: '' });
   const [rawFilters, setRawFilters] = useState({ search: '', severity: '', status: '', sync: '', sort: 'smart', group: 'none' });
 
   const [error, setError] = useState(null);
@@ -488,7 +490,7 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
   // وضع المقاول: دائمًا الملاحظات المفتوحة فقط + فلاتره
   const contractorData = useMemo(() => {
     if (!rawRemarks) return [];
-    let filtered = rawRemarks.filter(r => r.status === 'open'); // دائمًا مفتوحة
+    let filtered = rawRemarks.filter(r => r.status === 'open');
     if (contractorFilters.search.trim()) {
       const q = contractorFilters.search.toLowerCase();
       filtered = filtered.filter(r =>
@@ -541,10 +543,19 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
     return filtered;
   }, [rawRemarks, inspectionFilters]);
 
-  // وضع التحليلات
+  // وضع التحليلات (يدعم البحث الآن)
   const analyticsData = useMemo(() => {
     if (!rawRemarks) return [];
     let filtered = rawRemarks;
+    if (analyticsFilters.search.trim()) {
+      const q = analyticsFilters.search.toLowerCase();
+      filtered = filtered.filter(r =>
+        (r.description && r.description.toLowerCase().includes(q)) ||
+        (r.template && r.template.title.toLowerCase().includes(q)) ||
+        (r.suffix_note && r.suffix_note.toLowerCase().includes(q)) ||
+        (r.boq_code && r.boq_code.toLowerCase() === q)
+      );
+    }
     if (analyticsFilters.severity) filtered = filtered.filter(r => r.severity === analyticsFilters.severity);
     if (analyticsFilters.status) filtered = filtered.filter(r => r.status === analyticsFilters.status);
     return filtered;
@@ -566,7 +577,6 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
     if (rawFilters.severity) filtered = filtered.filter(r => r.severity === rawFilters.severity);
     if (rawFilters.status) filtered = filtered.filter(r => r.status === rawFilters.status);
     if (rawFilters.sync) filtered = filtered.filter(r => r.sync_status === rawFilters.sync);
-    // sorting
     const sort = rawFilters.sort;
     if (sort === 'newest') filtered.sort((a, b) => new Date(b.date_logged) - new Date(a.date_logged));
     else if (sort === 'oldest') filtered.sort((a, b) => new Date(a.date_logged) - new Date(b.date_logged));
@@ -583,7 +593,7 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
     return filtered;
   }, [rawRemarks, rawFilters]);
 
-  // aggregatedGroups (للاستخدام في raw و analytics - لكن analytics يستخدم analyticsData)
+  // aggregatedGroups لـ raw
   const rawAggregatedGroups = useMemo(() => {
     if (!rawData) return [];
     const groupMap = {};
@@ -602,7 +612,7 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
     return Object.values(groupMap).sort((a, b) => b.remarks.length - a.remarks.length);
   }, [rawData, rawFilters.group, allLatrines]);
 
-  // عدادات عامة (للزر الأحمر)
+  // عدادات عامة
   const counters = useMemo(() => {
     if (!rawRemarks) return { total: 0, open: 0, closed: 0, failed: 0 };
     return rawRemarks.reduce((acc, r) => {
@@ -611,7 +621,7 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
     }, { total: 0, open: 0, closed: 0, failed: 0 });
   }, [rawRemarks]);
 
-  // --- Handlers (بدون تغيير عن النسخ السابقة) ---
+  // --- Handlers ---
   const createAndLinkTemplate = async (templateData, remarkId, localUuid) => {
     const trimmedTitle = templateData.description?.trim() || '';
     if (!trimmedTitle) throw new Error('عنوان القالب فارغ');
@@ -763,7 +773,7 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
     finally { setIsSaving(false); }
   };
 
-  // دوال تعديل الفلاتر الخاصة بكل وضع
+  // دوال تعديل الفلاتر
   const updateContractorFilter = (key, value) => setContractorFilters(prev => ({ ...prev, [key]: value }));
   const updateInspectionFilter = (key, value) => setInspectionFilters(prev => ({ ...prev, [key]: value }));
   const updateAnalyticsFilter = (key, value) => setAnalyticsFilters(prev => ({ ...prev, [key]: value }));
@@ -828,6 +838,7 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
 
       {viewMode === 'analytics' && (
         <div style={{ background: 'white', padding: '10px', borderRadius: '8px', marginBottom: '20px', display: 'flex', gap: '10px', flexWrap: 'wrap', alignItems: 'center' }}>
+          <input type="text" placeholder="🔍 بحث..." value={analyticsFilters.search} onChange={e => updateAnalyticsFilter('search', e.target.value)} style={{ flex: 2, padding: '8px', borderRadius: '4px', border: '1px solid #ccc' }} />
           <select value={analyticsFilters.severity} onChange={e => updateAnalyticsFilter('severity', e.target.value)} style={{ padding: '8px', borderRadius: '4px', border: '1px solid #ccc' }}>
             <option value="">الشدة</option><option value="critical">حرجة</option><option value="major">كبيرة</option><option value="minor">طفيفة</option>
           </select>
