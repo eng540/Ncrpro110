@@ -504,7 +504,7 @@ def seed_default_remark_templates(db: Session):
         db.commit()
 
 # ==========================================
-#  SYNC ENGINE PROCESSOR (مع دعم template_code)
+#  SYNC ENGINE PROCESSOR (مع دعم template_code وإصلاحات الأمان)
 # ==========================================
 def process_sync_queue(db: Session, sync_req: schemas.SyncRequest) -> schemas.SyncResponse:
     processed = []
@@ -513,7 +513,7 @@ def process_sync_queue(db: Session, sync_req: schemas.SyncRequest) -> schemas.Sy
     latrines_to_recalc = set()
     items_to_recalc_decision = set()
 
-    date_fields = {'closed_date', 'deadline', 'inspection_date', 'start_date', 'expected_completion', 'date_logged', 'date'}
+    date_fields = {'closed_date', 'deadline', 'inspection_date', 'start_date', 'expected_completion', 'date_logged', 'date', 'last_update'}
 
     for op in sync_req.operations:
         try:
@@ -563,6 +563,9 @@ def process_sync_queue(db: Session, sync_req: schemas.SyncRequest) -> schemas.Sy
                     ).first()
                     if template:
                         remark_data['template_id'] = template.id
+                    else:
+                        # ✅ إذا لم يوجد القالب، احفظ template_code كـ null ولا تفشل
+                        remark_data['template_id'] = None
 
                 # تعقيم البيانات
                 if remark_data.get('description') == "":
@@ -572,6 +575,12 @@ def process_sync_queue(db: Session, sync_req: schemas.SyncRequest) -> schemas.Sy
                 if remark_data.get('template_id') == "":
                     remark_data['template_id'] = None
 
+                # ✅ التحقق من وجود latrine_id و boq_code
+                if not remark_data.get('latrine_id'):
+                    failed.append(op.seq)
+                    errors[str(op.seq)] = "Missing latrine_id"
+                    continue
+
                 new_remark = models.Remark(**remark_data)
                 new_remark.date_logged = datetime.utcnow()
 
@@ -580,7 +589,6 @@ def process_sync_queue(db: Session, sync_req: schemas.SyncRequest) -> schemas.Sy
 
                 db.add(new_remark)
                 db.flush()
-                # ✅ إضافة commit لتثبيت الملاحظة
                 db.commit()
 
                 processed.append(op.seq)
@@ -598,16 +606,23 @@ def process_sync_queue(db: Session, sync_req: schemas.SyncRequest) -> schemas.Sy
                 local_uuid = op_data.get("local_uuid")
                 remark = None
 
+                # ✅ البحث أولاً بـ local_uuid (الأكثر موثوقية)
                 if local_uuid:
                     remark = db.query(models.Remark).filter(
                         models.Remark.remark_id == str(local_uuid)[:36]
                     ).first()
 
-                if not remark and op_data.get("id"):
-                    if int(op_data.get("id")) > 0:
-                        remark = db.query(models.Remark).filter(
-                            models.Remark.id == op_data.get("id")
-                        ).first()
+                # ✅ البحث بـ id مع حماية كاملة ضد القيم غير الصالحة
+                op_id = op_data.get("id")
+                if not remark and op_id is not None:
+                    try:
+                        id_val = int(op_id)
+                        if id_val > 0:
+                            remark = db.query(models.Remark).filter(
+                                models.Remark.id == id_val
+                            ).first()
+                    except (TypeError, ValueError):
+                        pass
 
                 if remark:
                     # ✅ تحويل template_code إلى template_id
@@ -618,13 +633,26 @@ def process_sync_queue(db: Session, sync_req: schemas.SyncRequest) -> schemas.Sy
                         ).first()
                         if template:
                             op_data['template_id'] = template.id
+                        else:
+                            op_data['template_id'] = None
+
+                    # ✅ الحفاظ على البيانات الأساسية إذا لم تُرسل
+                    if 'boq_code' not in op_data or op_data.get('boq_code') is None:
+                        op_data['boq_code'] = remark.boq_code
+                    if 'latrine_id' not in op_data or op_data.get('latrine_id') is None:
+                        op_data['latrine_id'] = remark.latrine_id
 
                     for key, value in op_data.items():
                         if hasattr(remark, key) and key not in ["id", "local_uuid", "sync_status", "local_id"]:
                             if value == "" and key in ['description', 'suffix_note', 'template_id']:
                                 value = None
+                            # ✅ لا تسمح بفقدان البند أو الحمام
+                            if key in ['boq_code', 'latrine_id'] and value is None:
+                                continue
                             setattr(remark, key, value)
                     remark.last_update = datetime.utcnow()
+                    db.commit()
+                    db.refresh(remark)
                     processed.append(op.seq)
 
                     if remark.boq_code:
@@ -664,7 +692,7 @@ def process_sync_queue(db: Session, sync_req: schemas.SyncRequest) -> schemas.Sy
                 db.add(new_log)
                 processed.append(op.seq)
 
-            # 🌟 معالج CREATE_TEMPLATE (إضافة القوالب من الأجهزة المحمولة)
+            # معالج CREATE_TEMPLATE (إضافة القوالب من الأجهزة المحمولة)
             elif op.type == "CREATE_TEMPLATE":
                 template_data = op_data.copy()
                 if not template_data.get('template_code'):
@@ -676,9 +704,16 @@ def process_sync_queue(db: Session, sync_req: schemas.SyncRequest) -> schemas.Sy
                     models.RemarkTemplate.template_code == template_data['template_code']
                 ).first()
                 if existing:
-                    processed.append(op.seq)  # موجود مسبقاً، نعتبره نجاح
+                    processed.append(op.seq)
                 else:
                     try:
+                        # ✅ تعقيم boq_tags إذا كانت سلسلة نصية
+                        if isinstance(template_data.get('boq_tags'), str):
+                            try:
+                                template_data['boq_tags'] = json.loads(template_data['boq_tags'])
+                            except:
+                                template_data['boq_tags'] = [template_data['boq_tags']] if template_data['boq_tags'] else ['ALL']
+
                         new_tpl = models.RemarkTemplate(**template_data)
                         db.add(new_tpl)
                         db.flush()
