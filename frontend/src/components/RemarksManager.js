@@ -67,6 +67,7 @@ const LoadingSkeleton = () => (
   </div>
 );
 
+// ✅ تعديل SmartRemarkForm: إضافة template_code إلى onSubmit
 const SmartRemarkForm = ({ initialData, boqCode, isSaving, onSubmit, onCancel, templates }) => {
   const [desc, setDesc] = useState(initialData?.description || (initialData?.template ? initialData.template.title : ''));
   const [suffix, setSuffix] = useState(initialData?.suffix_note || '');
@@ -115,8 +116,10 @@ const SmartRemarkForm = ({ initialData, boqCode, isSaving, onSubmit, onCancel, t
   const handleSubmit = (e) => {
     e.preventDefault();
     if (!desc.trim()) return;
+    // ✅ تمرير template_code مع template_id
     onSubmit({ 
       template_id: selectedTemplate ? selectedTemplate.id : null,
+      template_code: selectedTemplate ? selectedTemplate.template_code : null,
       description: selectedTemplate ? null : desc.trim(),
       suffix_note: selectedTemplate ? suffix.trim() : null,
       severity: sev, action_required: action.trim(), deadline: dead,
@@ -422,7 +425,6 @@ const QuickAddRemark = ({ allLatrines, templates, onAdd }) => {
 const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
   const [viewMode, setViewMode] = useState('contractor');
 
-  // ✅ فلاتر موحدة - تُمسح ذكياً عند تغيير الواجهة
   const [searchQuery, setSearchQuery] = useState('');
   const [severityFilter, setSeverityFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
@@ -462,32 +464,15 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
     return raw.map(r => ({ ...r, template: templateMap[r.template_id] || null }));
   }, [latrineId, boqCode, templateMap]);
 
-  // ✅ الخيار ج: Reset ذكي - يحتفظ فقط بالفلاتر المدعومة في الواجهة الجديدة
   const handleViewModeChange = useCallback((newMode) => {
     setViewMode(newMode);
-
-    // الفلاتر المشتركة (searchQuery, severityFilter) تبقى دائماً
-
     if (newMode === 'contractor') {
-      // المقاول: يعرض دائماً المفتوحة فقط، لا يحتاج statusFilter
-      setStatusFilter('');
-      setSyncFilter('');
-      setSortBy('smart');
-      setGroupBy('none');
+      setStatusFilter(''); setSyncFilter(''); setSortBy('smart'); setGroupBy('none');
     } else if (newMode === 'analytics') {
-      // التحليلات: تدعم search, severity, status
-      // لا تدعم syncFilter, sortBy, groupBy
-      setSyncFilter('');
-      setSortBy('smart');
-      setGroupBy('none');
+      setSyncFilter(''); setSortBy('smart'); setGroupBy('none');
     } else if (newMode === 'inspection') {
-      // الفحص: تدعم search, severity, status
-      // لا تدعم syncFilter, sortBy, groupBy
-      setSyncFilter('');
-      setSortBy('smart');
-      setGroupBy('none');
+      setSyncFilter(''); setSortBy('smart'); setGroupBy('none');
     }
-    // raw: تدعم كل الفلاتر، لا شيء يُمسح
   }, []);
 
   useEffect(() => {
@@ -502,7 +487,6 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
     return () => window.removeEventListener('online', handleOnline);
   }, []);
 
-  // ✅ البيانات المفلترة (تُستخدم في كل الواجهات)
   const filteredRemarks = useMemo(() => {
     if (!rawRemarks) return [];
     let filtered = rawRemarks;
@@ -535,7 +519,6 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
     return filtered;
   }, [rawRemarks, searchQuery, severityFilter, statusFilter, syncFilter, sortBy]);
 
-  // ✅ تجميعات raw
   const aggregatedGroups = useMemo(() => {
     if (!filteredRemarks) return [];
     const groupMap = {};
@@ -554,7 +537,6 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
     return Object.values(groupMap).sort((a, b) => b.remarks.length - a.remarks.length);
   }, [filteredRemarks, groupBy, allLatrines]);
 
-  // ✅ عدادات عامة (للزر الأحمر)
   const counters = useMemo(() => {
     if (!rawRemarks) return { total: 0, open: 0, closed: 0, failed: 0 };
     return rawRemarks.reduce((acc, r) => {
@@ -566,11 +548,9 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
     }, { total: 0, open: 0, closed: 0, failed: 0 });
   }, [rawRemarks]);
 
-  // ✅ تجميع المقاول (يستخدم filteredRemarks، لكن يُفلتر داخلياً بالمفتوحة فقط)
   const contractorBoqGroups = useMemo(() => {
     if (viewMode !== 'contractor' || !filteredRemarks) return [];
     const map = {};
-    // دائماً نعرض المفتوحة فقط في وضع المقاول
     filteredRemarks.filter(r => r.status === 'open').forEach(r => {
       const boq = r.boq_code || 'عام';
       if (!map[boq]) map[boq] = [];
@@ -589,104 +569,191 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
     });
   }, [filteredRemarks, viewMode]);
 
-  // --- Handlers ---
+  // ✅ الإصلاح الجوهري: استخدام template_code بدلاً من template_id في المزامنة
   const createAndLinkTemplate = async (templateData, remarkId, localUuid) => {
     const trimmedTitle = templateData.description?.trim() || '';
     if (!trimmedTitle) throw new Error('عنوان القالب فارغ');
+    
     const existing = await db.remark_templates.where('title').equals(trimmedTitle).first();
+    
     if (existing) {
       await db.transaction('rw', db.remarks, async () => {
         await db.remarks.update(remarkId, {
-          template_id: existing.id, description: null,
+          template_id: existing.id,
+          description: null,
           suffix_note: templateData.suffix_note || '',
-          action_required: existing.default_action, severity: existing.default_severity,
+          action_required: existing.default_action,
+          severity: existing.default_severity,
           sync_status: 'local'
         });
       });
-      await pushToSyncQueue('UPDATE_REMARK', { id: remarkId, local_uuid: localUuid, template_id: existing.id, description: null, suffix_note: templateData.suffix_note, severity: existing.default_severity, action_required: existing.default_action });
+      
+      // ✅ إرسال template_code للخادم
+      await pushToSyncQueue('UPDATE_REMARK', {
+        id: remarkId,
+        local_uuid: localUuid,
+        template_code: existing.template_code,
+        description: null,
+        suffix_note: templateData.suffix_note,
+        severity: existing.default_severity,
+        action_required: existing.default_action
+      });
+      
       return existing.id;
     }
+    
+    const newTemplateCode = `TPL-${uuidv4().slice(0, 8).toUpperCase()}`;
     const newTemplate = {
-      template_code: `TPL-${uuidv4().slice(0, 8).toUpperCase()}`,
-      title: trimmedTitle, description: trimmedTitle,
-      default_action: templateData.action_required || '', default_severity: templateData.severity,
+      template_code: newTemplateCode,
+      title: trimmedTitle,
+      description: trimmedTitle,
+      default_action: templateData.action_required || '',
+      default_severity: templateData.severity,
       boq_tags: templateData.boq_code ? [templateData.boq_code] : ['ALL'],
-      is_active: true, version: 1, created_by: 'field_engineer', created_at: new Date().toISOString()
+      is_active: true,
+      version: 1,
+      created_by: 'field_engineer',
+      created_at: new Date().toISOString()
     };
+    
     let templateId;
     await db.transaction('rw', db.remark_templates, db.remarks, async () => {
       templateId = await db.remark_templates.add(newTemplate);
       await db.remarks.update(remarkId, {
-        template_id: templateId, description: null,
+        template_id: templateId,
+        description: null,
         suffix_note: templateData.suffix_note || '',
-        action_required: newTemplate.default_action, severity: newTemplate.default_severity,
+        action_required: newTemplate.default_action,
+        severity: newTemplate.default_severity,
         sync_status: 'local'
       });
     });
+    
+    // ✅ إرسال CREATE_TEMPLATE أولاً
     await pushToSyncQueue('CREATE_TEMPLATE', newTemplate);
-    await pushToSyncQueue('UPDATE_REMARK', { id: remarkId, local_uuid: localUuid, template_id: templateId, description: null, suffix_note: templateData.suffix_note, severity: newTemplate.default_severity, action_required: newTemplate.default_action });
+    
+    // ✅ ثم إرسال UPDATE_REMARK مع template_code
+    await pushToSyncQueue('UPDATE_REMARK', {
+      id: remarkId,
+      local_uuid: localUuid,
+      template_code: newTemplateCode,
+      description: null,
+      suffix_note: templateData.suffix_note,
+      severity: newTemplate.default_severity,
+      action_required: newTemplate.default_action
+    });
+    
     return templateId;
   };
 
-  // ✅ إصلاح 1: إرسال CREATE_REMARK أولاً ثم استدعاء createAndLinkTemplate
+  // ✅ إصلاح: إضافة template_code إلى newRemark
   const handleAddOrEditRemark = async (formData) => {
-    setIsSaving(true); setError(null);
+    setIsSaving(true);
+    setError(null);
     try {
       if (formData.id) {
+        // تعديل ملاحظة موجودة
         const original = await db.remarks.get(formData.id);
         if (!original) throw new Error('الملاحظة غير موجودة');
         const updatedFields = {
-          template_id: formData.template_id, description: formData.template_id ? null : formData.description,
+          template_id: formData.template_id,
+          description: formData.template_id ? null : formData.description,
           suffix_note: formData.template_id ? formData.suffix_note : null,
-          severity: formData.severity, action_required: formData.action_required || null,
+          severity: formData.severity,
+          action_required: formData.action_required || null,
           deadline: formData.deadline ? new Date(formData.deadline).toISOString() : null,
-          sync_status: 'local', boq_code: original.boq_code
+          sync_status: 'local',
+          boq_code: original.boq_code
         };
         await db.remarks.update(formData.id, updatedFields);
-        await pushToSyncQueue('UPDATE_REMARK', { id: formData.id, local_uuid: original.local_uuid, ...updatedFields });
+        // ✅ إرسال template_code مع UPDATE_REMARK
+        await pushToSyncQueue('UPDATE_REMARK', {
+          id: formData.id,
+          local_uuid: original.local_uuid,
+          template_code: formData.template_code, // ✅
+          ...updatedFields
+        });
         setEditingRemark(null);
         setError({ type: 'success', message: 'تم التحديث.' });
       } else {
+        // إضافة ملاحظة جديدة
         const localUuid = uuidv4();
         const newRemark = {
-          local_uuid: localUuid, latrine_id: latrineId || formData.latrine_id, boq_code: formData.boq_code || boqCode || null, template_id: null,
-          description: formData.description, suffix_note: formData.suffix_note,
-          severity: formData.severity, action_required: formData.action_required || null,
+          local_uuid: localUuid,
+          latrine_id: latrineId || formData.latrine_id,
+          boq_code: formData.boq_code || boqCode || null,
+          template_id: formData.template_id || null,
+          template_code: formData.template_code || null, // ✅ أضف template_code
+          description: formData.description,
+          suffix_note: formData.suffix_note,
+          severity: formData.severity,
+          action_required: formData.action_required || null,
           deadline: formData.deadline ? new Date(formData.deadline).toISOString() : null,
-          status: 'open', sync_status: 'local', date_logged: new Date().toISOString(), closed_date: null
+          status: 'open',
+          sync_status: 'local',
+          date_logged: new Date().toISOString(),
+          closed_date: null
         };
         const remarkId = await db.remarks.add(newRemark);
 
-        // ✅ أرسل CREATE_REMARK أولاً في كل الأحوال (يدوي أو قالب)
+        // ✅ أرسل CREATE_REMARK مع template_code
         await pushToSyncQueue('CREATE_REMARK', newRemark);
 
         if (formData.save_as_template) {
           try {
-            await createAndLinkTemplate({ description: formData.description, severity: formData.severity, action_required: formData.action_required, boq_code: newRemark.boq_code, suffix_note: formData.suffix_note }, remarkId, localUuid);
+            await createAndLinkTemplate(
+              {
+                description: formData.description,
+                severity: formData.severity,
+                action_required: formData.action_required,
+                boq_code: newRemark.boq_code,
+                suffix_note: formData.suffix_note
+              },
+              remarkId,
+              localUuid
+            );
             setError({ type: 'success', message: '✅ تم الحفظ كقالب.' });
-          } catch (err) { 
+          } catch (err) {
             console.error('فشل حفظ القالب:', err);
-            setError({ type: 'warning', message: '⚠️ تم التسجيل لكن فشل حفظ القالب: ' + err.message }); 
+            setError({ type: 'warning', message: '⚠️ تم التسجيل لكن فشل حفظ القالب: ' + err.message });
           }
         } else {
           setError({ type: 'success', message: '✅ تم التسجيل.' });
         }
       }
-    } catch (err) { 
+    } catch (err) {
       console.error('Add/Edit remark error:', err);
-      setError({ type: 'error', message: 'فشل: ' + err.message }); 
+      setError({ type: 'error', message: 'فشل: ' + err.message });
+    } finally {
+      setIsSaving(false);
     }
-    finally { setIsSaving(false); }
   };
 
   const handleSaveAsTemplateFromCard = async (remark) => {
     setProcessingIds(prev => new Set(prev).add(remark.id));
     try {
       const localUuid = remark.local_uuid || remark.remark_id || uuidv4();
-      await createAndLinkTemplate({ description: remark.description, severity: remark.severity, action_required: remark.action_required, boq_code: remark.boq_code, suffix_note: remark.suffix_note }, remark.id, localUuid);
+      await createAndLinkTemplate(
+        {
+          description: remark.description,
+          severity: remark.severity,
+          action_required: remark.action_required,
+          boq_code: remark.boq_code,
+          suffix_note: remark.suffix_note
+        },
+        remark.id,
+        localUuid
+      );
       setError({ type: 'success', message: 'تم حفظ القالب.' });
-    } catch (err) { setError({ type: 'error', message: 'فشل: ' + err.message }); }
-    finally { setProcessingIds(prev => { const n = new Set(prev); n.delete(remark.id); return n; }); }
+    } catch (err) {
+      setError({ type: 'error', message: 'فشل: ' + err.message });
+    } finally {
+      setProcessingIds(prev => {
+        const n = new Set(prev);
+        n.delete(remark.id);
+        return n;
+      });
+    }
   };
 
   const handleBulkClose = async (remarksToClose) => {
@@ -701,36 +768,51 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
       const closedDate = new Date().toISOString();
       await db.transaction('rw', db.remarks, async () => {
         for (const remark of remarksToClose) {
-          await db.remarks.update(remark.id, { status: 'closed', closed_date: closedDate, sync_status: remark.sync_status === 'synced' ? 'pending' : 'local' });
+          await db.remarks.update(remark.id, {
+            status: 'closed',
+            closed_date: closedDate,
+            sync_status: remark.sync_status === 'synced' ? 'pending' : 'local'
+          });
         }
       });
       for (const remark of remarksToClose) {
-        await pushToSyncQueue('UPDATE_REMARK', { id: remark.id, local_uuid: remark.local_uuid || remark.remark_id, status: 'closed', closed_date: closedDate });
+        await pushToSyncQueue('UPDATE_REMARK', {
+          id: remark.id,
+          local_uuid: remark.local_uuid || remark.remark_id,
+          status: 'closed',
+          closed_date: closedDate
+        });
       }
-    } catch (err) { setError({ type: 'error', message: 'فشل الإغلاق: ' + err.message }); }
-    finally { setProcessingIds(prev => { const n = new Set(prev); ids.forEach(id => n.delete(id)); return n; }); }
+    } catch (err) {
+      setError({ type: 'error', message: 'فشل الإغلاق: ' + err.message });
+    } finally {
+      setProcessingIds(prev => {
+        const n = new Set(prev);
+        ids.forEach(id => n.delete(id));
+        return n;
+      });
+    }
   };
 
-  // ✅ إصلاح 2: دالة handleRetrySync معالجة رسالة undefined
   const handleRetrySync = async () => {
-    if (!navigator.onLine) { 
-      setError({ type: 'error', message: 'غير متصل.' }); 
-      return; 
+    if (!navigator.onLine) {
+      setError({ type: 'error', message: 'غير متصل.' });
+      return;
     }
     setIsRetrying(true);
-    try { 
-      const result = await retryFailedSync(); 
+    try {
+      const result = await retryFailedSync();
       if (result && result.processed !== undefined) {
         setError({ type: 'success', message: `تمت المزامنة: ${result.processed} ناجحة، ${result.failed || 0} فاشلة.` });
       } else {
         setError({ type: 'success', message: 'تمت المزامنة بنجاح.' });
       }
-    }
-    catch (err) { 
+    } catch (err) {
       console.error('Sync error:', err);
-      setError({ type: 'error', message: 'فشل المزامنة: ' + (err.message || 'خطأ غير معروف') }); 
+      setError({ type: 'error', message: 'فشل المزامنة: ' + (err.message || 'خطأ غير معروف') });
+    } finally {
+      setIsRetrying(false);
     }
-    finally { setIsRetrying(false); }
   };
 
   const getLatrineCode = useCallback((id) => {
@@ -739,7 +821,6 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
     return l ? l.latrine_id : `ID:${id}`;
   }, [latrineId, latrine, allLatrines]);
 
-  // ✅ Drill-down من Analytics: يحمل searchQuery فقط، يمسح الباقي
   const handleFilterByBoq = useCallback((boq) => {
     setSearchQuery(boq === 'عام' ? '' : boq);
     setSeverityFilter('');
@@ -765,15 +846,25 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
     try {
       const localUuid = uuidv4();
       const newRemark = {
-        local_uuid: localUuid, latrine_id: data.latrine_id, boq_code: data.boq_code, template_id: data.template_id,
-        description: data.description, severity: data.severity, action_required: null,
-        status: 'open', sync_status: 'local', date_logged: new Date().toISOString()
+        local_uuid: localUuid,
+        latrine_id: data.latrine_id,
+        boq_code: data.boq_code,
+        template_id: data.template_id,
+        description: data.description,
+        severity: data.severity,
+        action_required: null,
+        status: 'open',
+        sync_status: 'local',
+        date_logged: new Date().toISOString()
       };
       await db.remarks.add(newRemark);
       await pushToSyncQueue('CREATE_REMARK', newRemark);
       setError({ type: 'success', message: 'تمت الإضافة.' });
-    } catch (err) { setError({ type: 'error', message: 'فشل الإضافة: ' + err.message }); }
-    finally { setIsSaving(false); }
+    } catch (err) {
+      setError({ type: 'error', message: 'فشل الإضافة: ' + err.message });
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   if (latrineId && !latrine) return <LoadingSkeleton />;
@@ -811,31 +902,25 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
         <QuickAddRemark allLatrines={allLatrines} templates={allTemplates} onAdd={handleQuickAdd} />
       )}
 
-      {/* ✅ شريط الفلاتر: يظهر فقط الفلاتر المدعومة في الواجهة الحالية */}
       <div style={{ background: 'white', padding: '10px', borderRadius: '8px', marginBottom: '20px', display: 'flex', gap: '10px', flexWrap: 'wrap', alignItems: 'center' }}>
-        {/* البحث: مدعوم في كل الواجهات */}
         <input type="text" placeholder="🔍 بحث..." value={searchQuery} onChange={e => setSearchQuery(e.target.value)} style={{ flex: 2, padding: '8px', borderRadius: '4px', border: '1px solid #ccc' }} />
 
-        {/* الشدة: مدعومة في كل الواجهات */}
         <select value={severityFilter} onChange={e => setSeverityFilter(e.target.value)} style={{ padding: '8px', borderRadius: '4px', border: '1px solid #ccc' }}>
           <option value="">الشدة</option><option value="critical">حرجة</option><option value="major">كبيرة</option><option value="minor">طفيفة</option>
         </select>
 
-        {/* الحالة: مدعومة في inspection, raw, analytics */}
         {(viewMode === 'inspection' || viewMode === 'raw' || viewMode === 'analytics') && (
           <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)} style={{ padding: '8px', borderRadius: '4px', border: '1px solid #ccc' }}>
             <option value="">الحالة</option><option value="open">مفتوحة</option><option value="closed">مغلقة</option>
           </select>
         )}
 
-        {/* المزامنة: raw فقط */}
         {viewMode === 'raw' && (
           <select value={syncFilter} onChange={e => setSyncFilter(e.target.value)} style={{ padding: '8px', borderRadius: '4px', border: '1px solid #ccc' }}>
             <option value="">المزامنة</option><option value="local">محلي</option><option value="synced">مُزامن</option><option value="failed">فشل</option>
           </select>
         )}
 
-        {/* الترتيب: raw فقط */}
         {viewMode === 'raw' && (
           <select value={sortBy} onChange={e => setSortBy(e.target.value)} style={{ padding: '8px', borderRadius: '4px', border: '2px solid #3498db', fontWeight: 'bold' }}>
             <option value="smart">ترتيب ذكي</option>
@@ -845,7 +930,6 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
           </select>
         )}
 
-        {/* التجميع: raw فقط */}
         {viewMode === 'raw' && (
           <select value={groupBy} onChange={e => setGroupBy(e.target.value)} style={{ padding: '8px', borderRadius: '4px', border: '2px solid #8e44ad', fontWeight: 'bold', color: '#2c3e50' }}>
             <option value="none">تجميع المشكلة</option>
