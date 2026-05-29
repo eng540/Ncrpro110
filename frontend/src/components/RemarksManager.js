@@ -295,7 +295,7 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [error, setError] = useState(null);
   const [isSaving, setIsSaving] = useState(false);
-  const [isRetrying, setIsRetrying] = useState(false); // تمت إضافته
+  const [isRetrying, setIsRetrying] = useState(false); // ✅ تمت إضافته
   const [processingIds, setProcessingIds] = useState(new Set());
   const [editingRemark, setEditingRemark] = useState(null);
 
@@ -344,7 +344,7 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
     const counts = rawRemarks.reduce((acc, r) => {
       acc.total++; if (r.status === 'open') acc.open++; if (r.status === 'closed') acc.closed++; if (r.sync_status === 'failed') acc.failed++;
       return acc;
-    }, { total: 0, open: 0, closed: 0, failed: 0 });
+    }, { total: 0, open: 0, closed: 0, failed: 0 }); // ✅ التصحيح: counts وليس counters
 
     const groupMap = {};
     filtered.forEach(r => {
@@ -354,7 +354,7 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
     });
     const groups = Object.values(groupMap).sort((a, b) => b.remarks.length - a.remarks.length);
 
-    return { filteredRemarks: filtered, counters, aggregatedGroups: groups };
+    return { filteredRemarks: filtered, counters: counts, aggregatedGroups: groups }; // ✅ التصحيح
   }, [rawRemarks, statusFilter, severityFilter, syncFilter, searchQuery]);
 
   const createAndLinkTemplate = async (templateData, remarkId) => {
