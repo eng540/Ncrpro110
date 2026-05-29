@@ -197,7 +197,7 @@ const ViewModeTabs = ({ active, onChange }) => (
   </div>
 );
 
-// --- Contractor Boq Card (مُعاد استخدامه دون تغيير) ---
+// --- Contractor Boq Card (تجميع حسب البند للمقاول) ---
 const ContractorBoqCard = ({ boqCode, issues, getLatrineCode, onClose, processingIds, boqDescriptions }) => {
   const boqDesc = boqDescriptions[boqCode] || '';
   const totalRemarks = issues.reduce((sum, iss) => sum + iss.remarks.length, 0);
@@ -240,7 +240,7 @@ const ContractorBoqCard = ({ boqCode, issues, getLatrineCode, onClose, processin
   );
 };
 
-// --- Inspection Card (يدعم statusFilter) ---
+// --- Inspection Card (مع فلتر حالة) ---
 const InspectionCard = ({ latrineId, remarks, getLatrineCode, onClose, onEdit, onSaveAsTemplate, processingIds, statusFilter }) => {
   let filtered = remarks;
   if (statusFilter) {
@@ -273,16 +273,15 @@ const InspectionCard = ({ latrineId, remarks, getLatrineCode, onClose, onEdit, o
   );
 };
 
-// --- Analytics Panel (تفاعلي مع دعم الفلاتر) ---
-const AnalyticsPanel = ({ filteredRemarks, onFilterByBoq, onFilterByIssue }) => {
-  // إعادة حساب الإحصائيات بناءً على filteredRemarks (المتأثرة بالفلاتر)
+// --- Analytics Panel (مستقل بفلتراته) ---
+const AnalyticsPanel = ({ analyticsData, onFilterByBoq, onFilterByIssue }) => {
   const { topBoqs, topIssues, counters } = useMemo(() => {
-    const counts = { total: 0, open: 0, closed: 0, failed: 0 };
+    if (!analyticsData) return { topBoqs: [], topIssues: [], counters: { open: 0, closed: 0, failed: 0 } };
+    const counts = { open: 0, closed: 0, failed: 0, total: analyticsData.length };
     const boqCounts = {};
     const issueMap = {};
 
-    filteredRemarks.forEach(r => {
-      counts.total++;
+    analyticsData.forEach(r => {
       if (r.status === 'open') counts.open++;
       else if (r.status === 'closed') counts.closed++;
       if (r.sync_status === 'failed') counts.failed++;
@@ -291,9 +290,7 @@ const AnalyticsPanel = ({ filteredRemarks, onFilterByBoq, onFilterByIssue }) => 
       boqCounts[boq] = (boqCounts[boq] || 0) + 1;
 
       const issueKey = r.template_id ? `TPL_${r.template_id}` : `TXT_${r.description}`;
-      if (!issueMap[issueKey]) {
-        issueMap[issueKey] = { template: r.template, remarks: [] };
-      }
+      if (!issueMap[issueKey]) issueMap[issueKey] = { template: r.template, remarks: [] };
       issueMap[issueKey].remarks.push(r);
     });
 
@@ -301,7 +298,7 @@ const AnalyticsPanel = ({ filteredRemarks, onFilterByBoq, onFilterByIssue }) => 
     const topIssuesList = Object.values(issueMap).sort((a,b) => b.remarks.length - a.remarks.length).slice(0,5);
 
     return { topBoqs: topBoqsList, topIssues: topIssuesList, counters: counts };
-  }, [filteredRemarks]);
+  }, [analyticsData]);
 
   return (
     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(350px, 1fr))', gap: '20px' }}>
@@ -430,13 +427,12 @@ const QuickAddRemark = ({ allLatrines, templates, onAdd }) => {
 // ==========================================
 const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
   const [viewMode, setViewMode] = useState('contractor');
-  // فلاتر موحدة
-  const [statusFilter, setStatusFilter] = useState('');
-  const [severityFilter, setSeverityFilter] = useState('');
-  const [syncFilter, setSyncFilter] = useState('');
-  const [searchQuery, setSearchQuery] = useState('');
-  const [sortBy, setSortBy] = useState('smart');
-  const [groupBy, setGroupBy] = useState('none');
+
+  // فلاتر مستقلة لكل وضع عرض
+  const [contractorFilters, setContractorFilters] = useState({ search: '', severity: '' });
+  const [inspectionFilters, setInspectionFilters] = useState({ search: '', severity: '', status: '' });
+  const [analyticsFilters, setAnalyticsFilters] = useState({ severity: '', status: '' });
+  const [rawFilters, setRawFilters] = useState({ search: '', severity: '', status: '', sync: '', sort: 'smart', group: 'none' });
 
   const [error, setError] = useState(null);
   const [isSaving, setIsSaving] = useState(false);
@@ -470,10 +466,9 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
     return raw.map(r => ({ ...r, template: templateMap[r.template_id] || null }));
   }, [latrineId, boqCode, templateMap]);
 
-  // عند تغيير التبويب، لا نُعيد تعيين الفلاتر التي قد تكون مدعومة في التبويب الجديد
   const handleViewModeChange = useCallback((newMode) => {
     setViewMode(newMode);
-    // لا نعيد تعيين أي فلتر، نترك القيم كما هي. قد تكون مدعومة في التبويب الجديد.
+    // لا نلمس الفلاتر، كل وضع له حالته الخاصة
   }, []);
 
   useEffect(() => {
@@ -488,13 +483,14 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
     return () => window.removeEventListener('online', handleOnline);
   }, []);
 
-  // تصفية البيانات حسب الفلاتر
-  const filteredRemarks = useMemo(() => {
-    if (!rawRemarks) return [];
-    let filtered = rawRemarks;
+  // --- دوال الحصول على البيانات المفلترة حسب كل وضع ---
 
-    if (searchQuery.trim()) {
-      const q = searchQuery.toLowerCase();
+  // وضع المقاول: دائمًا الملاحظات المفتوحة فقط + فلاتره
+  const contractorData = useMemo(() => {
+    if (!rawRemarks) return [];
+    let filtered = rawRemarks.filter(r => r.status === 'open'); // دائمًا مفتوحة
+    if (contractorFilters.search.trim()) {
+      const q = contractorFilters.search.toLowerCase();
       filtered = filtered.filter(r =>
         (r.description && r.description.toLowerCase().includes(q)) ||
         (r.template && r.template.title.toLowerCase().includes(q)) ||
@@ -502,62 +498,14 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
         (r.boq_code && r.boq_code.toLowerCase() === q)
       );
     }
-    if (statusFilter) filtered = filtered.filter(r => r.status === statusFilter);
-    if (severityFilter) filtered = filtered.filter(r => r.severity === severityFilter);
-    if (syncFilter) filtered = filtered.filter(r => r.sync_status === syncFilter);
-
-    // الفرز (يُطبق دائماً، لكنه لا يؤثر على Contractor لأنه يستخدم aggregatedGroups الخاصة به)
-    if (sortBy === 'newest') filtered.sort((a, b) => new Date(b.date_logged) - new Date(a.date_logged));
-    else if (sortBy === 'oldest') filtered.sort((a, b) => new Date(a.date_logged) - new Date(b.date_logged));
-    else if (sortBy === 'severity') filtered.sort((a, b) => (SEVERITY_WEIGHT[b.severity] || 0) - (SEVERITY_WEIGHT[a.severity] || 0));
-    else {
-      filtered.sort((a, b) => {
-        if (a.status === 'open' && b.status !== 'open') return -1;
-        if (a.status !== 'open' && b.status === 'open') return 1;
-        const wA = SEVERITY_WEIGHT[a.severity] || 0, wB = SEVERITY_WEIGHT[b.severity] || 0;
-        if (wA !== wB) return wB - wA;
-        return new Date(b.date_logged) - new Date(a.date_logged);
-      });
-    }
+    if (contractorFilters.severity) filtered = filtered.filter(r => r.severity === contractorFilters.severity);
     return filtered;
-  }, [rawRemarks, statusFilter, severityFilter, syncFilter, searchQuery, sortBy]);
+  }, [rawRemarks, contractorFilters]);
 
-  // التجميعات (تُستخدم فقط في Raw و Analytics)
-  const aggregatedGroups = useMemo(() => {
-    if (!filteredRemarks) return [];
-    const groupMap = {};
-    filteredRemarks.forEach(r => {
-      let key;
-      if (groupBy === 'latrine') {
-        key = allLatrines?.find(l => l.id === r.latrine_id)?.latrine_id || `حمام ${r.latrine_id}`;
-      } else if (groupBy === 'boq') {
-        key = r.boq_code ? `بند ${r.boq_code}` : 'عام';
-      } else {
-        key = r.template_id ? `TPL_${r.template_id}` : `TXT_${r.description}`;
-      }
-      if (!groupMap[key]) groupMap[key] = { template: r.template, remarks: [], groupName: key };
-      groupMap[key].remarks.push(r);
-    });
-    return Object.values(groupMap).sort((a, b) => b.remarks.length - a.remarks.length);
-  }, [filteredRemarks, groupBy, allLatrines]);
-
-  // عدادات عامة (للإشارة فقط)
-  const counters = useMemo(() => {
-    if (!rawRemarks) return { total: 0, open: 0, closed: 0, failed: 0 };
-    return rawRemarks.reduce((acc, r) => {
-      acc.total++;
-      if (r.status === 'open') acc.open++;
-      else if (r.status === 'closed') acc.closed++;
-      if (r.sync_status === 'failed') acc.failed++;
-      return acc;
-    }, { total: 0, open: 0, closed: 0, failed: 0 });
-  }, [rawRemarks]);
-
-  // تجميع خاص بوضع المقاول حسب البند (يستخدم filteredRemarks)
   const contractorBoqGroups = useMemo(() => {
-    if (viewMode !== 'contractor' || !filteredRemarks) return [];
+    if (viewMode !== 'contractor') return [];
     const map = {};
-    filteredRemarks.forEach(r => {
+    contractorData.forEach(r => {
       const boq = r.boq_code || 'عام';
       if (!map[boq]) map[boq] = [];
       const issueKey = r.template_id ? `TPL_${r.template_id}` : `TXT_${r.description}`;
@@ -573,9 +521,97 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
       const countB = b[1].reduce((sum, iss) => sum + iss.remarks.length, 0);
       return countB - countA;
     });
-  }, [filteredRemarks, viewMode]);
+  }, [contractorData, viewMode]);
 
-  // --- Handlers (من الإصدارات السابقة، بدون تغيير) ---
+  // وضع الفحص
+  const inspectionData = useMemo(() => {
+    if (!rawRemarks) return [];
+    let filtered = rawRemarks;
+    if (inspectionFilters.search.trim()) {
+      const q = inspectionFilters.search.toLowerCase();
+      filtered = filtered.filter(r =>
+        (r.description && r.description.toLowerCase().includes(q)) ||
+        (r.template && r.template.title.toLowerCase().includes(q)) ||
+        (r.suffix_note && r.suffix_note.toLowerCase().includes(q)) ||
+        (r.boq_code && r.boq_code.toLowerCase() === q)
+      );
+    }
+    if (inspectionFilters.severity) filtered = filtered.filter(r => r.severity === inspectionFilters.severity);
+    if (inspectionFilters.status) filtered = filtered.filter(r => r.status === inspectionFilters.status);
+    return filtered;
+  }, [rawRemarks, inspectionFilters]);
+
+  // وضع التحليلات
+  const analyticsData = useMemo(() => {
+    if (!rawRemarks) return [];
+    let filtered = rawRemarks;
+    if (analyticsFilters.severity) filtered = filtered.filter(r => r.severity === analyticsFilters.severity);
+    if (analyticsFilters.status) filtered = filtered.filter(r => r.status === analyticsFilters.status);
+    return filtered;
+  }, [rawRemarks, analyticsFilters]);
+
+  // وضع السجل الخام
+  const rawData = useMemo(() => {
+    if (!rawRemarks) return [];
+    let filtered = rawRemarks;
+    if (rawFilters.search.trim()) {
+      const q = rawFilters.search.toLowerCase();
+      filtered = filtered.filter(r =>
+        (r.description && r.description.toLowerCase().includes(q)) ||
+        (r.template && r.template.title.toLowerCase().includes(q)) ||
+        (r.suffix_note && r.suffix_note.toLowerCase().includes(q)) ||
+        (r.boq_code && r.boq_code.toLowerCase() === q)
+      );
+    }
+    if (rawFilters.severity) filtered = filtered.filter(r => r.severity === rawFilters.severity);
+    if (rawFilters.status) filtered = filtered.filter(r => r.status === rawFilters.status);
+    if (rawFilters.sync) filtered = filtered.filter(r => r.sync_status === rawFilters.sync);
+    // sorting
+    const sort = rawFilters.sort;
+    if (sort === 'newest') filtered.sort((a, b) => new Date(b.date_logged) - new Date(a.date_logged));
+    else if (sort === 'oldest') filtered.sort((a, b) => new Date(a.date_logged) - new Date(b.date_logged));
+    else if (sort === 'severity') filtered.sort((a, b) => (SEVERITY_WEIGHT[b.severity] || 0) - (SEVERITY_WEIGHT[a.severity] || 0));
+    else {
+      filtered.sort((a, b) => {
+        if (a.status === 'open' && b.status !== 'open') return -1;
+        if (a.status !== 'open' && b.status === 'open') return 1;
+        const wA = SEVERITY_WEIGHT[a.severity] || 0, wB = SEVERITY_WEIGHT[b.severity] || 0;
+        if (wA !== wB) return wB - wA;
+        return new Date(b.date_logged) - new Date(a.date_logged);
+      });
+    }
+    return filtered;
+  }, [rawRemarks, rawFilters]);
+
+  // aggregatedGroups (للاستخدام في raw و analytics - لكن analytics يستخدم analyticsData)
+  const rawAggregatedGroups = useMemo(() => {
+    if (!rawData) return [];
+    const groupMap = {};
+    rawData.forEach(r => {
+      let key;
+      if (rawFilters.group === 'latrine') {
+        key = allLatrines?.find(l => l.id === r.latrine_id)?.latrine_id || `حمام ${r.latrine_id}`;
+      } else if (rawFilters.group === 'boq') {
+        key = r.boq_code ? `بند ${r.boq_code}` : 'عام';
+      } else {
+        key = r.template_id ? `TPL_${r.template_id}` : `TXT_${r.description}`;
+      }
+      if (!groupMap[key]) groupMap[key] = { template: r.template, remarks: [], groupName: key };
+      groupMap[key].remarks.push(r);
+    });
+    return Object.values(groupMap).sort((a, b) => b.remarks.length - a.remarks.length);
+  }, [rawData, rawFilters.group, allLatrines]);
+
+  // عدادات عامة (للزر الأحمر)
+  const counters = useMemo(() => {
+    if (!rawRemarks) return { total: 0, open: 0, closed: 0, failed: 0 };
+    return rawRemarks.reduce((acc, r) => {
+      acc.total++; if (r.status === 'open') acc.open++; if (r.status === 'closed') acc.closed++; if (r.sync_status === 'failed') acc.failed++;
+      return acc;
+    }, { total: 0, open: 0, closed: 0, failed: 0 });
+  }, [rawRemarks]);
+
+  // --- Handlers (بدون تغيير عن النسخ السابقة) ---
   const createAndLinkTemplate = async (templateData, remarkId, localUuid) => {
     const trimmedTitle = templateData.description?.trim() || '';
     if (!trimmedTitle) throw new Error('عنوان القالب فارغ');
@@ -702,13 +738,13 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
   }, [latrineId, latrine, allLatrines]);
 
   const handleFilterByBoq = useCallback((boq) => {
-    setSearchQuery(boq === 'عام' ? '' : boq);
     setViewMode('contractor');
+    setContractorFilters(prev => ({ ...prev, search: boq === 'عام' ? '' : boq }));
   }, []);
 
   const handleFilterByIssue = useCallback((issue) => {
-    setSearchQuery(issue.template?.title || issue.remarks[0].description);
     setViewMode('contractor');
+    setContractorFilters(prev => ({ ...prev, search: issue.template?.title || issue.remarks[0].description }));
   }, []);
 
   const handleQuickAdd = async (data) => {
@@ -726,6 +762,12 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
     } catch (err) { setError({ type: 'error', message: 'فشل الإضافة: ' + err.message }); }
     finally { setIsSaving(false); }
   };
+
+  // دوال تعديل الفلاتر الخاصة بكل وضع
+  const updateContractorFilter = (key, value) => setContractorFilters(prev => ({ ...prev, [key]: value }));
+  const updateInspectionFilter = (key, value) => setInspectionFilters(prev => ({ ...prev, [key]: value }));
+  const updateAnalyticsFilter = (key, value) => setAnalyticsFilters(prev => ({ ...prev, [key]: value }));
+  const updateRawFilter = (key, value) => setRawFilters(prev => ({ ...prev, [key]: value }));
 
   if (latrineId && !latrine) return <LoadingSkeleton />;
 
@@ -762,36 +804,64 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
         <QuickAddRemark allLatrines={allLatrines} templates={allTemplates} onAdd={handleQuickAdd} />
       )}
 
-      {/* شريط الفلاتر الموحد */}
-      <div style={{ background: 'white', padding: '10px', borderRadius: '8px', marginBottom: '20px', display: 'flex', gap: '10px', flexWrap: 'wrap', alignItems: 'center' }}>
-        <input type="text" placeholder="🔍 بحث..." value={searchQuery} onChange={e => setSearchQuery(e.target.value)} style={{ flex: 2, padding: '8px', borderRadius: '4px', border: '1px solid #ccc' }} />
-        <select value={severityFilter} onChange={e => setSeverityFilter(e.target.value)} style={{ padding: '8px', borderRadius: '4px', border: '1px solid #ccc' }}>
-          <option value="">الشدة</option><option value="critical">حرجة</option><option value="major">كبيرة</option><option value="minor">طفيفة</option>
-        </select>
-        {(viewMode === 'inspection' || viewMode === 'raw' || viewMode === 'analytics') && (
-          <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)} style={{ padding: '8px', borderRadius: '4px', border: '1px solid #ccc' }}>
+      {/* شريط فلاتر خاص بكل وضع */}
+      {viewMode === 'contractor' && (
+        <div style={{ background: 'white', padding: '10px', borderRadius: '8px', marginBottom: '20px', display: 'flex', gap: '10px', flexWrap: 'wrap', alignItems: 'center' }}>
+          <input type="text" placeholder="🔍 بحث..." value={contractorFilters.search} onChange={e => updateContractorFilter('search', e.target.value)} style={{ flex: 2, padding: '8px', borderRadius: '4px', border: '1px solid #ccc' }} />
+          <select value={contractorFilters.severity} onChange={e => updateContractorFilter('severity', e.target.value)} style={{ padding: '8px', borderRadius: '4px', border: '1px solid #ccc' }}>
+            <option value="">الشدة</option><option value="critical">حرجة</option><option value="major">كبيرة</option><option value="minor">طفيفة</option>
+          </select>
+        </div>
+      )}
+
+      {viewMode === 'inspection' && (
+        <div style={{ background: 'white', padding: '10px', borderRadius: '8px', marginBottom: '20px', display: 'flex', gap: '10px', flexWrap: 'wrap', alignItems: 'center' }}>
+          <input type="text" placeholder="🔍 بحث..." value={inspectionFilters.search} onChange={e => updateInspectionFilter('search', e.target.value)} style={{ flex: 2, padding: '8px', borderRadius: '4px', border: '1px solid #ccc' }} />
+          <select value={inspectionFilters.severity} onChange={e => updateInspectionFilter('severity', e.target.value)} style={{ padding: '8px', borderRadius: '4px', border: '1px solid #ccc' }}>
+            <option value="">الشدة</option><option value="critical">حرجة</option><option value="major">كبيرة</option><option value="minor">طفيفة</option>
+          </select>
+          <select value={inspectionFilters.status} onChange={e => updateInspectionFilter('status', e.target.value)} style={{ padding: '8px', borderRadius: '4px', border: '1px solid #ccc' }}>
             <option value="">الحالة</option><option value="open">مفتوحة</option><option value="closed">مغلقة</option>
           </select>
-        )}
-        {viewMode === 'raw' && (
-          <>
-            <select value={syncFilter} onChange={e => setSyncFilter(e.target.value)} style={{ padding: '8px', borderRadius: '4px', border: '1px solid #ccc' }}>
-              <option value="">المزامنة</option><option value="local">محلي</option><option value="synced">مُزامن</option><option value="failed">فشل</option>
-            </select>
-            <select value={sortBy} onChange={e => setSortBy(e.target.value)} style={{ padding: '8px', borderRadius: '4px', border: '2px solid #3498db', fontWeight: 'bold' }}>
-              <option value="smart">ترتيب ذكي</option>
-              <option value="newest">الأحدث</option>
-              <option value="oldest">الأقدم</option>
-              <option value="severity">حسب الخطورة</option>
-            </select>
-            <select value={groupBy} onChange={e => setGroupBy(e.target.value)} style={{ padding: '8px', borderRadius: '4px', border: '2px solid #8e44ad', fontWeight: 'bold', color: '#2c3e50' }}>
-              <option value="none">تجميع المشكلة</option>
-              <option value="latrine">تجميع الحمام</option>
-              <option value="boq">تجميع البند</option>
-            </select>
-          </>
-        )}
-      </div>
+        </div>
+      )}
+
+      {viewMode === 'analytics' && (
+        <div style={{ background: 'white', padding: '10px', borderRadius: '8px', marginBottom: '20px', display: 'flex', gap: '10px', flexWrap: 'wrap', alignItems: 'center' }}>
+          <select value={analyticsFilters.severity} onChange={e => updateAnalyticsFilter('severity', e.target.value)} style={{ padding: '8px', borderRadius: '4px', border: '1px solid #ccc' }}>
+            <option value="">الشدة</option><option value="critical">حرجة</option><option value="major">كبيرة</option><option value="minor">طفيفة</option>
+          </select>
+          <select value={analyticsFilters.status} onChange={e => updateAnalyticsFilter('status', e.target.value)} style={{ padding: '8px', borderRadius: '4px', border: '1px solid #ccc' }}>
+            <option value="">الحالة</option><option value="open">مفتوحة</option><option value="closed">مغلقة</option>
+          </select>
+        </div>
+      )}
+
+      {viewMode === 'raw' && (
+        <div style={{ background: 'white', padding: '10px', borderRadius: '8px', marginBottom: '20px', display: 'flex', gap: '10px', flexWrap: 'wrap', alignItems: 'center' }}>
+          <input type="text" placeholder="🔍 بحث..." value={rawFilters.search} onChange={e => updateRawFilter('search', e.target.value)} style={{ flex: 2, padding: '8px', borderRadius: '4px', border: '1px solid #ccc' }} />
+          <select value={rawFilters.severity} onChange={e => updateRawFilter('severity', e.target.value)} style={{ padding: '8px', borderRadius: '4px', border: '1px solid #ccc' }}>
+            <option value="">الشدة</option><option value="critical">حرجة</option><option value="major">كبيرة</option><option value="minor">طفيفة</option>
+          </select>
+          <select value={rawFilters.status} onChange={e => updateRawFilter('status', e.target.value)} style={{ padding: '8px', borderRadius: '4px', border: '1px solid #ccc' }}>
+            <option value="">الحالة</option><option value="open">مفتوحة</option><option value="closed">مغلقة</option>
+          </select>
+          <select value={rawFilters.sync} onChange={e => updateRawFilter('sync', e.target.value)} style={{ padding: '8px', borderRadius: '4px', border: '1px solid #ccc' }}>
+            <option value="">المزامنة</option><option value="local">محلي</option><option value="synced">مُزامن</option><option value="failed">فشل</option>
+          </select>
+          <select value={rawFilters.sort} onChange={e => updateRawFilter('sort', e.target.value)} style={{ padding: '8px', borderRadius: '4px', border: '2px solid #3498db', fontWeight: 'bold' }}>
+            <option value="smart">ترتيب ذكي</option>
+            <option value="newest">الأحدث</option>
+            <option value="oldest">الأقدم</option>
+            <option value="severity">حسب الخطورة</option>
+          </select>
+          <select value={rawFilters.group} onChange={e => updateRawFilter('group', e.target.value)} style={{ padding: '8px', borderRadius: '4px', border: '2px solid #8e44ad', fontWeight: 'bold', color: '#2c3e50' }}>
+            <option value="none">تجميع المشكلة</option>
+            <option value="latrine">تجميع الحمام</option>
+            <option value="boq">تجميع البند</option>
+          </select>
+        </div>
+      )}
 
       {counters.failed > 0 && (
         <button onClick={handleRetrySync} disabled={isRetrying} style={{ marginBottom: '15px', padding: '8px 16px', background: '#e74c3c', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer' }}>
@@ -799,95 +869,103 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
         </button>
       )}
 
-      {!rawRemarks ? <LoadingSkeleton /> : filteredRemarks.length === 0 ? (
-        <div style={{ textAlign: 'center', padding: '60px', background: 'white', borderRadius: '8px' }}>📭 لا توجد ملاحظات</div>
-      ) : (
-        <>
-          {viewMode === 'contractor' && (
-            <div>
-              <p style={{ color: '#e67e22', fontWeight: 'bold', marginBottom: '15px' }}>⚠️ جميع الملاحظات التالية مطلوب معالجتها دون استثناء. التصنيف حسب الخطورة للإدارة فقط.</p>
-              {contractorBoqGroups.map(([boq, issues]) => (
-                <ContractorBoqCard key={boq} boqCode={boq} issues={issues} getLatrineCode={getLatrineCode} onClose={handleBulkClose} processingIds={processingIds} boqDescriptions={boqDescriptions} />
-              ))}
-            </div>
-          )}
+      {!rawRemarks ? <LoadingSkeleton /> : (
+        viewMode === 'contractor' && contractorData.length === 0 ? (
+          <div style={{ textAlign: 'center', padding: '60px', background: 'white', borderRadius: '8px' }}>📭 لا توجد مهام مفتوحة</div>
+        ) : viewMode === 'inspection' && inspectionData.length === 0 ? (
+          <div style={{ textAlign: 'center', padding: '60px', background: 'white', borderRadius: '8px' }}>📭 لا توجد ملاحظات مطابقة</div>
+        ) : viewMode === 'analytics' && analyticsData.length === 0 ? (
+          <div style={{ textAlign: 'center', padding: '60px', background: 'white', borderRadius: '8px' }}>📭 لا توجد بيانات للتحليل</div>
+        ) : viewMode === 'raw' && rawData.length === 0 ? (
+          <div style={{ textAlign: 'center', padding: '60px', background: 'white', borderRadius: '8px' }}>📭 لا توجد ملاحظات</div>
+        ) : (
+          <>
+            {viewMode === 'contractor' && (
+              <div>
+                <p style={{ color: '#e67e22', fontWeight: 'bold', marginBottom: '15px' }}>⚠️ جميع الملاحظات التالية مطلوب معالجتها دون استثناء. التصنيف حسب الخطورة للإدارة فقط.</p>
+                {contractorBoqGroups.map(([boq, issues]) => (
+                  <ContractorBoqCard key={boq} boqCode={boq} issues={issues} getLatrineCode={getLatrineCode} onClose={handleBulkClose} processingIds={processingIds} boqDescriptions={boqDescriptions} />
+                ))}
+              </div>
+            )}
 
-          {viewMode === 'inspection' && (
-            <div>
-              {Object.entries(filteredRemarks.reduce((acc, r) => {
-                if (!acc[r.latrine_id]) acc[r.latrine_id] = [];
-                acc[r.latrine_id].push(r);
-                return acc;
-              }, {})).map(([lid, remarks]) => (
-                <InspectionCard key={lid} latrineId={parseInt(lid)} remarks={remarks} getLatrineCode={getLatrineCode} onClose={handleBulkClose} onEdit={setEditingRemark} onSaveAsTemplate={handleSaveAsTemplateFromCard} processingIds={processingIds} statusFilter={statusFilter} />
-              ))}
-            </div>
-          )}
+            {viewMode === 'inspection' && (
+              <div>
+                {Object.entries(inspectionData.reduce((acc, r) => {
+                  if (!acc[r.latrine_id]) acc[r.latrine_id] = [];
+                  acc[r.latrine_id].push(r);
+                  return acc;
+                }, {})).map(([lid, remarks]) => (
+                  <InspectionCard key={lid} latrineId={parseInt(lid)} remarks={remarks} getLatrineCode={getLatrineCode} onClose={handleBulkClose} onEdit={setEditingRemark} onSaveAsTemplate={handleSaveAsTemplateFromCard} processingIds={processingIds} statusFilter={inspectionFilters.status} />
+                ))}
+              </div>
+            )}
 
-          {viewMode === 'analytics' && (
-            <AnalyticsPanel filteredRemarks={filteredRemarks} onFilterByBoq={handleFilterByBoq} onFilterByIssue={handleFilterByIssue} />
-          )}
+            {viewMode === 'analytics' && (
+              <AnalyticsPanel analyticsData={analyticsData} onFilterByBoq={handleFilterByBoq} onFilterByIssue={handleFilterByIssue} />
+            )}
 
-          {viewMode === 'raw' && groupBy === 'none' && (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-              {filteredRemarks.map(r => (
-                <div key={r.id} style={{ display: 'flex', alignItems: 'center', gap: '12px', background: 'white', padding: '12px', borderRadius: '8px', borderRight: `3px solid ${UI_COLORS.severity[r.severity]}`, opacity: r.status === 'closed' ? 0.7 : 1 }}>
-                  <div style={{ flex: 1 }}>
-                    <div style={{ display: 'flex', gap: '8px', marginBottom: '4px', flexWrap: 'wrap' }}>
-                      <span style={{ fontWeight: 'bold' }}>{getLatrineCode(r.latrine_id)}</span>
-                      <span style={{ color: '#666' }}>{r.boq_code || 'عام'}</span>
-                      <span style={{ background: UI_COLORS.severity[r.severity], color: 'white', padding: '1px 6px', borderRadius: '4px', fontSize: '10px' }}>{r.severity}</span>
-                      <span style={{ background: UI_COLORS.sync[r.sync_status || 'local'], color: 'white', padding: '1px 6px', borderRadius: '4px', fontSize: '10px' }}>{UI_LABELS.sync[r.sync_status || 'local']}</span>
-                    </div>
-                    <div>{r.template ? `📋 ${r.template.title}` : r.description}</div>
-                  </div>
-                  {r.status === 'open' && (
-                    <div style={{ display: 'flex', gap: '4px' }}>
-                      <button onClick={() => setEditingRemark(r)} disabled={processingIds.has(r.id)} style={{ padding: '4px 8px', background: '#f39c12', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '11px' }}>✏️</button>
-                      {!r.template_id && <button onClick={() => handleSaveAsTemplateFromCard(r)} disabled={processingIds.has(r.id)} style={{ padding: '4px 8px', background: '#8e44ad', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '11px' }}>📋</button>}
-                      <button onClick={() => handleBulkClose([r])} disabled={processingIds.has(r.id)} style={{ padding: '4px 8px', background: '#27ae60', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '11px' }}>✓</button>
-                    </div>
-                  )}
-                </div>
-              ))}
-            </div>
-          )}
-
-          {viewMode === 'raw' && groupBy !== 'none' && (
-            <div>
-              {aggregatedGroups.map((group, idx) => (
-                <div key={idx} style={{ marginBottom: '30px', background: 'white', borderRadius: '8px', boxShadow: '0 2px 8px rgba(0,0,0,0.08)', overflow: 'hidden' }}>
-                  <div style={{ background: '#1F4E78', color: 'white', padding: '12px 20px', fontWeight: 'bold', fontSize: '16px', display: 'flex', justifyContent: 'space-between' }}>
-                    <span>{group.groupName}</span>
-                    <span style={{ background: 'rgba(255,255,255,0.2)', padding: '2px 8px', borderRadius: '12px', fontSize: '12px' }}>{group.remarks.length} ملاحظة</span>
-                  </div>
-                  <div style={{ padding: '20px', display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))', gap: '16px', background: '#f8f9fa' }}>
-                    {group.remarks.map(r => (
-                      <div key={r.id} style={{ background: 'white', padding: '12px', borderRadius: '8px', borderRight: `3px solid ${UI_COLORS.severity[r.severity]}`, opacity: r.status === 'closed' ? 0.7 : 1 }}>
-                        <div style={{ flex: 1 }}>
-                          <div style={{ display: 'flex', gap: '8px', marginBottom: '4px', flexWrap: 'wrap' }}>
-                            <span style={{ fontWeight: 'bold' }}>{getLatrineCode(r.latrine_id)}</span>
-                            <span style={{ color: '#666' }}>{r.boq_code || 'عام'}</span>
-                            <span style={{ background: UI_COLORS.severity[r.severity], color: 'white', padding: '1px 6px', borderRadius: '4px', fontSize: '10px' }}>{r.severity}</span>
-                            <span style={{ background: UI_COLORS.sync[r.sync_status || 'local'], color: 'white', padding: '1px 6px', borderRadius: '4px', fontSize: '10px' }}>{UI_LABELS.sync[r.sync_status || 'local']}</span>
-                          </div>
-                          <div>{r.template ? `📋 ${r.template.title}` : r.description}</div>
-                        </div>
-                        {r.status === 'open' && (
-                          <div style={{ display: 'flex', gap: '4px', marginTop: '8px' }}>
-                            <button onClick={() => setEditingRemark(r)} disabled={processingIds.has(r.id)} style={{ padding: '4px 8px', background: '#f39c12', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '11px' }}>✏️</button>
-                            {!r.template_id && <button onClick={() => handleSaveAsTemplateFromCard(r)} disabled={processingIds.has(r.id)} style={{ padding: '4px 8px', background: '#8e44ad', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '11px' }}>📋</button>}
-                            <button onClick={() => handleBulkClose([r])} disabled={processingIds.has(r.id)} style={{ padding: '4px 8px', background: '#27ae60', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '11px' }}>✓</button>
-                          </div>
-                        )}
+            {viewMode === 'raw' && rawFilters.group === 'none' && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                {rawData.map(r => (
+                  <div key={r.id} style={{ display: 'flex', alignItems: 'center', gap: '12px', background: 'white', padding: '12px', borderRadius: '8px', borderRight: `3px solid ${UI_COLORS.severity[r.severity]}`, opacity: r.status === 'closed' ? 0.7 : 1 }}>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ display: 'flex', gap: '8px', marginBottom: '4px', flexWrap: 'wrap' }}>
+                        <span style={{ fontWeight: 'bold' }}>{getLatrineCode(r.latrine_id)}</span>
+                        <span style={{ color: '#666' }}>{r.boq_code || 'عام'}</span>
+                        <span style={{ background: UI_COLORS.severity[r.severity], color: 'white', padding: '1px 6px', borderRadius: '4px', fontSize: '10px' }}>{r.severity}</span>
+                        <span style={{ background: UI_COLORS.sync[r.sync_status || 'local'], color: 'white', padding: '1px 6px', borderRadius: '4px', fontSize: '10px' }}>{UI_LABELS.sync[r.sync_status || 'local']}</span>
                       </div>
-                    ))}
+                      <div>{r.template ? `📋 ${r.template.title}` : r.description}</div>
+                    </div>
+                    {r.status === 'open' && (
+                      <div style={{ display: 'flex', gap: '4px' }}>
+                        <button onClick={() => setEditingRemark(r)} disabled={processingIds.has(r.id)} style={{ padding: '4px 8px', background: '#f39c12', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '11px' }}>✏️</button>
+                        {!r.template_id && <button onClick={() => handleSaveAsTemplateFromCard(r)} disabled={processingIds.has(r.id)} style={{ padding: '4px 8px', background: '#8e44ad', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '11px' }}>📋</button>}
+                        <button onClick={() => handleBulkClose([r])} disabled={processingIds.has(r.id)} style={{ padding: '4px 8px', background: '#27ae60', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '11px' }}>✓</button>
+                      </div>
+                    )}
                   </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </>
+                ))}
+              </div>
+            )}
+
+            {viewMode === 'raw' && rawFilters.group !== 'none' && (
+              <div>
+                {rawAggregatedGroups.map((group, idx) => (
+                  <div key={idx} style={{ marginBottom: '30px', background: 'white', borderRadius: '8px', boxShadow: '0 2px 8px rgba(0,0,0,0.08)', overflow: 'hidden' }}>
+                    <div style={{ background: '#1F4E78', color: 'white', padding: '12px 20px', fontWeight: 'bold', fontSize: '16px', display: 'flex', justifyContent: 'space-between' }}>
+                      <span>{group.groupName}</span>
+                      <span style={{ background: 'rgba(255,255,255,0.2)', padding: '2px 8px', borderRadius: '12px', fontSize: '12px' }}>{group.remarks.length} ملاحظة</span>
+                    </div>
+                    <div style={{ padding: '20px', display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))', gap: '16px', background: '#f8f9fa' }}>
+                      {group.remarks.map(r => (
+                        <div key={r.id} style={{ background: 'white', padding: '12px', borderRadius: '8px', borderRight: `3px solid ${UI_COLORS.severity[r.severity]}`, opacity: r.status === 'closed' ? 0.7 : 1 }}>
+                          <div style={{ flex: 1 }}>
+                            <div style={{ display: 'flex', gap: '8px', marginBottom: '4px', flexWrap: 'wrap' }}>
+                              <span style={{ fontWeight: 'bold' }}>{getLatrineCode(r.latrine_id)}</span>
+                              <span style={{ color: '#666' }}>{r.boq_code || 'عام'}</span>
+                              <span style={{ background: UI_COLORS.severity[r.severity], color: 'white', padding: '1px 6px', borderRadius: '4px', fontSize: '10px' }}>{r.severity}</span>
+                              <span style={{ background: UI_COLORS.sync[r.sync_status || 'local'], color: 'white', padding: '1px 6px', borderRadius: '4px', fontSize: '10px' }}>{UI_LABELS.sync[r.sync_status || 'local']}</span>
+                            </div>
+                            <div>{r.template ? `📋 ${r.template.title}` : r.description}</div>
+                          </div>
+                          {r.status === 'open' && (
+                            <div style={{ display: 'flex', gap: '4px', marginTop: '8px' }}>
+                              <button onClick={() => setEditingRemark(r)} disabled={processingIds.has(r.id)} style={{ padding: '4px 8px', background: '#f39c12', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '11px' }}>✏️</button>
+                              {!r.template_id && <button onClick={() => handleSaveAsTemplateFromCard(r)} disabled={processingIds.has(r.id)} style={{ padding: '4px 8px', background: '#8e44ad', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '11px' }}>📋</button>}
+                              <button onClick={() => handleBulkClose([r])} disabled={processingIds.has(r.id)} style={{ padding: '4px 8px', background: '#27ae60', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '11px' }}>✓</button>
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </>
+        )
       )}
     </div>
   );
