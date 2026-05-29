@@ -24,7 +24,6 @@ const SEVERITY_WEIGHT = { critical: 3, major: 2, minor: 1 };
 // 2. Sub-Components
 // ==========================================
 
-// --- Error Banner (unchanged) ---
 const ErrorBanner = ({ error, onDismiss }) => {
   if (!error) return null;
   const bg = error.type === 'success' ? '#d4edda' : error.type === 'warning' ? '#fff3cd' : '#f8d7da';
@@ -44,7 +43,7 @@ const LoadingSkeleton = () => (
   </div>
 );
 
-// --- Smart Remark Form (محسّن لدعم إغلاق النموذج بعد الحفظ) ---
+// --- Smart Remark Form ---
 const SmartRemarkForm = ({ initialData, boqCode, isSaving, onSubmit, onCancel, templates }) => {
   const [desc, setDesc] = useState(initialData?.description || (initialData?.template ? initialData.template.title : ''));
   const [suffix, setSuffix] = useState(initialData?.suffix_note || '');
@@ -153,7 +152,7 @@ const SmartRemarkForm = ({ initialData, boqCode, isSaving, onSubmit, onCancel, t
   );
 };
 
-// --- View Mode Tabs (unchanged) ---
+// --- View Mode Tabs ---
 const VIEW_MODES = [
   { key: 'contractor', label: '📋 تعليمات المقاول' },
   { key: 'inspection', label: '🚻 فحص الحمامات' },
@@ -178,7 +177,7 @@ const ViewModeTabs = ({ active, onChange }) => (
   </div>
 );
 
-// --- Contractor Action Card (محسّن: إزالة تجميع الخطورة، إضافة وصف البند) ---
+// --- Contractor Action Card ---
 const ContractorActionCard = ({ issue, getLatrineCode, onClose, processingIds, boqDescriptions }) => {
   const severity = issue.template?.default_severity || issue.remarks[0].severity;
   const title = issue.template?.title || issue.remarks[0].description;
@@ -400,9 +399,10 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
     return { filteredRemarks: filtered, counters: counts, aggregatedGroups: groups };
   }, [rawRemarks, statusFilter, severityFilter, syncFilter, searchQuery]);
 
-  // --- Handlers ---
+  // --- Handlers (مع الإصلاحات الجوهرية) ---
   const createAndLinkTemplate = async (templateData, remarkId, localUuid) => {
-    const existing = await db.remark_templates.where('title').equals(templateData.description.trim()).first();
+    const trimmedTitle = templateData.description.trim();
+    const existing = await db.remark_templates.where('title').equals(trimmedTitle).first();
     if (existing) {
       await db.remarks.update(remarkId, {
         template_id: existing.id, description: null,
@@ -415,7 +415,7 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
     }
     const newTemplate = {
       template_code: `TPL-${uuidv4().slice(0, 8).toUpperCase()}`,
-      title: templateData.description.trim(), description: templateData.description.trim(),
+      title: trimmedTitle, description: trimmedTitle,
       default_action: templateData.action_required || '', default_severity: templateData.severity,
       boq_tags: templateData.boq_code ? [templateData.boq_code] : ['ALL'],
       is_active: true, version: 1, created_by: 'field_engineer', created_at: new Date().toISOString()
@@ -438,6 +438,7 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
     setIsSaving(true); setError(null);
     try {
       if (formData.id) {
+        // تعديل ملاحظة موجودة
         const original = await db.remarks.get(formData.id);
         const updatedFields = {
           template_id: formData.template_id, description: formData.template_id ? null : formData.description,
@@ -451,6 +452,7 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
         setEditingRemark(null);
         setError({ type: 'success', message: 'تم التحديث.' });
       } else {
+        // إضافة جديدة: أولاً ننشئ الملاحظة محلياً ونرسل CREATE_REMARK للخادم
         const localUuid = uuidv4();
         const newRemark = {
           local_uuid: localUuid, latrine_id: latrineId || formData.latrine_id, boq_code: boqCode || null, template_id: null,
@@ -460,13 +462,15 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
           status: 'open', sync_status: 'local', date_logged: new Date().toISOString(), closed_date: null
         };
         const remarkId = await db.remarks.add(newRemark);
+        // ✅ إصلاح: إرسال CREATE_REMARK فوراً لضمان وصولها للخادم
+        await pushToSyncQueue('CREATE_REMARK', newRemark);
+
         if (formData.save_as_template) {
           try {
             await createAndLinkTemplate({ description: formData.description, severity: formData.severity, action_required: formData.action_required, boq_code: boqCode, suffix_note: formData.suffix_note }, remarkId, localUuid);
             setError({ type: 'success', message: '✅ تم الحفظ كقالب.' });
           } catch { setError({ type: 'warning', message: '⚠️ تم الحفظ لكن فشل القالب.' }); }
         } else {
-          await pushToSyncQueue('CREATE_REMARK', newRemark);
           setError({ type: 'success', message: '✅ تم التسجيل.' });
         }
       }
@@ -477,6 +481,7 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
   const handleSaveAsTemplateFromCard = async (remark) => {
     setProcessingIds(prev => new Set(prev).add(remark.id));
     try {
+      // الملاحظة موجودة بالفعل على الخادم، فقط نحدثها لربطها بالقالب
       await createAndLinkTemplate({ description: remark.description, severity: remark.severity, action_required: remark.action_required, boq_code: remark.boq_code, suffix_note: remark.suffix_note }, remark.id, remark.local_uuid);
       setError({ type: 'success', message: 'تم حفظ القالب.' });
     } catch { setError({ type: 'error', message: 'فشل.' }); }
@@ -488,12 +493,16 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
     setProcessingIds(prev => new Set([...prev, ...ids]));
     try {
       const closedDate = new Date().toISOString();
-      await db.transaction('rw', db.remarks, db.sync_queue, async () => {
+      // ✅ إصلاح: إجراء التحديثات داخل المعاملة، ثم إرسال الطابور خارجها
+      await db.transaction('rw', db.remarks, async () => {
         for (const remark of remarksToClose) {
           await db.remarks.update(remark.id, { status: 'closed', closed_date: closedDate, sync_status: remark.sync_status === 'synced' ? 'pending' : 'local' });
-          await pushToSyncQueue('UPDATE_REMARK', { id: remark.id, local_uuid: remark.local_uuid, status: 'closed', closed_date: closedDate });
         }
       });
+      // الآن بعد الخروج الآمن من المعاملة، ندفع إلى طابور المزامنة
+      for (const remark of remarksToClose) {
+        await pushToSyncQueue('UPDATE_REMARK', { id: remark.id, local_uuid: remark.local_uuid, status: 'closed', closed_date: closedDate });
+      }
     } catch { setError({ type: 'error', message: 'فشل الإغلاق.' }); }
     finally { setProcessingIds(prev => { const n = new Set(prev); ids.forEach(id => n.delete(id)); return n; }); }
   };
@@ -512,7 +521,6 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
     return l ? l.latrine_id : `ID:${id}`;
   }, [latrineId, latrine, allLatrines]);
 
-  // دوال التفاعل من Analytics
   const handleFilterByBoq = useCallback((boq) => {
     setViewMode('contractor');
     setSearchQuery(boq === 'عام' ? '' : boq);
@@ -523,7 +531,6 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
     setSearchQuery(issue.template?.title || issue.remarks[0].description);
   }, []);
 
-  // Quick Add من الشاشة الشاملة
   const handleQuickAdd = async (data) => {
     setIsSaving(true);
     try {
@@ -564,12 +571,10 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
 
       {!latrineId && <ViewModeTabs active={viewMode} onChange={setViewMode} />}
 
-      {/* إضافة سريعة في الشاشة الشاملة (وضع raw) */}
       {!latrineId && viewMode === 'raw' && (
         <QuickAddRemark allLatrines={allLatrines} onAdd={handleQuickAdd} />
       )}
 
-      {/* Context-sensitive filters */}
       {viewMode !== 'analytics' && (
         <div style={{ background: 'white', padding: '10px', borderRadius: '8px', marginBottom: '20px', display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
           <input type="text" placeholder="🔍 بحث..." value={searchQuery} onChange={e => setSearchQuery(e.target.value)} style={{ flex: 2, padding: '8px', borderRadius: '4px', border: '1px solid #ccc' }} />
