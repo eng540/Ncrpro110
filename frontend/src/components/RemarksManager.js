@@ -20,11 +20,6 @@ const UI_LABELS = {
 
 const SEVERITY_WEIGHT = { critical: 3, major: 2, minor: 1 };
 
-const formatDate = (isoString) => {
-  if (!isoString) return 'N/A';
-  return new Date(isoString).toLocaleDateString('ar-SA', { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
-};
-
 // ==========================================
 // 2. Sub-Components
 // ==========================================
@@ -36,7 +31,7 @@ const ErrorBanner = ({ error, onDismiss }) => {
   const color = error.type === 'success' ? '#155724' : error.type === 'warning' ? '#856404' : '#721c24';
   const icon = error.type === 'success' ? '✅' : error.type === 'warning' ? '⚠️' : '❌';
   return (
-    <div style={{ background: bg, color, padding: '12px 16px', borderRadius: '6px', marginBottom: '15px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontWeight: 'bold', boxShadow: '0 2px 4px rgba(0,0,0,0.05)' }}>
+    <div style={{ background: bg, color, padding: '12px 16px', borderRadius: '6px', marginBottom: '15px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontWeight: 'bold' }}>
       <span>{icon} {error.message}</span>
       <button onClick={onDismiss} style={{ background: 'transparent', border: 'none', fontSize: '16px', cursor: 'pointer', color: 'inherit' }}>✖</button>
     </div>
@@ -45,15 +40,11 @@ const ErrorBanner = ({ error, onDismiss }) => {
 
 const LoadingSkeleton = () => (
   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))', gap: '16px' }}>
-    {[1, 2, 3].map(i => (
-      <div key={i} style={{ background: '#f0f2f5', borderRadius: '8px', height: '180px', animation: 'pulse 1.5s infinite' }}>
-        <style>{`@keyframes pulse { 0% { opacity: 0.6; } 50% { opacity: 1; } 100% { opacity: 0.6; } }`}</style>
-      </div>
-    ))}
+    {[1,2,3].map(i => <div key={i} style={{ background: '#f0f2f5', borderRadius: '8px', height: '180px', animation: 'pulse 1.5s infinite' }} />)}
   </div>
 );
 
-// --- Smart Remark Form (إضافة، تعديل، حفظ كقالب) ---
+// --- Smart Remark Form ---
 const SmartRemarkForm = ({ initialData, boqCode, isSaving, onSubmit, onCancel, templates }) => {
   const [desc, setDesc] = useState(initialData?.description || (initialData?.template ? initialData.template.title : ''));
   const [suffix, setSuffix] = useState(initialData?.suffix_note || '');
@@ -67,20 +58,16 @@ const SmartRemarkForm = ({ initialData, boqCode, isSaving, onSubmit, onCancel, t
 
   useEffect(() => {
     function handleClickOutside(event) {
-      if (wrapperRef.current && !wrapperRef.current.contains(event.target)) {
-        setShowSuggestions(false);
-      }
+      if (wrapperRef.current && !wrapperRef.current.contains(event.target)) setShowSuggestions(false);
     }
     document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, [wrapperRef]);
+  }, []);
 
   const filteredTemplates = useMemo(() => {
     if (!templates) return [];
     let filtered = templates;
-    if (boqCode) {
-      filtered = filtered.filter(t => !t.boq_tags || t.boq_tags.length === 0 || t.boq_tags.includes('ALL') || t.boq_tags.includes(boqCode));
-    }
+    if (boqCode) filtered = filtered.filter(t => !t.boq_tags || t.boq_tags.length === 0 || t.boq_tags.includes('ALL') || t.boq_tags.includes(boqCode));
     if (desc.trim() && !selectedTemplate) {
       const q = desc.toLowerCase();
       filtered = filtered.filter(t => t.title.toLowerCase().includes(q) || t.description.toLowerCase().includes(q));
@@ -106,17 +93,13 @@ const SmartRemarkForm = ({ initialData, boqCode, isSaving, onSubmit, onCancel, t
   const handleSubmit = (e) => {
     e.preventDefault();
     if (!desc.trim()) return;
-    
     onSubmit({ 
       template_id: selectedTemplate ? selectedTemplate.id : null,
       description: selectedTemplate ? null : desc.trim(),
       suffix_note: selectedTemplate ? suffix.trim() : null,
-      severity: sev, 
-      action_required: action.trim(), 
-      deadline: dead,
+      severity: sev, action_required: action.trim(), deadline: dead,
       save_as_template: saveAsTemplate && !selectedTemplate
     });
-    
     if (!initialData) {
       setDesc(''); setSuffix(''); setAction(''); setDead(''); setSev('minor'); setSelectedTemplate(null); setSaveAsTemplate(false);
     }
@@ -128,19 +111,9 @@ const SmartRemarkForm = ({ initialData, boqCode, isSaving, onSubmit, onCancel, t
   return (
     <form onSubmit={handleSubmit} style={{ background: isEdit ? 'white' : '#fff9e6', padding: '20px', borderRadius: '8px', marginBottom: isEdit ? '0' : '20px', border: isEdit ? '2px solid #3498db' : '1px solid #ffeaa7', boxShadow: isEdit ? '0 4px 15px rgba(0,0,0,0.1)' : '0 2px 8px rgba(0,0,0,0.05)' }}>
       {isEdit && <h3 style={{ marginTop: 0, color: '#3498db' }}>✏️ تعديل الملاحظة</h3>}
-      
       <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', marginBottom: '10px' }}>
         <div ref={wrapperRef} style={{ flex: 2, minWidth: '250px', position: 'relative' }}>
-          <input 
-            type="text" 
-            placeholder={boqCode ? `ابحث عن مشكلة في البند ${boqCode}...` : "ابحث في مكتبة المشاكل أو اكتب ملاحظة جديدة..."}
-            value={desc} 
-            onChange={handleDescChange}
-            onFocus={() => setShowSuggestions(true)}
-            style={{ width: '100%', padding: '10px', borderRadius: '4px', border: '1px solid #ccc', boxSizing: 'border-box', background: selectedTemplate ? '#e8f8f5' : 'white' }}
-            required 
-            disabled={isSaving}
-          />
+          <input type="text" placeholder={boqCode ? `ابحث عن مشكلة في البند ${boqCode}...` : "ابحث في مكتبة المشاكل أو اكتب ملاحظة جديدة..."} value={desc} onChange={handleDescChange} onFocus={() => setShowSuggestions(true)} style={{ width: '100%', padding: '10px', borderRadius: '4px', border: '1px solid #ccc', boxSizing: 'border-box', background: selectedTemplate ? '#e8f8f5' : 'white' }} required disabled={isSaving} />
           {showSuggestions && filteredTemplates.length > 0 && (
             <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, background: 'white', border: '1px solid #ccc', borderRadius: '4px', zIndex: 100, maxHeight: '200px', overflowY: 'auto', boxShadow: '0 4px 12px rgba(0,0,0,0.1)' }}>
               {filteredTemplates.map(tpl => (
@@ -156,27 +129,21 @@ const SmartRemarkForm = ({ initialData, boqCode, isSaving, onSubmit, onCancel, t
           <option value="minor">طفيفة</option><option value="major">كبيرة</option><option value="critical">حرجة</option>
         </select>
       </div>
-
       {selectedTemplate && (
         <div style={{ marginBottom: '10px' }}>
           <input type="text" placeholder="تفاصيل إضافية خاصة بهذه الحالة (اختياري)..." value={suffix} onChange={(e) => setSuffix(e.target.value)} style={{ width: '100%', padding: '10px', borderRadius: '4px', border: '1px dashed #3498db', boxSizing: 'border-box', background: '#f4f6f6' }} disabled={isSaving} />
         </div>
       )}
-
       <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', alignItems: 'center' }}>
         <input type="text" placeholder="الإجراء المطلوب..." value={action} onChange={(e) => setAction(e.target.value)} style={{ flex: 1, padding: '10px', borderRadius: '4px', border: '1px solid #ccc', minWidth: '200px' }} disabled={isSaving} />
         <input type="date" value={dead} onChange={(e) => setDead(e.target.value)} style={{ padding: '10px', borderRadius: '4px', border: '1px solid #ccc' }} disabled={isSaving} />
-        
         <div style={{ display: 'flex', gap: '10px', marginLeft: 'auto', alignItems: 'center' }}>
           {canShowSaveAsTemplate && (
             <label style={{ display: 'flex', alignItems: 'center', gap: '5px', fontSize: '12px', color: '#8e44ad', cursor: 'pointer', whiteSpace: 'nowrap' }}>
-              <input type="checkbox" checked={saveAsTemplate} onChange={(e) => setSaveAsTemplate(e.target.checked)} disabled={isSaving} />
-              حفظ كقالب جديد
+              <input type="checkbox" checked={saveAsTemplate} onChange={(e) => setSaveAsTemplate(e.target.checked)} disabled={isSaving} /> حفظ كقالب جديد
             </label>
           )}
-          {onCancel && (
-            <button type="button" onClick={onCancel} disabled={isSaving} style={{ padding: '10px 20px', background: '#ecf0f1', color: '#333', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>إلغاء</button>
-          )}
+          {onCancel && <button type="button" onClick={onCancel} disabled={isSaving} style={{ padding: '10px 20px', background: '#ecf0f1', color: '#333', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>إلغاء</button>}
           <button type="submit" disabled={isSaving || !desc.trim()} style={{ padding: '10px 20px', background: isSaving ? '#bdc3c7' : (isEdit ? '#3498db' : '#e67e22'), color: 'white', border: 'none', borderRadius: '4px', cursor: isSaving ? 'not-allowed' : 'pointer', fontWeight: 'bold' }}>
             {isSaving ? '⏳ جاري الحفظ...' : (isEdit ? '💾 تحديث الملاحظة' : '+ تسجيل الملاحظة')}
           </button>
@@ -231,9 +198,7 @@ const ContractorActionCard = ({ issue, getLatrineCode, onClose, processingIds })
           </div>
           <div style={{ fontSize: '14px', fontWeight: 'bold', marginBottom: '4px' }}>{title}</div>
           <div style={{ color: '#e67e22', fontSize: '13px', marginBottom: '8px' }}>⚠ مطلوب: {action}</div>
-          <div style={{ fontSize: '12px', color: '#666' }}>
-            📍 {latrineCodes.join(', ')}
-          </div>
+          <div style={{ fontSize: '12px', color: '#666' }}>📍 {latrineCodes.join(', ')}</div>
         </div>
         <button onClick={() => onClose(issue.remarks)} disabled={isProcessing}
           style={{ padding: '6px 16px', background: isProcessing ? '#95a5a6' : '#27ae60', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold', whiteSpace: 'nowrap' }}>
@@ -330,6 +295,7 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [error, setError] = useState(null);
   const [isSaving, setIsSaving] = useState(false);
+  const [isRetrying, setIsRetrying] = useState(false); // تمت إضافته
   const [processingIds, setProcessingIds] = useState(new Set());
   const [editingRemark, setEditingRemark] = useState(null);
 
@@ -349,7 +315,6 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
     })));
   }, [latrineId, boqCode]);
 
-  // Auto-retry on reconnect
   useEffect(() => {
     const handleOnline = async () => {
       if (await db.remarks.where('sync_status').equals('failed').count() > 0) {
@@ -361,7 +326,6 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
     return () => window.removeEventListener('online', handleOnline);
   }, []);
 
-  // --- Data Processing ---
   const { filteredRemarks, counters, aggregatedGroups } = useMemo(() => {
     if (!rawRemarks) return { filteredRemarks: [], counters: { total: 0, open: 0, closed: 0, failed: 0 }, aggregatedGroups: [] };
     let filtered = rawRemarks;
@@ -393,7 +357,6 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
     return { filteredRemarks: filtered, counters, aggregatedGroups: groups };
   }, [rawRemarks, statusFilter, severityFilter, syncFilter, searchQuery]);
 
-  // --- Handlers ---
   const createAndLinkTemplate = async (templateData, remarkId) => {
     const existing = await db.remark_templates.where('title').equals(templateData.description).first();
     if (existing) {
@@ -528,7 +491,6 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
 
       {!latrineId && <ViewModeTabs active={viewMode} onChange={setViewMode} />}
 
-      {/* Context-sensitive filters */}
       {viewMode !== 'analytics' && (
         <div style={{ background: 'white', padding: '10px', borderRadius: '8px', marginBottom: '20px', display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
           <input type="text" placeholder="🔍 بحث..." value={searchQuery} onChange={e => setSearchQuery(e.target.value)} style={{ flex: 2, padding: '8px', borderRadius: '4px', border: '1px solid #ccc' }} />
@@ -554,7 +516,6 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
         </button>
       )}
 
-      {/* Content */}
       {!rawRemarks ? <LoadingSkeleton /> : filteredRemarks.length === 0 ? (
         <div style={{ textAlign: 'center', padding: '60px', background: 'white', borderRadius: '8px' }}>📭 لا توجد ملاحظات</div>
       ) : (
