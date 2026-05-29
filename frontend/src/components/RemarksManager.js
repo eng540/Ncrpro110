@@ -24,6 +24,7 @@ const SEVERITY_WEIGHT = { critical: 3, major: 2, minor: 1 };
 // 2. Sub-Components
 // ==========================================
 
+// --- ConfirmModal ---
 const ConfirmModal = ({ message, onConfirm, onCancel }) => {
   useEffect(() => {
     const handleKey = (e) => {
@@ -48,6 +49,7 @@ const ConfirmModal = ({ message, onConfirm, onCancel }) => {
   );
 };
 
+// --- ErrorBanner ---
 const ErrorBanner = ({ error, onDismiss }) => {
   if (!error) return null;
   const bg = error.type === 'success' ? '#d4edda' : error.type === 'warning' ? '#fff3cd' : '#f8d7da';
@@ -61,13 +63,14 @@ const ErrorBanner = ({ error, onDismiss }) => {
   );
 };
 
+// --- LoadingSkeleton ---
 const LoadingSkeleton = () => (
   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))', gap: '16px' }}>
     {[1,2,3].map(i => <div key={i} style={{ background: '#f0f2f5', borderRadius: '8px', height: '180px', animation: 'pulse 1.5s infinite' }} />)}
   </div>
 );
 
-// ✅ تعديل SmartRemarkForm: إضافة template_code إلى onSubmit
+// --- SmartRemarkForm (مع template_code) ---
 const SmartRemarkForm = ({ initialData, boqCode, isSaving, onSubmit, onCancel, templates }) => {
   const [desc, setDesc] = useState(initialData?.description || (initialData?.template ? initialData.template.title : ''));
   const [suffix, setSuffix] = useState(initialData?.suffix_note || '');
@@ -178,6 +181,7 @@ const SmartRemarkForm = ({ initialData, boqCode, isSaving, onSubmit, onCancel, t
   );
 };
 
+// --- ViewModeTabs ---
 const VIEW_MODES = [
   { key: 'contractor', label: '📋 تعليمات المقاول' },
   { key: 'inspection', label: '🚻 فحص الحمامات' },
@@ -196,6 +200,7 @@ const ViewModeTabs = ({ active, onChange }) => (
   </div>
 );
 
+// --- ContractorBoqCard ---
 const ContractorBoqCard = ({ boqCode, issues, getLatrineCode, onClose, processingIds, boqDescriptions }) => {
   const boqDesc = boqDescriptions[boqCode] || '';
   const totalRemarks = issues.reduce((sum, iss) => sum + iss.remarks.length, 0);
@@ -238,6 +243,7 @@ const ContractorBoqCard = ({ boqCode, issues, getLatrineCode, onClose, processin
   );
 };
 
+// --- InspectionCard ---
 const InspectionCard = ({ latrineId, remarks, getLatrineCode, onClose, onEdit, onSaveAsTemplate, processingIds, statusFilter }) => {
   let filtered = remarks;
   if (statusFilter) {
@@ -270,6 +276,7 @@ const InspectionCard = ({ latrineId, remarks, getLatrineCode, onClose, onEdit, o
   );
 };
 
+// --- AnalyticsPanel ---
 const AnalyticsPanel = ({ filteredRemarks, onFilterByBoq, onFilterByIssue }) => {
   const { topBoqs, topIssues, counters } = useMemo(() => {
     const counts = { total: 0, open: 0, closed: 0, failed: 0 };
@@ -338,6 +345,7 @@ const AnalyticsPanel = ({ filteredRemarks, onFilterByBoq, onFilterByIssue }) => 
   );
 };
 
+// --- QuickAddRemark (مع template_code) ---
 const QuickAddRemark = ({ allLatrines, templates, onAdd }) => {
   const [selectedLatrine, setSelectedLatrine] = useState('');
   const [desc, setDesc] = useState('');
@@ -387,7 +395,8 @@ const QuickAddRemark = ({ allLatrines, templates, onAdd }) => {
       description: selectedTemplate ? null : desc.trim(),
       severity: sev,
       boq_code: boqCode || null,
-      template_id: selectedTemplate?.id || null
+      template_id: selectedTemplate?.id || null,
+      template_code: selectedTemplate?.template_code || null  // ✅ أضف template_code
     });
     setDesc(''); setSelectedLatrine(''); setBoqCode(''); setSelectedTemplate(null);
   };
@@ -420,7 +429,7 @@ const QuickAddRemark = ({ allLatrines, templates, onAdd }) => {
 };
 
 // ==========================================
-// 3. Main Component (الخيار ج - Reset ذكي)
+// 3. Main Component
 // ==========================================
 const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
   const [viewMode, setViewMode] = useState('contractor');
@@ -573,9 +582,9 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
   const createAndLinkTemplate = async (templateData, remarkId, localUuid) => {
     const trimmedTitle = templateData.description?.trim() || '';
     if (!trimmedTitle) throw new Error('عنوان القالب فارغ');
-    
+
     const existing = await db.remark_templates.where('title').equals(trimmedTitle).first();
-    
+
     if (existing) {
       await db.transaction('rw', db.remarks, async () => {
         await db.remarks.update(remarkId, {
@@ -587,8 +596,7 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
           sync_status: 'local'
         });
       });
-      
-      // ✅ إرسال template_code للخادم
+
       await pushToSyncQueue('UPDATE_REMARK', {
         id: remarkId,
         local_uuid: localUuid,
@@ -598,10 +606,10 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
         severity: existing.default_severity,
         action_required: existing.default_action
       });
-      
+
       return existing.id;
     }
-    
+
     const newTemplateCode = `TPL-${uuidv4().slice(0, 8).toUpperCase()}`;
     const newTemplate = {
       template_code: newTemplateCode,
@@ -615,7 +623,7 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
       created_by: 'field_engineer',
       created_at: new Date().toISOString()
     };
-    
+
     let templateId;
     await db.transaction('rw', db.remark_templates, db.remarks, async () => {
       templateId = await db.remark_templates.add(newTemplate);
@@ -628,11 +636,9 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
         sync_status: 'local'
       });
     });
-    
-    // ✅ إرسال CREATE_TEMPLATE أولاً
+
     await pushToSyncQueue('CREATE_TEMPLATE', newTemplate);
-    
-    // ✅ ثم إرسال UPDATE_REMARK مع template_code
+
     await pushToSyncQueue('UPDATE_REMARK', {
       id: remarkId,
       local_uuid: localUuid,
@@ -642,11 +648,11 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
       severity: newTemplate.default_severity,
       action_required: newTemplate.default_action
     });
-    
+
     return templateId;
   };
 
-  // ✅ إصلاح: إضافة template_code إلى newRemark
+  // ✅ تعديل الملاحظات القديمة بقالب مع template_code
   const handleAddOrEditRemark = async (formData) => {
     setIsSaving(true);
     setError(null);
@@ -655,6 +661,14 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
         // تعديل ملاحظة موجودة
         const original = await db.remarks.get(formData.id);
         if (!original) throw new Error('الملاحظة غير موجودة');
+
+        // تأكد من وجود local_uuid للملاحظات التي تفتقده
+        let localUuid = original.local_uuid || original.remark_id;
+        if (!localUuid) {
+          localUuid = uuidv4();
+          await db.remarks.update(formData.id, { local_uuid: localUuid });
+        }
+
         const updatedFields = {
           template_id: formData.template_id,
           description: formData.template_id ? null : formData.description,
@@ -663,16 +677,19 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
           action_required: formData.action_required || null,
           deadline: formData.deadline ? new Date(formData.deadline).toISOString() : null,
           sync_status: 'local',
-          boq_code: original.boq_code
+          boq_code: original.boq_code // الحفاظ على البند الأصلي
         };
+
         await db.remarks.update(formData.id, updatedFields);
-        // ✅ إرسال template_code مع UPDATE_REMARK
+
+        // إرسال UPDATE_REMARK مع template_code و local_uuid
         await pushToSyncQueue('UPDATE_REMARK', {
           id: formData.id,
-          local_uuid: original.local_uuid,
+          local_uuid: localUuid,
           template_code: formData.template_code, // ✅
           ...updatedFields
         });
+
         setEditingRemark(null);
         setError({ type: 'success', message: 'تم التحديث.' });
       } else {
@@ -683,7 +700,7 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
           latrine_id: latrineId || formData.latrine_id,
           boq_code: formData.boq_code || boqCode || null,
           template_id: formData.template_id || null,
-          template_code: formData.template_code || null, // ✅ أضف template_code
+          template_code: formData.template_code || null, // ✅
           description: formData.description,
           suffix_note: formData.suffix_note,
           severity: formData.severity,
@@ -696,7 +713,7 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
         };
         const remarkId = await db.remarks.add(newRemark);
 
-        // ✅ أرسل CREATE_REMARK مع template_code
+        // إرسال CREATE_REMARK مع template_code
         await pushToSyncQueue('CREATE_REMARK', newRemark);
 
         if (formData.save_as_template) {
@@ -850,6 +867,7 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
         latrine_id: data.latrine_id,
         boq_code: data.boq_code,
         template_id: data.template_id,
+        template_code: data.template_code, // ✅
         description: data.description,
         severity: data.severity,
         action_required: null,
