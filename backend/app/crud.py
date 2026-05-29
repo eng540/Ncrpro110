@@ -504,7 +504,7 @@ def seed_default_remark_templates(db: Session):
         db.commit()
 
 # ==========================================
-#  SYNC ENGINE PROCESSOR (مع تعقيم البيانات + معالج CREATE_TEMPLATE)
+#  SYNC ENGINE PROCESSOR (مع دعم template_code)
 # ==========================================
 def process_sync_queue(db: Session, sync_req: schemas.SyncRequest) -> schemas.SyncResponse:
     processed = []
@@ -555,7 +555,16 @@ def process_sync_queue(db: Session, sync_req: schemas.SyncRequest) -> schemas.Sy
                 remark_data.pop('id', None)
                 remark_data.pop('local_id', None)
 
-                # 🌟 تعقيم البيانات: تحويل النصوص الفارغة إلى None لتفادي انتهاك القيد
+                # ✅ تحويل template_code إلى template_id
+                template_code = remark_data.pop('template_code', None)
+                if template_code:
+                    template = db.query(models.RemarkTemplate).filter(
+                        models.RemarkTemplate.template_code == template_code
+                    ).first()
+                    if template:
+                        remark_data['template_id'] = template.id
+
+                # تعقيم البيانات
                 if remark_data.get('description') == "":
                     remark_data['description'] = None
                 if remark_data.get('suffix_note') == "":
@@ -571,6 +580,8 @@ def process_sync_queue(db: Session, sync_req: schemas.SyncRequest) -> schemas.Sy
 
                 db.add(new_remark)
                 db.flush()
+                # ✅ إضافة commit لتثبيت الملاحظة
+                db.commit()
 
                 processed.append(op.seq)
                 latrines_to_recalc.add(op_data.get("latrine_id"))
@@ -599,9 +610,17 @@ def process_sync_queue(db: Session, sync_req: schemas.SyncRequest) -> schemas.Sy
                         ).first()
 
                 if remark:
+                    # ✅ تحويل template_code إلى template_id
+                    template_code = op_data.pop('template_code', None)
+                    if template_code:
+                        template = db.query(models.RemarkTemplate).filter(
+                            models.RemarkTemplate.template_code == template_code
+                        ).first()
+                        if template:
+                            op_data['template_id'] = template.id
+
                     for key, value in op_data.items():
                         if hasattr(remark, key) and key not in ["id", "local_uuid", "sync_status", "local_id"]:
-                            # 🌟 تعقيم البيانات: تحويل النصوص الفارغة للحقول الحساسة إلى None
                             if value == "" and key in ['description', 'suffix_note', 'template_id']:
                                 value = None
                             setattr(remark, key, value)
