@@ -24,21 +24,30 @@ const SEVERITY_WEIGHT = { critical: 3, major: 2, minor: 1 };
 // 2. Sub-Components
 // ==========================================
 
-// --- Simple Confirm Modal ---
-const ConfirmModal = ({ message, onConfirm, onCancel }) => (
-  <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 10000 }}>
-    <div style={{ background: 'white', padding: '20px', borderRadius: '8px', maxWidth: '300px', textAlign: 'center' }}>
-      <p>{message}</p>
-      <div style={{ display: 'flex', gap: '10px', justifyContent: 'center', marginTop: '15px' }}>
-        <button onClick={onCancel} style={{ padding: '8px 16px', background: '#ecf0f1', border: 'none', borderRadius: '4px', cursor: 'pointer' }}>إلغاء</button>
-        <button onClick={onConfirm} style={{ padding: '8px 16px', background: '#e74c3c', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer' }}>تأكيد</button>
-      </div>
+// --- Error Banner ---
+const ErrorBanner = ({ error, onDismiss }) => {
+  if (!error) return null;
+  const bg = error.type === 'success' ? '#d4edda' : error.type === 'warning' ? '#fff3cd' : '#f8d7da';
+  const color = error.type === 'success' ? '#155724' : error.type === 'warning' ? '#856404' : '#721c24';
+  const icon = error.type === 'success' ? '✅' : error.type === 'warning' ? '⚠️' : '❌';
+  return (
+    <div style={{ background: bg, color, padding: '12px 16px', borderRadius: '6px', marginBottom: '15px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontWeight: 'bold' }}>
+      <span>{icon} {error.message}</span>
+      <button onClick={onDismiss} style={{ background: 'transparent', border: 'none', fontSize: '16px', cursor: 'pointer', color: 'inherit' }}>✖</button>
     </div>
+  );
+};
+
+const LoadingSkeleton = () => (
+  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))', gap: '16px' }}>
+    {[1,2,3].map(i => <div key={i} style={{ background: '#f0f2f5', borderRadius: '8px', height: '180px', animation: 'pulse 1.5s infinite' }} />)}
   </div>
 );
 
-// --- Smart Remark Form (unchanged, kept for brevity – same as previous final) ---
+// --- Smart Remark Form (unchanged, kept minimal for brevity – same as previous final) ---
 const SmartRemarkForm = ({ initialData, boqCode, isSaving, onSubmit, onCancel, templates }) => {
+  // ... (الكود لم يتغير عن الإصدار السابق)
+  // ملاحظة: تم إبقاؤه مختصراً هنا لتجنب التكرار، لكنه مطابق تماماً للإصدار النهائي السابق
   const [desc, setDesc] = useState(initialData?.description || (initialData?.template ? initialData.template.title : ''));
   const [suffix, setSuffix] = useState(initialData?.suffix_note || '');
   const [sev, setSev] = useState(initialData?.severity || 'minor');
@@ -143,6 +152,32 @@ const SmartRemarkForm = ({ initialData, boqCode, isSaving, onSubmit, onCancel, t
         </div>
       </div>
     </form>
+  );
+};
+
+// --- Enhanced ConfirmModal ---
+const ConfirmModal = ({ message, onConfirm, onCancel }) => {
+  useEffect(() => {
+    const handleKey = (e) => {
+      if (e.key === 'Escape') onCancel();
+      if (e.key === 'Enter') onConfirm();
+    };
+    document.addEventListener('keydown', handleKey);
+    return () => document.removeEventListener('keydown', handleKey);
+  }, [onConfirm, onCancel]);
+
+  return (
+    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 10000 }}
+         onClick={(e) => e.target === e.currentTarget && onCancel()}>
+      <div style={{ background: 'white', padding: '24px', borderRadius: '12px', maxWidth: '320px', textAlign: 'center', animation: 'fadeIn 0.2s', boxShadow: '0 8px 24px rgba(0,0,0,0.2)' }}>
+        <style>{`@keyframes fadeIn { from { opacity: 0; transform: scale(0.95); } to { opacity: 1; transform: scale(1); } }`}</style>
+        <p style={{ fontSize: '15px', color: '#333', marginBottom: '20px' }}>{message}</p>
+        <div style={{ display: 'flex', gap: '10px', justifyContent: 'center' }}>
+          <button onClick={onCancel} style={{ padding: '10px 20px', background: '#ecf0f1', border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' }}>إلغاء</button>
+          <button onClick={onConfirm} style={{ padding: '10px 20px', background: '#e74c3c', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' }}>تأكيد</button>
+        </div>
+      </div>
+    </div>
   );
 };
 
@@ -278,7 +313,7 @@ const AnalyticsPanel = ({ aggregatedGroups, counters, onFilterByBoq, onFilterByI
   );
 };
 
-// --- Quick Add Remark (مع دعم القوالب والبنود) ---
+// --- Enhanced Quick Add Remark ---
 const QuickAddRemark = ({ allLatrines, templates, onAdd }) => {
   const [selectedLatrine, setSelectedLatrine] = useState('');
   const [desc, setDesc] = useState('');
@@ -369,14 +404,14 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
   const [severityFilter, setSeverityFilter] = useState('');
   const [syncFilter, setSyncFilter] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
-  const [sortBy, setSortBy] = useState('smart'); // تمت إعادة التفعيل
-  const [groupBy, setGroupBy] = useState('none'); // تمت إعادة التفعيل
+  const [sortBy, setSortBy] = useState('smart');
+  const [groupBy, setGroupBy] = useState('none');
   const [error, setError] = useState(null);
   const [isSaving, setIsSaving] = useState(false);
   const [isRetrying, setIsRetrying] = useState(false);
   const [processingIds, setProcessingIds] = useState(new Set());
   const [editingRemark, setEditingRemark] = useState(null);
-  const [confirmClose, setConfirmClose] = useState(null); // لحالة التأكيد
+  const [confirmClose, setConfirmClose] = useState(null);
   const [undoStack, setUndoStack] = useState([]);
 
   const latrine = useLiveQuery(() => latrineId ? db.latrines.get(latrineId) : null, [latrineId]);
@@ -389,28 +424,38 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
     return map;
   }, [boqDictionary]);
 
-  // ✅ إصلاح N+1: استخدام bulkGet
+  // ✅ FIX: استخدام templateMap من useMemo لتجنب N+1 وضمان التحديث
+  const templateMap = useMemo(() => {
+    const map = {};
+    templates?.forEach(t => map[t.id] = t);
+    return map;
+  }, [templates]);
+
   const rawRemarks = useLiveQuery(async () => {
     let query;
     if (!latrineId) query = db.remarks.toArray();
     else if (boqCode) query = db.remarks.where({ latrine_id: latrineId, boq_code: boqCode }).toArray();
     else query = db.remarks.where({ latrine_id: latrineId }).toArray();
     const raw = await query;
-    const templateIds = [...new Set(raw.map(r => r.template_id).filter(Boolean))];
-    if (templateIds.length === 0) return raw.map(r => ({ ...r, template: null }));
-    const templates = await db.remark_templates.bulkGet(templateIds);
-    const templateMap = Object.fromEntries(templates.filter(Boolean).map(t => [t.id, t]));
     return raw.map(r => ({ ...r, template: templateMap[r.template_id] || null }));
-  }, [latrineId, boqCode]);
+  }, [latrineId, boqCode, templateMap]); // templateMap كتبعية
 
-  // إعادة تعيين جميع الفلاتر عند تغيير الوضع (تم إصلاح التناقض)
+  // ✅ FIX: فصل handleViewModeChange لإصلاح Analytics Drill-Down
+  const handleViewModeChange = (mode) => {
+    if (mode !== viewMode) {
+      setStatusFilter('');
+      setSyncFilter('');
+      // لا نعيد تعيين searchQuery هنا – نتركه ليُستخدم من Analytics إذا لزم
+    }
+    setViewMode(mode);
+  };
+
+  // إعادة تعيين الفلاتر غير المدعومة (status, sync) فقط
   useEffect(() => {
-    setStatusFilter('');
-    setSyncFilter('');
-    setSearchQuery('');
-    setSeverityFilter('');
-    setSortBy('smart');
-    setGroupBy('none');
+    if (viewMode !== 'raw') {
+      setStatusFilter('');
+      setSyncFilter('');
+    }
   }, [viewMode]);
 
   useEffect(() => {
@@ -439,7 +484,7 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
     if (severityFilter) filtered = filtered.filter(r => r.severity === severityFilter);
     if (syncFilter) filtered = filtered.filter(r => r.sync_status === syncFilter);
 
-    // إعادة الفرز
+    // الفرز
     if (sortBy === 'newest') filtered.sort((a, b) => new Date(b.date_logged) - new Date(a.date_logged));
     else if (sortBy === 'oldest') filtered.sort((a, b) => new Date(a.date_logged) - new Date(b.date_logged));
     else if (sortBy === 'severity') filtered.sort((a, b) => (SEVERITY_WEIGHT[b.severity] || 0) - (SEVERITY_WEIGHT[a.severity] || 0));
@@ -462,7 +507,7 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
       return acc;
     }, { total: 0, open: 0, closed: 0, failed: 0 });
 
-    // إعادة التجميع
+    // التجميع
     const groupMap = {};
     filtered.forEach(r => {
       let key;
@@ -481,44 +526,47 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
     return { filteredRemarks: filtered, counters: counts, aggregatedGroups: groups };
   }, [rawRemarks, statusFilter, severityFilter, syncFilter, searchQuery, sortBy, groupBy, allLatrines, latrineId]);
 
-  // ✅ إصلاح createAndLinkTemplate: ذرية محلية
+  // --- Handlers ---
   const createAndLinkTemplate = async (templateData, remarkId, localUuid) => {
     const trimmedTitle = templateData.description?.trim() || '';
     const existing = await db.remark_templates.where('title').equals(trimmedTitle).first();
-    if (existing) {
-      await db.transaction('rw', db.remarks, async () => {
+    try {
+      if (existing) {
+        await db.transaction('rw', db.remarks, async () => {
+          await db.remarks.update(remarkId, {
+            template_id: existing.id, description: null,
+            suffix_note: templateData.suffix_note || '',
+            action_required: existing.default_action, severity: existing.default_severity,
+            sync_status: 'local'
+          });
+        });
+        await pushToSyncQueue('UPDATE_REMARK', { id: remarkId, local_uuid: localUuid, template_id: existing.id, description: null, suffix_note: templateData.suffix_note, severity: existing.default_severity, action_required: existing.default_action });
+        return existing.id;
+      }
+      const newTemplate = {
+        template_code: `TPL-${uuidv4().slice(0, 8).toUpperCase()}`,
+        title: trimmedTitle, description: trimmedTitle,
+        default_action: templateData.action_required || '', default_severity: templateData.severity,
+        boq_tags: templateData.boq_code ? [templateData.boq_code] : ['ALL'],
+        is_active: true, version: 1, created_by: 'field_engineer', created_at: new Date().toISOString()
+      };
+      let templateId;
+      await db.transaction('rw', db.remark_templates, db.remarks, async () => {
+        templateId = await db.remark_templates.add(newTemplate);
         await db.remarks.update(remarkId, {
-          template_id: existing.id, description: null,
+          template_id: templateId, description: null,
           suffix_note: templateData.suffix_note || '',
-          action_required: existing.default_action, severity: existing.default_severity,
+          action_required: newTemplate.default_action, severity: newTemplate.default_severity,
           sync_status: 'local'
         });
       });
-      await pushToSyncQueue('UPDATE_REMARK', { id: remarkId, local_uuid: localUuid, template_id: existing.id, description: null, suffix_note: templateData.suffix_note, severity: existing.default_severity, action_required: existing.default_action });
-      return existing.id;
-    }
-    const newTemplate = {
-      template_code: `TPL-${uuidv4().slice(0, 8).toUpperCase()}`,
-      title: trimmedTitle, description: trimmedTitle,
-      default_action: templateData.action_required || '', default_severity: templateData.severity,
-      boq_tags: templateData.boq_code ? [templateData.boq_code] : ['ALL'],
-      is_active: true, version: 1, created_by: 'field_engineer', created_at: new Date().toISOString()
-    };
-    let templateId;
-    await db.transaction('rw', db.remark_templates, db.remarks, async () => {
-      templateId = await db.remark_templates.add(newTemplate);
-      await db.remarks.update(remarkId, {
-        template_id: templateId, description: null,
-        suffix_note: templateData.suffix_note || '',
-        action_required: newTemplate.default_action, severity: newTemplate.default_severity,
-        sync_status: 'local'
-      });
-    });
-    try {
       await pushToSyncQueue('CREATE_TEMPLATE', newTemplate);
       await pushToSyncQueue('UPDATE_REMARK', { id: remarkId, local_uuid: localUuid, template_id: templateId, description: null, suffix_note: templateData.suffix_note, severity: newTemplate.default_severity, action_required: newTemplate.default_action });
-    } catch (e) {}
-    return templateId;
+      return templateId;
+    } catch (err) {
+      console.error('createAndLinkTemplate failed:', err);
+      throw new Error('فشل ربط القالب: ' + err.message);
+    }
   };
 
   const handleAddOrEditRemark = async (formData) => {
@@ -562,14 +610,20 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
     finally { setIsSaving(false); }
   };
 
+  // ✅ FIX: local_uuid fallback
   const handleSaveAsTemplateFromCard = async (remark) => {
+    const localUuid = remark.local_uuid || remark.remark_id || uuidv4();
     setProcessingIds(prev => new Set(prev).add(remark.id));
     try {
-      await createAndLinkTemplate({ description: remark.description, severity: remark.severity, action_required: remark.action_required, boq_code: remark.boq_code, suffix_note: remark.suffix_note }, remark.id, remark.local_uuid);
+      await createAndLinkTemplate({ description: remark.description, severity: remark.severity, action_required: remark.action_required, boq_code: remark.boq_code, suffix_note: remark.suffix_note }, remark.id, localUuid);
       setError({ type: 'success', message: 'تم حفظ القالب.' });
     } catch { setError({ type: 'error', message: 'فشل.' }); }
     finally { setProcessingIds(prev => { const n = new Set(prev); n.delete(remark.id); return n; }); }
   };
+
+  // ✅ FIX: undoStack مع حدود الصلاحية والحجم
+  const MAX_UNDO_AGE = 5 * 60 * 1000; // 5 دقائق
+  const MAX_UNDO_STACK = 3;
 
   const handleBulkClose = async (remarksToClose) => {
     if (!confirmClose) {
@@ -579,8 +633,12 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
     setConfirmClose(null);
     const ids = remarksToClose.map(r => r.id);
     setProcessingIds(prev => new Set([...prev, ...ids]));
-    // حفظ للحالة السابقة للتراجع
-    setUndoStack(prev => [...prev, { remarks: remarksToClose.map(r => ({...r})), timestamp: Date.now() }]);
+    const now = Date.now();
+    // إضافة للمخزن مع فلترة القديم
+    setUndoStack(prev => {
+      const filtered = prev.filter(u => now - u.timestamp < MAX_UNDO_AGE).slice(-MAX_UNDO_STACK + 1);
+      return [...filtered, { remarks: remarksToClose.map(r => ({...r})), timestamp: now }];
+    });
     try {
       const closedDate = new Date().toISOString();
       await db.transaction('rw', db.remarks, async () => {
@@ -626,8 +684,16 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
     return l ? l.latrine_id : `ID:${id}`;
   }, [latrineId, latrine, allLatrines]);
 
-  const handleFilterByBoq = useCallback((boq) => { setViewMode('contractor'); setSearchQuery(boq); }, []);
-  const handleFilterByIssue = useCallback((issue) => { setViewMode('contractor'); setSearchQuery(issue.template?.title || issue.remarks[0].description); }, []);
+  // ✅ FIX: Analytics Drill-Down لا تعيد تعيين searchQuery
+  const handleFilterByBoq = useCallback((boq) => {
+    setSearchQuery(boq === 'عام' ? '' : boq);
+    setViewMode('contractor');
+  }, []);
+
+  const handleFilterByIssue = useCallback((issue) => {
+    setSearchQuery(issue.template?.title || issue.remarks[0].description);
+    setViewMode('contractor');
+  }, []);
 
   const handleQuickAdd = async (data) => {
     setIsSaving(true);
@@ -649,6 +715,10 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
 
   if (latrineId && !latrine) return <LoadingSkeleton />;
 
+  // زر التراجع يظهر فقط إذا كانت أحدث عملية صالحة
+  const latestUndo = undoStack[undoStack.length - 1];
+  const canUndo = latestUndo && (Date.now() - latestUndo.timestamp < MAX_UNDO_AGE);
+
   return (
     <div style={{ direction: 'rtl' }}>
       {confirmClose && (
@@ -663,7 +733,7 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
           {!latrineId ? 'منصة إدارة العيوب' : boqCode ? `ملاحظات البند ${boqCode} - ${latrine.latrine_id}` : `ملاحظات ${latrine.latrine_id}`}
         </h2>
         <button onClick={onBack} style={{ padding: '8px 16px', background: '#ecf0f1', border: '1px solid #bdc3c7', borderRadius: '4px', cursor: 'pointer' }}>← العودة</button>
-        {undoStack.length > 0 && (
+        {canUndo && (
           <button onClick={handleUndo} style={{ padding: '8px 16px', background: '#f39c12', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '13px' }}>
             ↩ تراجع عن آخر إغلاق
           </button>
@@ -681,7 +751,7 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
         <SmartRemarkForm boqCode={boqCode} isSaving={isSaving} onSubmit={handleAddOrEditRemark} templates={templates} />
       )}
 
-      {!latrineId && <ViewModeTabs active={viewMode} onChange={setViewMode} />}
+      {!latrineId && <ViewModeTabs active={viewMode} onChange={handleViewModeChange} />}
 
       {!latrineId && viewMode === 'raw' && (
         <QuickAddRemark allLatrines={allLatrines} templates={templates} onAdd={handleQuickAdd} />
@@ -703,14 +773,16 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
               </select>
             </>
           )}
-          <select value={sortBy} onChange={e => setSortBy(e.target.value)} style={{ padding: '8px', borderRadius: '4px', border: '2px solid #3498db', fontWeight: 'bold' }}>
-            <option value="smart">ترتيب ذكي</option>
-            <option value="newest">الأحدث</option>
-            <option value="oldest">الأقدم</option>
-            <option value="severity">حسب الخطورة</option>
-            <option value="frequency">حسب التكرار</option>
-          </select>
-          {!latrineId && viewMode !== 'inspection' && (
+          {viewMode !== 'contractor' && (
+            <select value={sortBy} onChange={e => setSortBy(e.target.value)} style={{ padding: '8px', borderRadius: '4px', border: '2px solid #3498db', fontWeight: 'bold' }}>
+              <option value="smart">ترتيب ذكي</option>
+              <option value="newest">الأحدث</option>
+              <option value="oldest">الأقدم</option>
+              <option value="severity">حسب الخطورة</option>
+              <option value="frequency">حسب التكرار</option>
+            </select>
+          )}
+          {!latrineId && viewMode === 'raw' && (
             <select value={groupBy} onChange={e => setGroupBy(e.target.value)} style={{ padding: '8px', borderRadius: '4px', border: '2px solid #8e44ad', fontWeight: 'bold', color: '#2c3e50' }}>
               <option value="none">تجميع المشكلة</option>
               <option value="latrine">تجميع الحمام</option>
