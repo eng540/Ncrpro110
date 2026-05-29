@@ -417,7 +417,7 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
   const [syncFilter, setSyncFilter] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
   const [sortBy, setSortBy] = useState('smart');
-  const [groupBy, setGroupBy] = useState('none'); // يُستخدم في وضع raw
+  const [groupBy, setGroupBy] = useState('none');
   const [error, setError] = useState(null);
   const [isSaving, setIsSaving] = useState(false);
   const [isRetrying, setIsRetrying] = useState(false);
@@ -428,7 +428,6 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
   const latrine = useLiveQuery(() => latrineId ? db.latrines.get(latrineId) : null, [latrineId]);
   const allLatrines = useLiveQuery(() => !latrineId ? db.latrines.toArray() : [], [latrineId]);
   const allTemplates = useLiveQuery(() => db.remark_templates.toArray(), []);
-  // ✅ FIX: Separate template query for proper reactivity
   const templateMap = useMemo(() => {
     const map = {};
     allTemplates?.forEach(t => map[t.id] = t);
@@ -442,7 +441,6 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
     return map;
   }, [boqDictionary]);
 
-  // ✅ FIX: Use templateMap instead of N+1 queries
   const rawRemarks = useLiveQuery(async () => {
     let query;
     if (!latrineId) query = db.remarks.toArray();
@@ -452,10 +450,9 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
     return raw.map(r => ({ ...r, template: templateMap[r.template_id] || null }));
   }, [latrineId, boqCode, templateMap]);
 
-  // ✅ FIX: Only reset filters when switching to modes that don't support them
   const handleViewModeChange = useCallback((newMode) => {
     setViewMode(newMode);
-    if (newMode !== 'raw') {
+    if (newMode === 'analytics' || newMode === 'contractor') {
       setStatusFilter('');
       setSyncFilter('');
     }
@@ -477,21 +474,19 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
     if (!rawRemarks) return { filteredRemarks: [], counters: { total: 0, open: 0, closed: 0, failed: 0 }, aggregatedGroups: [] };
     let filtered = rawRemarks;
     
-    // ✅ تحسين البحث ليشمل boq_code
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase();
       filtered = filtered.filter(r =>
         (r.description && r.description.toLowerCase().includes(q)) ||
         (r.template && r.template.title.toLowerCase().includes(q)) ||
         (r.suffix_note && r.suffix_note.toLowerCase().includes(q)) ||
-        (r.boq_code && r.boq_code.toLowerCase() === q) // يطابق رمز البند كاملاً
+        (r.boq_code && r.boq_code.toLowerCase() === q)
       );
     }
     if (statusFilter) filtered = filtered.filter(r => r.status === statusFilter);
     if (severityFilter) filtered = filtered.filter(r => r.severity === severityFilter);
     if (syncFilter) filtered = filtered.filter(r => r.sync_status === syncFilter);
 
-    // Sorting
     if (sortBy === 'newest') filtered.sort((a, b) => new Date(b.date_logged) - new Date(a.date_logged));
     else if (sortBy === 'oldest') filtered.sort((a, b) => new Date(a.date_logged) - new Date(b.date_logged));
     else if (sortBy === 'severity') filtered.sort((a, b) => (SEVERITY_WEIGHT[b.severity] || 0) - (SEVERITY_WEIGHT[a.severity] || 0));
@@ -530,7 +525,6 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
   }, [rawRemarks, statusFilter, severityFilter, syncFilter, searchQuery, sortBy, groupBy, allLatrines]);
 
   // --- Handlers ---
-  // ✅ FIX: Wrapped in transaction with proper error handling
   const createAndLinkTemplate = async (templateData, remarkId, localUuid) => {
     const trimmedTitle = templateData.description?.trim() || '';
     if (!trimmedTitle) throw new Error('عنوان القالب فارغ');
@@ -617,7 +611,6 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
     finally { setIsSaving(false); }
   };
 
-  // ✅ FIX: Fallback for local_uuid
   const handleSaveAsTemplateFromCard = async (remark) => {
     setProcessingIds(prev => new Set(prev).add(remark.id));
     try {
@@ -638,13 +631,11 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
     setProcessingIds(prev => new Set([...prev, ...ids]));
     try {
       const closedDate = new Date().toISOString();
-      // ✅ إصلاح: إجراء التحديثات داخل المعاملة، ثم إرسال الطابور خارجها
       await db.transaction('rw', db.remarks, async () => {
         for (const remark of remarksToClose) {
           await db.remarks.update(remark.id, { status: 'closed', closed_date: closedDate, sync_status: remark.sync_status === 'synced' ? 'pending' : 'local' });
         }
       });
-      // الآن بعد الخروج الآمن من المعاملة، ندفع إلى طابور المزامنة
       for (const remark of remarksToClose) {
         await pushToSyncQueue('UPDATE_REMARK', { id: remark.id, local_uuid: remark.local_uuid || remark.remark_id, status: 'closed', closed_date: closedDate });
       }
@@ -666,7 +657,6 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
     return l ? l.latrine_id : `ID:${id}`;
   }, [latrineId, latrine, allLatrines]);
 
-  // ✅ إصلاح: يبحث في boq_code عند الضغط من Analytics
   const handleFilterByBoq = useCallback((boq) => {
     setSearchQuery(boq === 'عام' ? '' : boq);
     setViewMode('contractor');
@@ -757,7 +747,6 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
           <select value={severityFilter} onChange={e => setSeverityFilter(e.target.value)} style={{ padding: '8px', borderRadius: '4px', border: '1px solid #ccc' }}>
             <option value="">الشدة</option><option value="critical">حرجة</option><option value="major">كبيرة</option><option value="minor">طفيفة</option>
           </select>
-          {/* ✅ جعل فلتر الحالة يظهر في inspection و raw */}
           {(viewMode === 'inspection' || viewMode === 'raw') && (
             <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)} style={{ padding: '8px', borderRadius: '4px', border: '1px solid #ccc' }}>
               <option value="">الحالة</option><option value="open">مفتوحة</option><option value="closed">مغلقة</option>
@@ -810,7 +799,6 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
                 acc[r.latrine_id].push(r);
                 return acc;
               }, {})).map(([lid, remarks]) => (
-                // ✅ تمرير statusFilter إلى InspectionCard
                 <InspectionCard key={lid} latrineId={parseInt(lid)} remarks={remarks} getLatrineCode={getLatrineCode} onClose={handleBulkClose} onEdit={setEditingRemark} onSaveAsTemplate={handleSaveAsTemplateFromCard} processingIds={processingIds} statusFilter={statusFilter} />
               ))}
             </div>
@@ -820,7 +808,7 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
             <AnalyticsPanel aggregatedGroups={aggregatedGroups} counters={counters} onFilterByBoq={handleFilterByBoq} onFilterByIssue={handleFilterByIssue} />
           )}
 
-          {viewMode === 'raw' && (
+          {viewMode === 'raw' && groupBy === 'none' && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
               {filteredRemarks.map(r => (
                 <div key={r.id} style={{ display: 'flex', alignItems: 'center', gap: '12px', background: 'white', padding: '12px', borderRadius: '8px', borderRight: `3px solid ${UI_COLORS.severity[r.severity]}`, opacity: r.status === 'closed' ? 0.7 : 1 }}>
@@ -840,6 +828,41 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
                       <button onClick={() => handleBulkClose([r])} disabled={processingIds.has(r.id)} style={{ padding: '4px 8px', background: '#27ae60', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '11px' }}>✓</button>
                     </div>
                   )}
+                </div>
+              ))}
+            </div>
+          )}
+
+          {viewMode === 'raw' && groupBy !== 'none' && (
+            <div>
+              {aggregatedGroups.map((group, idx) => (
+                <div key={idx} style={{ marginBottom: '30px', background: 'white', borderRadius: '8px', boxShadow: '0 2px 8px rgba(0,0,0,0.08)', overflow: 'hidden' }}>
+                  <div style={{ background: '#1F4E78', color: 'white', padding: '12px 20px', fontWeight: 'bold', fontSize: '16px', display: 'flex', justifyContent: 'space-between' }}>
+                    <span>{group.template?.title || group.remarks[0]?.latrine_id ? getLatrineCode(group.remarks[0].latrine_id) : group.remarks[0]?.boq_code ? `بند ${group.remarks[0].boq_code}` : 'مجموعة'}</span>
+                    <span style={{ background: 'rgba(255,255,255,0.2)', padding: '2px 8px', borderRadius: '12px', fontSize: '12px' }}>{group.remarks.length} ملاحظة</span>
+                  </div>
+                  <div style={{ padding: '20px', display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))', gap: '16px', background: '#f8f9fa' }}>
+                    {group.remarks.map(r => (
+                      <div key={r.id} style={{ background: 'white', padding: '12px', borderRadius: '8px', borderRight: `3px solid ${UI_COLORS.severity[r.severity]}`, opacity: r.status === 'closed' ? 0.7 : 1 }}>
+                        <div style={{ flex: 1 }}>
+                          <div style={{ display: 'flex', gap: '8px', marginBottom: '4px', flexWrap: 'wrap' }}>
+                            <span style={{ fontWeight: 'bold' }}>{getLatrineCode(r.latrine_id)}</span>
+                            <span style={{ color: '#666' }}>{r.boq_code || 'عام'}</span>
+                            <span style={{ background: UI_COLORS.severity[r.severity], color: 'white', padding: '1px 6px', borderRadius: '4px', fontSize: '10px' }}>{r.severity}</span>
+                            <span style={{ background: UI_COLORS.sync[r.sync_status || 'local'], color: 'white', padding: '1px 6px', borderRadius: '4px', fontSize: '10px' }}>{UI_LABELS.sync[r.sync_status || 'local']}</span>
+                          </div>
+                          <div>{r.template ? `📋 ${r.template.title}` : r.description}</div>
+                        </div>
+                        {r.status === 'open' && (
+                          <div style={{ display: 'flex', gap: '4px', marginTop: '8px' }}>
+                            <button onClick={() => setEditingRemark(r)} disabled={processingIds.has(r.id)} style={{ padding: '4px 8px', background: '#f39c12', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '11px' }}>✏️</button>
+                            {!r.template_id && <button onClick={() => handleSaveAsTemplateFromCard(r)} disabled={processingIds.has(r.id)} style={{ padding: '4px 8px', background: '#8e44ad', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '11px' }}>📋</button>}
+                            <button onClick={() => handleBulkClose([r])} disabled={processingIds.has(r.id)} style={{ padding: '4px 8px', background: '#27ae60', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '11px' }}>✓</button>
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
                 </div>
               ))}
             </div>
