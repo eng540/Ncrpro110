@@ -24,26 +24,20 @@ const SEVERITY_WEIGHT = { critical: 3, major: 2, minor: 1 };
 // 2. Sub-Components
 // ==========================================
 
-const ErrorBanner = ({ error, onDismiss }) => {
-  if (!error) return null;
-  const bg = error.type === 'success' ? '#d4edda' : error.type === 'warning' ? '#fff3cd' : '#f8d7da';
-  const color = error.type === 'success' ? '#155724' : error.type === 'warning' ? '#856404' : '#721c24';
-  const icon = error.type === 'success' ? '✅' : error.type === 'warning' ? '⚠️' : '❌';
-  return (
-    <div style={{ background: bg, color, padding: '12px 16px', borderRadius: '6px', marginBottom: '15px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontWeight: 'bold' }}>
-      <span>{icon} {error.message}</span>
-      <button onClick={onDismiss} style={{ background: 'transparent', border: 'none', fontSize: '16px', cursor: 'pointer', color: 'inherit' }}>✖</button>
+// --- Simple Confirm Modal ---
+const ConfirmModal = ({ message, onConfirm, onCancel }) => (
+  <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 10000 }}>
+    <div style={{ background: 'white', padding: '20px', borderRadius: '8px', maxWidth: '300px', textAlign: 'center' }}>
+      <p>{message}</p>
+      <div style={{ display: 'flex', gap: '10px', justifyContent: 'center', marginTop: '15px' }}>
+        <button onClick={onCancel} style={{ padding: '8px 16px', background: '#ecf0f1', border: 'none', borderRadius: '4px', cursor: 'pointer' }}>إلغاء</button>
+        <button onClick={onConfirm} style={{ padding: '8px 16px', background: '#e74c3c', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer' }}>تأكيد</button>
+      </div>
     </div>
-  );
-};
-
-const LoadingSkeleton = () => (
-  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))', gap: '16px' }}>
-    {[1,2,3].map(i => <div key={i} style={{ background: '#f0f2f5', borderRadius: '8px', height: '180px', animation: 'pulse 1.5s infinite' }} />)}
   </div>
 );
 
-// --- Smart Remark Form ---
+// --- Smart Remark Form (unchanged, kept for brevity – same as previous final) ---
 const SmartRemarkForm = ({ initialData, boqCode, isSaving, onSubmit, onCancel, templates }) => {
   const [desc, setDesc] = useState(initialData?.description || (initialData?.template ? initialData.template.title : ''));
   const [suffix, setSuffix] = useState(initialData?.suffix_note || '');
@@ -200,7 +194,7 @@ const ContractorActionCard = ({ issue, getLatrineCode, onClose, processingIds, b
           <div style={{ color: '#e67e22', fontSize: '13px', marginBottom: '8px' }}>⚠ مطلوب: {action}</div>
           <div style={{ fontSize: '12px', color: '#666' }}>📍 {latrineCodes.join(', ')}</div>
         </div>
-        <button onClick={() => { if (window.confirm(`هل أنت متأكد من إغلاق ${issue.remarks.length} ملاحظة؟`)) onClose(issue.remarks); }} disabled={isProcessing}
+        <button onClick={() => onClose(issue.remarks)} disabled={isProcessing}
           style={{ padding: '6px 16px', background: isProcessing ? '#95a5a6' : '#27ae60', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold', whiteSpace: 'nowrap' }}>
           {isProcessing ? '⏳' : '✓ إغلاق الكل'}
         </button>
@@ -284,17 +278,59 @@ const AnalyticsPanel = ({ aggregatedGroups, counters, onFilterByBoq, onFilterByI
   );
 };
 
-// --- Quick Add Remark (للشاشة الشاملة) ---
-const QuickAddRemark = ({ allLatrines, onAdd }) => {
+// --- Quick Add Remark (مع دعم القوالب والبنود) ---
+const QuickAddRemark = ({ allLatrines, templates, onAdd }) => {
   const [selectedLatrine, setSelectedLatrine] = useState('');
   const [desc, setDesc] = useState('');
   const [sev, setSev] = useState('minor');
+  const [boqCode, setBoqCode] = useState('');
+  const [selectedTemplate, setSelectedTemplate] = useState(null);
+  const [showSuggestions, setShowSuggestions] = useState(false);
+  const wrapperRef = useRef(null);
+
+  useEffect(() => {
+    function handleClickOutside(event) {
+      if (wrapperRef.current && !wrapperRef.current.contains(event.target)) setShowSuggestions(false);
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  const filteredTemplates = useMemo(() => {
+    if (!templates) return [];
+    let filtered = templates;
+    if (boqCode) filtered = filtered.filter(t => !t.boq_tags || t.boq_tags.length === 0 || t.boq_tags.includes('ALL') || t.boq_tags.includes(boqCode));
+    if (desc.trim() && !selectedTemplate) {
+      const q = desc.toLowerCase();
+      filtered = filtered.filter(t => t.title.toLowerCase().includes(q) || t.description.toLowerCase().includes(q));
+    }
+    return filtered;
+  }, [templates, boqCode, desc, selectedTemplate]);
+
+  const handleSelectTemplate = (tpl) => {
+    setSelectedTemplate(tpl);
+    setDesc(tpl.title);
+    setSev(tpl.default_severity || 'minor');
+    setShowSuggestions(false);
+  };
+
+  const handleDescChange = (e) => {
+    setDesc(e.target.value);
+    setSelectedTemplate(null);
+    setShowSuggestions(true);
+  };
 
   const handleSubmit = (e) => {
     e.preventDefault();
     if (!selectedLatrine || !desc.trim()) return;
-    onAdd({ latrine_id: parseInt(selectedLatrine), description: desc, severity: sev });
-    setDesc(''); setSelectedLatrine('');
+    onAdd({
+      latrine_id: parseInt(selectedLatrine),
+      description: selectedTemplate ? null : desc.trim(),
+      severity: sev,
+      boq_code: boqCode || null,
+      template_id: selectedTemplate?.id || null
+    });
+    setDesc(''); setSelectedLatrine(''); setBoqCode(''); setSelectedTemplate(null);
   };
 
   return (
@@ -303,7 +339,19 @@ const QuickAddRemark = ({ allLatrines, onAdd }) => {
         <option value="">اختر حمام...</option>
         {allLatrines.map(l => <option key={l.id} value={l.id}>{l.latrine_id}</option>)}
       </select>
-      <input type="text" placeholder="وصف الملاحظة" value={desc} onChange={e => setDesc(e.target.value)} style={{ flex: 2, padding: '8px', borderRadius: '4px', border: '1px solid #ccc' }} required />
+      <div ref={wrapperRef} style={{ position: 'relative', flex: 2 }}>
+        <input type="text" placeholder="وصف الملاحظة" value={desc} onChange={handleDescChange} onFocus={() => setShowSuggestions(true)} style={{ width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid #ccc', boxSizing: 'border-box' }} required />
+        {showSuggestions && filteredTemplates.length > 0 && (
+          <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, background: 'white', border: '1px solid #ccc', borderRadius: '4px', zIndex: 100, maxHeight: '150px', overflowY: 'auto', boxShadow: '0 4px 12px rgba(0,0,0,0.1)' }}>
+            {filteredTemplates.map(tpl => (
+              <div key={tpl.id} onClick={() => handleSelectTemplate(tpl)} style={{ padding: '8px', borderBottom: '1px solid #eee', cursor: 'pointer' }} onMouseOver={(e) => e.currentTarget.style.background = '#f8f9fa'} onMouseOut={(e) => e.currentTarget.style.background = 'white'}>
+                <div style={{ fontWeight: 'bold', color: '#2c3e50', fontSize: '12px' }}>{tpl.title}</div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+      <input type="text" placeholder="بند (A1, B2...)" value={boqCode} onChange={e => setBoqCode(e.target.value.toUpperCase())} style={{ width: '80px', padding: '8px', borderRadius: '4px', border: '1px solid #ccc' }} />
       <select value={sev} onChange={e => setSev(e.target.value)} style={{ padding: '8px', borderRadius: '4px', border: '1px solid #ccc' }}>
         <option value="minor">طفيفة</option><option value="major">كبيرة</option><option value="critical">حرجة</option>
       </select>
@@ -321,11 +369,15 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
   const [severityFilter, setSeverityFilter] = useState('');
   const [syncFilter, setSyncFilter] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
+  const [sortBy, setSortBy] = useState('smart'); // تمت إعادة التفعيل
+  const [groupBy, setGroupBy] = useState('none'); // تمت إعادة التفعيل
   const [error, setError] = useState(null);
   const [isSaving, setIsSaving] = useState(false);
   const [isRetrying, setIsRetrying] = useState(false);
   const [processingIds, setProcessingIds] = useState(new Set());
   const [editingRemark, setEditingRemark] = useState(null);
+  const [confirmClose, setConfirmClose] = useState(null); // لحالة التأكيد
+  const [undoStack, setUndoStack] = useState([]);
 
   const latrine = useLiveQuery(() => latrineId ? db.latrines.get(latrineId) : null, [latrineId]);
   const allLatrines = useLiveQuery(() => !latrineId ? db.latrines.toArray() : [], [latrineId]);
@@ -337,24 +389,28 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
     return map;
   }, [boqDictionary]);
 
+  // ✅ إصلاح N+1: استخدام bulkGet
   const rawRemarks = useLiveQuery(async () => {
     let query;
     if (!latrineId) query = db.remarks.toArray();
     else if (boqCode) query = db.remarks.where({ latrine_id: latrineId, boq_code: boqCode }).toArray();
     else query = db.remarks.where({ latrine_id: latrineId }).toArray();
     const raw = await query;
-    return Promise.all(raw.map(async r => ({
-      ...r,
-      template: r.template_id ? await db.remark_templates.get(r.template_id) : null
-    })));
+    const templateIds = [...new Set(raw.map(r => r.template_id).filter(Boolean))];
+    if (templateIds.length === 0) return raw.map(r => ({ ...r, template: null }));
+    const templates = await db.remark_templates.bulkGet(templateIds);
+    const templateMap = Object.fromEntries(templates.filter(Boolean).map(t => [t.id, t]));
+    return raw.map(r => ({ ...r, template: templateMap[r.template_id] || null }));
   }, [latrineId, boqCode]);
 
-  // إعادة تعيين الفلاتر غير المدعومة عند تغيير الوضع
+  // إعادة تعيين جميع الفلاتر عند تغيير الوضع (تم إصلاح التناقض)
   useEffect(() => {
-    if (viewMode !== 'raw') {
-      setStatusFilter('');
-      setSyncFilter('');
-    }
+    setStatusFilter('');
+    setSyncFilter('');
+    setSearchQuery('');
+    setSeverityFilter('');
+    setSortBy('smart');
+    setGroupBy('none');
   }, [viewMode]);
 
   useEffect(() => {
@@ -383,32 +439,60 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
     if (severityFilter) filtered = filtered.filter(r => r.severity === severityFilter);
     if (syncFilter) filtered = filtered.filter(r => r.sync_status === syncFilter);
 
+    // إعادة الفرز
+    if (sortBy === 'newest') filtered.sort((a, b) => new Date(b.date_logged) - new Date(a.date_logged));
+    else if (sortBy === 'oldest') filtered.sort((a, b) => new Date(a.date_logged) - new Date(b.date_logged));
+    else if (sortBy === 'severity') filtered.sort((a, b) => (SEVERITY_WEIGHT[b.severity] || 0) - (SEVERITY_WEIGHT[a.severity] || 0));
+    else if (sortBy === 'frequency') {
+      const countMap = {};
+      filtered.forEach(r => { const key = r.template_id || r.description; countMap[key] = (countMap[key] || 0) + 1; });
+      filtered.sort((a, b) => (countMap[b.template_id || b.description] || 0) - (countMap[a.template_id || a.description] || 0));
+    } else {
+      filtered.sort((a, b) => {
+        if (a.status === 'open' && b.status !== 'open') return -1;
+        if (a.status !== 'open' && b.status === 'open') return 1;
+        const wA = SEVERITY_WEIGHT[a.severity] || 0, wB = SEVERITY_WEIGHT[b.severity] || 0;
+        if (wA !== wB) return wB - wA;
+        return new Date(b.date_logged) - new Date(a.date_logged);
+      });
+    }
+
     const counts = rawRemarks.reduce((acc, r) => {
       acc.total++; if (r.status === 'open') acc.open++; if (r.status === 'closed') acc.closed++; if (r.sync_status === 'failed') acc.failed++;
       return acc;
     }, { total: 0, open: 0, closed: 0, failed: 0 });
 
+    // إعادة التجميع
     const groupMap = {};
     filtered.forEach(r => {
-      const key = r.template_id ? `TPL_${r.template_id}` : `TXT_${r.description}`;
+      let key;
+      if (groupBy === 'latrine') {
+        key = allLatrines?.find(l => l.id === r.latrine_id)?.latrine_id || `حمام ${r.latrine_id}`;
+      } else if (groupBy === 'boq') {
+        key = r.boq_code ? `بند ${r.boq_code}` : 'عام';
+      } else {
+        key = r.template_id ? `TPL_${r.template_id}` : `TXT_${r.description}`;
+      }
       if (!groupMap[key]) groupMap[key] = { template: r.template, remarks: [] };
       groupMap[key].remarks.push(r);
     });
     const groups = Object.values(groupMap).sort((a, b) => b.remarks.length - a.remarks.length);
 
     return { filteredRemarks: filtered, counters: counts, aggregatedGroups: groups };
-  }, [rawRemarks, statusFilter, severityFilter, syncFilter, searchQuery]);
+  }, [rawRemarks, statusFilter, severityFilter, syncFilter, searchQuery, sortBy, groupBy, allLatrines, latrineId]);
 
-  // --- Handlers (مع الإصلاحات الجوهرية) ---
+  // ✅ إصلاح createAndLinkTemplate: ذرية محلية
   const createAndLinkTemplate = async (templateData, remarkId, localUuid) => {
-    const trimmedTitle = templateData.description.trim();
+    const trimmedTitle = templateData.description?.trim() || '';
     const existing = await db.remark_templates.where('title').equals(trimmedTitle).first();
     if (existing) {
-      await db.remarks.update(remarkId, {
-        template_id: existing.id, description: null,
-        suffix_note: templateData.suffix_note || '',
-        action_required: existing.default_action, severity: existing.default_severity,
-        sync_status: 'local'
+      await db.transaction('rw', db.remarks, async () => {
+        await db.remarks.update(remarkId, {
+          template_id: existing.id, description: null,
+          suffix_note: templateData.suffix_note || '',
+          action_required: existing.default_action, severity: existing.default_severity,
+          sync_status: 'local'
+        });
       });
       await pushToSyncQueue('UPDATE_REMARK', { id: remarkId, local_uuid: localUuid, template_id: existing.id, description: null, suffix_note: templateData.suffix_note, severity: existing.default_severity, action_required: existing.default_action });
       return existing.id;
@@ -420,12 +504,15 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
       boq_tags: templateData.boq_code ? [templateData.boq_code] : ['ALL'],
       is_active: true, version: 1, created_by: 'field_engineer', created_at: new Date().toISOString()
     };
-    const templateId = await db.remark_templates.add(newTemplate);
-    await db.remarks.update(remarkId, {
-      template_id: templateId, description: null,
-      suffix_note: templateData.suffix_note || '',
-      action_required: newTemplate.default_action, severity: newTemplate.default_severity,
-      sync_status: 'local'
+    let templateId;
+    await db.transaction('rw', db.remark_templates, db.remarks, async () => {
+      templateId = await db.remark_templates.add(newTemplate);
+      await db.remarks.update(remarkId, {
+        template_id: templateId, description: null,
+        suffix_note: templateData.suffix_note || '',
+        action_required: newTemplate.default_action, severity: newTemplate.default_severity,
+        sync_status: 'local'
+      });
     });
     try {
       await pushToSyncQueue('CREATE_TEMPLATE', newTemplate);
@@ -438,7 +525,6 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
     setIsSaving(true); setError(null);
     try {
       if (formData.id) {
-        // تعديل ملاحظة موجودة
         const original = await db.remarks.get(formData.id);
         const updatedFields = {
           template_id: formData.template_id, description: formData.template_id ? null : formData.description,
@@ -452,22 +538,20 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
         setEditingRemark(null);
         setError({ type: 'success', message: 'تم التحديث.' });
       } else {
-        // إضافة جديدة: أولاً ننشئ الملاحظة محلياً ونرسل CREATE_REMARK للخادم
         const localUuid = uuidv4();
         const newRemark = {
-          local_uuid: localUuid, latrine_id: latrineId || formData.latrine_id, boq_code: boqCode || null, template_id: null,
+          local_uuid: localUuid, latrine_id: latrineId || formData.latrine_id, boq_code: formData.boq_code || boqCode || null, template_id: null,
           description: formData.description, suffix_note: formData.suffix_note,
           severity: formData.severity, action_required: formData.action_required || null,
           deadline: formData.deadline ? new Date(formData.deadline).toISOString() : null,
           status: 'open', sync_status: 'local', date_logged: new Date().toISOString(), closed_date: null
         };
         const remarkId = await db.remarks.add(newRemark);
-        // ✅ إصلاح: إرسال CREATE_REMARK فوراً لضمان وصولها للخادم
         await pushToSyncQueue('CREATE_REMARK', newRemark);
 
         if (formData.save_as_template) {
           try {
-            await createAndLinkTemplate({ description: formData.description, severity: formData.severity, action_required: formData.action_required, boq_code: boqCode, suffix_note: formData.suffix_note }, remarkId, localUuid);
+            await createAndLinkTemplate({ description: formData.description, severity: formData.severity, action_required: formData.action_required, boq_code: newRemark.boq_code, suffix_note: formData.suffix_note }, remarkId, localUuid);
             setError({ type: 'success', message: '✅ تم الحفظ كقالب.' });
           } catch { setError({ type: 'warning', message: '⚠️ تم الحفظ لكن فشل القالب.' }); }
         } else {
@@ -481,7 +565,6 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
   const handleSaveAsTemplateFromCard = async (remark) => {
     setProcessingIds(prev => new Set(prev).add(remark.id));
     try {
-      // الملاحظة موجودة بالفعل على الخادم، فقط نحدثها لربطها بالقالب
       await createAndLinkTemplate({ description: remark.description, severity: remark.severity, action_required: remark.action_required, boq_code: remark.boq_code, suffix_note: remark.suffix_note }, remark.id, remark.local_uuid);
       setError({ type: 'success', message: 'تم حفظ القالب.' });
     } catch { setError({ type: 'error', message: 'فشل.' }); }
@@ -489,22 +572,44 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
   };
 
   const handleBulkClose = async (remarksToClose) => {
+    if (!confirmClose) {
+      setConfirmClose(remarksToClose);
+      return;
+    }
+    setConfirmClose(null);
     const ids = remarksToClose.map(r => r.id);
     setProcessingIds(prev => new Set([...prev, ...ids]));
+    // حفظ للحالة السابقة للتراجع
+    setUndoStack(prev => [...prev, { remarks: remarksToClose.map(r => ({...r})), timestamp: Date.now() }]);
     try {
       const closedDate = new Date().toISOString();
-      // ✅ إصلاح: إجراء التحديثات داخل المعاملة، ثم إرسال الطابور خارجها
       await db.transaction('rw', db.remarks, async () => {
         for (const remark of remarksToClose) {
           await db.remarks.update(remark.id, { status: 'closed', closed_date: closedDate, sync_status: remark.sync_status === 'synced' ? 'pending' : 'local' });
         }
       });
-      // الآن بعد الخروج الآمن من المعاملة، ندفع إلى طابور المزامنة
       for (const remark of remarksToClose) {
         await pushToSyncQueue('UPDATE_REMARK', { id: remark.id, local_uuid: remark.local_uuid, status: 'closed', closed_date: closedDate });
       }
     } catch { setError({ type: 'error', message: 'فشل الإغلاق.' }); }
     finally { setProcessingIds(prev => { const n = new Set(prev); ids.forEach(id => n.delete(id)); return n; }); }
+  };
+
+  const handleUndo = async () => {
+    const last = undoStack.pop();
+    if (!last) return;
+    setUndoStack([...undoStack]);
+    try {
+      await db.transaction('rw', db.remarks, async () => {
+        for (const remark of last.remarks) {
+          await db.remarks.update(remark.id, { status: 'open', sync_status: 'local' });
+        }
+      });
+      for (const remark of last.remarks) {
+        await pushToSyncQueue('UPDATE_REMARK', { id: remark.id, local_uuid: remark.local_uuid, status: 'open' });
+      }
+      setError({ type: 'success', message: 'تم التراجع عن الإغلاق.' });
+    } catch { setError({ type: 'error', message: 'فشل التراجع.' }); }
   };
 
   const handleRetrySync = async () => {
@@ -521,24 +626,19 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
     return l ? l.latrine_id : `ID:${id}`;
   }, [latrineId, latrine, allLatrines]);
 
-  const handleFilterByBoq = useCallback((boq) => {
-    setViewMode('contractor');
-    setSearchQuery(boq === 'عام' ? '' : boq);
-  }, []);
-
-  const handleFilterByIssue = useCallback((issue) => {
-    setViewMode('contractor');
-    setSearchQuery(issue.template?.title || issue.remarks[0].description);
-  }, []);
+  const handleFilterByBoq = useCallback((boq) => { setViewMode('contractor'); setSearchQuery(boq); }, []);
+  const handleFilterByIssue = useCallback((issue) => { setViewMode('contractor'); setSearchQuery(issue.template?.title || issue.remarks[0].description); }, []);
 
   const handleQuickAdd = async (data) => {
     setIsSaving(true);
     try {
       const localUuid = uuidv4();
       const newRemark = {
-        local_uuid: localUuid, latrine_id: data.latrine_id, boq_code: null, template_id: null,
-        description: data.description, severity: data.severity, action_required: null,
-        status: 'open', sync_status: 'local', date_logged: new Date().toISOString()
+        local_uuid: localUuid, latrine_id: data.latrine_id,
+        boq_code: data.boq_code, template_id: data.template_id,
+        description: data.description, severity: data.severity,
+        action_required: null, status: 'open', sync_status: 'local',
+        date_logged: new Date().toISOString()
       };
       await db.remarks.add(newRemark);
       await pushToSyncQueue('CREATE_REMARK', newRemark);
@@ -551,11 +651,23 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
 
   return (
     <div style={{ direction: 'rtl' }}>
+      {confirmClose && (
+        <ConfirmModal
+          message={`هل أنت متأكد من إغلاق ${confirmClose.length} ملاحظة؟`}
+          onConfirm={() => handleBulkClose(confirmClose)}
+          onCancel={() => setConfirmClose(null)}
+        />
+      )}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px' }}>
         <h2 style={{ color: '#1A3A5C', margin: 0 }}>
           {!latrineId ? 'منصة إدارة العيوب' : boqCode ? `ملاحظات البند ${boqCode} - ${latrine.latrine_id}` : `ملاحظات ${latrine.latrine_id}`}
         </h2>
         <button onClick={onBack} style={{ padding: '8px 16px', background: '#ecf0f1', border: '1px solid #bdc3c7', borderRadius: '4px', cursor: 'pointer' }}>← العودة</button>
+        {undoStack.length > 0 && (
+          <button onClick={handleUndo} style={{ padding: '8px 16px', background: '#f39c12', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '13px' }}>
+            ↩ تراجع عن آخر إغلاق
+          </button>
+        )}
       </div>
 
       <ErrorBanner error={error} onDismiss={() => setError(null)} />
@@ -572,11 +684,11 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
       {!latrineId && <ViewModeTabs active={viewMode} onChange={setViewMode} />}
 
       {!latrineId && viewMode === 'raw' && (
-        <QuickAddRemark allLatrines={allLatrines} onAdd={handleQuickAdd} />
+        <QuickAddRemark allLatrines={allLatrines} templates={templates} onAdd={handleQuickAdd} />
       )}
 
       {viewMode !== 'analytics' && (
-        <div style={{ background: 'white', padding: '10px', borderRadius: '8px', marginBottom: '20px', display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+        <div style={{ background: 'white', padding: '10px', borderRadius: '8px', marginBottom: '20px', display: 'flex', gap: '10px', flexWrap: 'wrap', alignItems: 'center' }}>
           <input type="text" placeholder="🔍 بحث..." value={searchQuery} onChange={e => setSearchQuery(e.target.value)} style={{ flex: 2, padding: '8px', borderRadius: '4px', border: '1px solid #ccc' }} />
           <select value={severityFilter} onChange={e => setSeverityFilter(e.target.value)} style={{ padding: '8px', borderRadius: '4px', border: '1px solid #ccc' }}>
             <option value="">الشدة</option><option value="critical">حرجة</option><option value="major">كبيرة</option><option value="minor">طفيفة</option>
@@ -590,6 +702,20 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
                 <option value="">المزامنة</option><option value="local">محلي</option><option value="synced">مُزامن</option><option value="failed">فشل</option>
               </select>
             </>
+          )}
+          <select value={sortBy} onChange={e => setSortBy(e.target.value)} style={{ padding: '8px', borderRadius: '4px', border: '2px solid #3498db', fontWeight: 'bold' }}>
+            <option value="smart">ترتيب ذكي</option>
+            <option value="newest">الأحدث</option>
+            <option value="oldest">الأقدم</option>
+            <option value="severity">حسب الخطورة</option>
+            <option value="frequency">حسب التكرار</option>
+          </select>
+          {!latrineId && viewMode !== 'inspection' && (
+            <select value={groupBy} onChange={e => setGroupBy(e.target.value)} style={{ padding: '8px', borderRadius: '4px', border: '2px solid #8e44ad', fontWeight: 'bold', color: '#2c3e50' }}>
+              <option value="none">تجميع المشكلة</option>
+              <option value="latrine">تجميع الحمام</option>
+              <option value="boq">تجميع البند</option>
+            </select>
           )}
         </div>
       )}
