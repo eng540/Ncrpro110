@@ -1,7 +1,6 @@
-
 import React, { useState, useEffect } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { db, populateLocalDB } from '../db/index.js';
+import { db } from '../db/index.js';
 import { syncWithServer } from '../syncEngine';
 
 const API_BASE_URL = process.env.REACT_APP_API_URL || '/api';
@@ -41,7 +40,7 @@ const SyncStatus = () => {
     }
   };
 
-  // دالة تحميل البيانات من الخادم للهاتف (Pull) - تم إصلاحها لجلب الملاحظات
+  // دالة تحميل البيانات من الخادم للهاتف (Pull) – محدثة لتشمل القوالب
   const handleDownloadData = async () => {
     if (!isOnline) {
       alert("يجب أن تكون متصلاً بالإنترنت لتحميل البيانات.");
@@ -54,23 +53,39 @@ const SyncStatus = () => {
 
     setIsDownloading(true);
     try {
-      // ✅ تم الإصلاح: جلب الحمامات، البنود، والملاحظات معاً
-      const [latrinesRes, boqRes, remarksRes] = await Promise.all([
+      // 🌟 إضافة جلب القوالب (remark-templates)
+      const [latrinesRes, boqRes, remarksRes, templatesRes] = await Promise.all([
         fetch(`${API_BASE_URL}/latrines?limit=200`),
         fetch(`${API_BASE_URL}/boq-items`),
-        fetch(`${API_BASE_URL}/remarks`)
+        fetch(`${API_BASE_URL}/remarks`),
+        fetch(`${API_BASE_URL}/remark-templates`)
       ]);
-      
+
       if (!latrinesRes.ok || !boqRes.ok) throw new Error("فشل الاتصال بالخادم");
 
       const latrines = await latrinesRes.json();
       const boqItems = await boqRes.json();
-      const remarks = remarksRes.ok ? await remarksRes.json() : []; // ✅ استخراج الملاحظات
+      const remarks = remarksRes.ok ? await remarksRes.json() : [];
+      const templates = templatesRes.ok ? await templatesRes.json() : [];
 
-      // ✅ تم الإصلاح: تمرير الملاحظات لقاعدة البيانات المحلية
-      await populateLocalDB(latrines, boqItems, remarks);
-      alert("تم تحميل أحدث البيانات (بما فيها الملاحظات) من الخادم إلى هاتفك بنجاح!");
-      
+      await db.transaction('rw', db.latrines, db.boq_items, db.remarks, db.remark_templates, async () => {
+        await db.latrines.clear();
+        await db.boq_items.clear();
+        await db.remarks.clear();
+        await db.remark_templates.clear();
+
+        if (latrines?.length > 0) await db.latrines.bulkAdd(latrines);
+        if (boqItems?.length > 0) await db.boq_items.bulkAdd(boqItems);
+        if (templates?.length > 0) await db.remark_templates.bulkAdd(templates); // 🌟 حفظ القوالب
+
+        if (remarks?.length > 0) {
+          const remarksWithSync = remarks.map(r => ({...r, sync_status: 'synced'}));
+          await db.remarks.bulkAdd(remarksWithSync);
+        }
+      });
+
+      alert("تم تحميل أحدث البيانات (بما فيها مكتبة الملاحظات) بنجاح!");
+
     } catch (error) {
       console.error(error);
       alert("تعذر تحميل البيانات من الخادم.");
@@ -97,7 +112,7 @@ const SyncStatus = () => {
         <strong>{isOnline ? 'متصل بالإنترنت (Online)' : 'العمل دون اتصال (Offline)'}</strong>
         {pendingCount > 0 && <span style={{ marginRight: '15px', fontWeight: 'bold' }}>- عمليات تنتظر الإرسال: {pendingCount}</span>}
       </div>
-      
+
       <div style={{ display: 'flex', gap: '10px' }}>
         {/* زر إرسال البيانات (يظهر فقط إذا كان هناك تعديلات) */}
         {pendingCount > 0 && (
@@ -131,4 +146,3 @@ const SyncStatus = () => {
 };
 
 export default SyncStatus;
-

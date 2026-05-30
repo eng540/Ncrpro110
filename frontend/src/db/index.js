@@ -1,25 +1,28 @@
 /**
  * db/index.js
- * IndexedDB schema — Hybrid E2EE Support + Full Operational Tables
+ * IndexedDB schema — Hybrid E2EE Support + Full Operational Tables + Smart Observation Engine (v3)
  */
 
 import Dexie from 'dexie';
 
-export const db = new Dexie('NRCLatrineTracker_v2');
+export const db = new Dexie('NRCLatrineTracker_v4'); // 🌟 قاعدة جديدة تماماً
 
-// Schema v2: _env support, no hooks + Restored Missing Tables/Indexes
-db.version(2).stores({
+// Schema v3: Smart Observation Engine Support
+db.version(3).stores({
   // Technical tables — cleartext (no encryption needed)
   boq_items: 'id, latrine_id, boq_code, category, status, quality_pass',
   boq_dictionary: 'id, boq_code, category, is_active',
 
+  // 🌟 جديد: مكتبة القوالب (تم التصحيح إلى ++id)
+  remark_templates: '++id, template_code, title, is_active',
+
   // Sensitive tables — encrypted envelopes (_env)
   latrines: 'id, latrine_id, block_no, status, overall_pct, last_update',
-  
-  // 🌟 تم الإصلاح: إعادة local_uuid للفهارس لكي تعمل دوال البحث
-  remarks: '++id, local_uuid, latrine_id, boq_code, status, severity, sync_status, date_logged',
 
-  // 🌟 تم الإصلاح: إعادة جدول التقارير اليومية المفقود
+  // 🌟 تحديث: إضافة template_id للفهارس
+  remarks: '++id, local_uuid, latrine_id, boq_code, status, severity, sync_status, date_logged, template_id',
+
+  // Daily logs
   daily_logs: '++id, date, engineer',
 
   // Sync queue — encrypted payloads
@@ -32,7 +35,6 @@ db.version(2).stores({
 });
 
 // ========== SETTINGS HELPERS ==========
-
 export async function getSetting(key) {
   const rec = await db.settings.get(key);
   return rec?.value || null;
@@ -47,7 +49,6 @@ export async function deleteSetting(key) {
 }
 
 // ========== CHAIN STATE HELPERS ==========
-
 export async function getChainHead(entity) {
   const rec = await db.chain_state.where('entity').equals(entity).first();
   return rec?.last_hash || null;
@@ -55,7 +56,6 @@ export async function getChainHead(entity) {
 
 export async function updateChainHead(entity, newHash) {
   const existing = await db.chain_state.where('entity').equals(entity).first();
-
   if (existing) {
     await db.chain_state.update(existing.id, {
       last_hash: newHash,
@@ -71,7 +71,6 @@ export async function updateChainHead(entity, newHash) {
 }
 
 // ========== LEGACY COMPATIBILITY ==========
-
 export async function populateLocalDB(latrines, boqItems, remarks) {
   try {
     await db.transaction('rw', db.latrines, db.boq_items, db.remarks, async () => {
@@ -94,7 +93,6 @@ export async function populateLocalDB(latrines, boqItems, remarks) {
 
 export async function updateRemarkSyncStatus(localUuid, status) {
   try {
-    // هذه الدالة كانت ستفشل لولا إعادتنا لـ local_uuid في الفهارس أعلاه
     await db.remarks.where('local_uuid').equals(localUuid).modify({ sync_status: status });
   } catch (error) {
     console.error("Failed to update sync status:", error);

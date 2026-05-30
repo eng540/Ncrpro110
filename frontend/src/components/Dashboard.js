@@ -143,7 +143,7 @@ const Dashboard = ({ navigateTo }) => {
   return (
     <div style={{ direction: 'rtl' }}>
       <h2 style={{ color: '#1F4E78', marginBottom: '20px' }}>ملخص المشروع التنفيذي (Live Dashboard)</h2>
-      
+
       {/* البطاقات العلوية - قابلة للنقر وتوجه لقائمة الحمامات */}
       <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap', marginBottom: '24px' }}>
         <Card 
@@ -173,11 +173,12 @@ const Dashboard = ({ navigateTo }) => {
         <Card 
           bgColor="#C6EFCE" textColor="#1F4E78" borderColor="#70AD47" 
           title="بنود مقبولة (Pass)" value={summary.accepted_items} 
-          // سيتم توجيهها للشبكة المتقدمة لاحقاً
+          onClick={() => navigateTo('QUALITY_INSPECTOR', { filterStatus: 'pass' })} // 🌟 تم التفعيل
         />
         <Card 
           bgColor="#FFC7CE" textColor="#C00000" borderColor="#C00000" 
           title="بنود مرفوضة (Fail)" value={summary.rejected_items} 
+          onClick={() => navigateTo('QUALITY_INSPECTOR', { filterStatus: 'fail' })} // 🌟 تم التفعيل
         />
         <Card 
           bgColor="#FFEB9C" textColor="#333" borderColor="#FFC000" 

@@ -1,6 +1,7 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import Optional, List, Dict, Any
 from datetime import datetime
+from enum import Enum
 
 # ---------- Latrine Schemas ----------
 class LatrineBase(BaseModel):
@@ -74,17 +75,77 @@ class BoqItemOut(BoqItemBase):
     class Config:
         from_attributes = True
 
-# ---------- Remark Schemas ----------
+# ==========================================
+# 🌟 SMART OBSERVATION ENGINE SCHEMAS (V3.0.0)
+# ==========================================
+
+class MediaType(str, Enum):
+    IMAGE = "image"
+    PDF = "pdf"
+    VIDEO = "video"
+
+class RemarkTemplateBase(BaseModel):
+    template_code: str
+    title: str
+    description: str
+    default_action: Optional[str] = None
+    default_severity: Optional[str] = "minor"
+    
+    # 🌟 التصحيح 1: استخدام Field(default_factory=list) لمنع تداخل الذاكرة
+    boq_tags: Optional[List[str]] = Field(default_factory=list)
+    
+    reference_media_url: Optional[str] = None
+    media_type: Optional[MediaType] = None # 🌟 التصحيح 2: استخدام Enum
+    is_active: Optional[bool] = True
+
+class RemarkTemplateCreate(RemarkTemplateBase):
+    created_by: Optional[str] = None
+
+class RemarkTemplateUpdate(BaseModel):
+    title: Optional[str] = None
+    description: Optional[str] = None
+    default_action: Optional[str] = None
+    default_severity: Optional[str] = None
+    boq_tags: Optional[List[str]] = None
+    reference_media_url: Optional[str] = None
+    media_type: Optional[MediaType] = None
+    is_active: Optional[bool] = None
+
+class RemarkTemplateOut(RemarkTemplateBase):
+    id: int
+    version: int
+    created_by: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+    archived_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
+# ==========================================
+# 🌟 Remark (Legacy + Smart Hybrid)
+# ==========================================
+
 class RemarkBase(BaseModel):
     remark_id: Optional[str] = None
     boq_code: Optional[str] = None
     type: Optional[str] = None
     severity: Optional[str] = "minor"
+
+    # Legacy
     description: Optional[str] = None
+
+    # Smart
+    template_id: Optional[int] = None
+    suffix_note: Optional[str] = None
+
     action_required: Optional[str] = None
     deadline: Optional[datetime] = None
     status: Optional[str] = "open"
+
+    # Media
     photo_ref: Optional[str] = None
+    evidence_photo_ref: Optional[str] = None
 
 class RemarkCreate(RemarkBase):
     latrine_id: int
@@ -92,6 +153,9 @@ class RemarkCreate(RemarkBase):
 class RemarkUpdate(BaseModel):
     status: Optional[str] = None
     closed_date: Optional[datetime] = None
+    suffix_note: Optional[str] = None
+    action_required: Optional[str] = None
+    severity: Optional[str] = None
 
 class RemarkOut(RemarkBase):
     id: int
@@ -180,10 +244,9 @@ class BoqDictionaryOut(BoqDictionaryBase):
         from_attributes = True
 
 # ==========================================
-# 🌟 GOVERNANCE & DECISION SCHEMAS (جديد)
+# 🌟 GOVERNANCE & DECISION SCHEMAS
 # ==========================================
 class GovernanceItemOut(BaseModel):
-    """قالب إرسال بيانات البند والقرار لعرضها في لوحة تحكم المدير"""
     decision_id: int
     boq_item_id: int
     latrine_id: str
@@ -201,25 +264,24 @@ class GovernanceItemOut(BaseModel):
     final_state: str
 
 class DecisionOverrideUpdate(BaseModel):
-    """قالب استقبال قرار التجاوز من المدير"""
     human_decision_code: str
     human_payment_pct: float
     override_reason: str
     approved_by: str
 
-# ---------- Sync Engine Schemas (Updated for Hybrid E2EE) ----------
+# ---------- Sync Engine Schemas ----------
 class SyncOperation(BaseModel):
-    seq: int                  # 🌟 تم التغيير من id إلى seq
+    seq: int
     type: str
-    payload: Dict[str, Any]   # 🌟 تم التغيير من data إلى payload
-    integrity: str            # 🌟 حقل التشفير
+    payload: Dict[str, Any]
+    integrity: str
 
 class SyncRequest(BaseModel):
     operations: List[SyncOperation]
-    device_id: str            # 🌟 حقل الجهاز
-    protocol: int             # 🌟 حقل البروتوكول
+    device_id: str
+    protocol: int
 
 class SyncResponse(BaseModel):
-    processed_ids: List[int]  # 🌟 تم التغيير إلى int ليتوافق مع seq
+    processed_ids: List[int]
     failed_ids: List[int]
     errors: Dict[str, str]

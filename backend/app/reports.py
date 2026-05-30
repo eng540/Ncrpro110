@@ -580,7 +580,7 @@ def generate_matrix_excel(db: Session) -> bytes:
     ws['A1'].font = Font(size=14, bold=True)
 
     ws.cell(row=2, column=1, value="رقم الحمام").font = Font(bold=True)
-    ws.cell(row=2, column=2, value="المستفيد (مشفر)").font = Font(bold=True)
+    ws.cell(row=2, column=2, value="المستفيد").font = Font(bold=True)
     ws.cell(row=2, column=3, value="المربع").font = Font(bold=True)
     ws.cell(row=2, column=4, value="إجمالي الإنجاز %").font = Font(bold=True)
 
@@ -606,7 +606,8 @@ def generate_matrix_excel(db: Session) -> bytes:
     row_idx = 3
     for latrine in latrines:
         ws.cell(row=row_idx, column=1, value=latrine.latrine_id)
-        ws.cell(row=row_idx, column=2, value="[Encrypted]")
+        # ✅ تم التعديل: عرض اسم المستفيد الحقيقي بدلاً من [Encrypted]
+        ws.cell(row=row_idx, column=2, value=latrine.beneficiary_hh or '—')
         ws.cell(row=row_idx, column=3, value=latrine.block_no)
         ws.cell(row=row_idx, column=4, value=f"{latrine.overall_pct}%")
         col_idx = 5
