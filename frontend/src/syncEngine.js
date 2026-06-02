@@ -1,4 +1,4 @@
-// AUTH-PATCH 2026-06-02: استخدام apiFetch بدلاً من fetch المباشر للمزامنة
+// AUTH-PATCH 2026-06-02: استخدام apiFetch بدلاً من fetch المباشر
 
 import { db } from './db/index.js';
 import { apiFetch } from './api';
