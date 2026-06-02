@@ -1,9 +1,11 @@
+// AUTH-PATCH 2026-06-02: استخدام apiFetch بدلاً من fetch المباشر
+
 import React, { useState, useEffect } from 'react';
 import { getPendingSyncCount, syncWithServer } from '../syncEngine';
+import { apiFetch } from '../api';
 
 const API_BASE_URL = process.env.REACT_APP_API_URL || '/api';
 
-// تم تحويل البطاقات لتكون تفاعلية (Clickable)
 const Card = ({ bgColor, title, value, onClick, textColor = 'white', borderColor = 'transparent' }) => (
   <div 
     onClick={onClick}
@@ -69,8 +71,8 @@ const Dashboard = ({ navigateTo }) => {
     setError(null);
     try {
       const [summaryRes, categoriesRes] = await Promise.all([
-        fetch(`${API_BASE_URL}/dashboard/summary`),
-        fetch(`${API_BASE_URL}/dashboard/categories`)
+        apiFetch('/dashboard/summary'),
+        apiFetch('/dashboard/categories')
       ]);
 
       if (!summaryRes.ok) throw new Error('فشل جلب ملخص المشروع');
@@ -102,7 +104,7 @@ const Dashboard = ({ navigateTo }) => {
       const newCount = await getPendingSyncCount();
       setPendingCount(newCount);
       if (result.failed > 0) {
-        alert(`تم مزامنة ${result.processed} عملية، لكن ${result.failed} فشلت. تحقق من الملاحظات.`);
+        alert(`تمت مزامنة ${result.processed} عملية، لكن ${result.failed} فشلت. تحقق من الملاحظات.`);
       }
     } catch (err) {
       console.error('Sync error:', err);
@@ -125,7 +127,7 @@ const Dashboard = ({ navigateTo }) => {
     return (
       <div style={{ textAlign: 'center', padding: '50px', background: '#fff3cd', border: '1px solid #ffe69c', borderRadius: '8px', boxShadow: '0 2px 4px rgba(0,0,0,0.1)' }}>
         <h2 style={{ color: '#bb992f' }}>بيانات غير متزامنة</h2>
-        <p>لديك <strong>{pendingCount}</strong> عمليات إدخال مسجلة محلياً لم يتم إرسالها للخادم.</p>
+        <p>لديك <strong>{pendingCount}</strong> عملية إدخال مسجلة محلياً لم يتم إرسالها للخادم.</p>
         <button 
           onClick={handleForceSync} disabled={isSyncing}
           style={{ padding: '10px 20px', background: '#27ae60', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold', marginTop: '15px' }}
@@ -144,77 +146,31 @@ const Dashboard = ({ navigateTo }) => {
     <div style={{ direction: 'rtl' }}>
       <h2 style={{ color: '#1F4E78', marginBottom: '20px' }}>ملخص المشروع التنفيذي (Live Dashboard)</h2>
 
-      {/* البطاقات العلوية - قابلة للنقر وتوجه لقائمة الحمامات */}
       <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap', marginBottom: '24px' }}>
-        <Card 
-          bgColor="#1F4E78" title="إجمالي الحمامات" value={summary.total_latrines} 
-          onClick={() => navigateTo('LIST', { filterStatus: '' })} 
-        />
-        <Card 
-          bgColor="#70AD47" title="مكتملة" value={summary.completed} 
-          onClick={() => navigateTo('LIST', { filterStatus: 'completed' })} 
-        />
-        <Card 
-          bgColor="#FFC000" title="جاري العمل" value={summary.in_progress} 
-          onClick={() => navigateTo('LIST', { filterStatus: 'in_progress' })} 
-        />
-        <Card 
-          bgColor="#C55A11" title="لم تبدأ" value={summary.not_started} 
-          onClick={() => navigateTo('LIST', { filterStatus: 'not_started' })} 
-        />
-        <Card 
-          bgColor="#4472C4" title="نسبة الإنجاز الكلية" value={`${summary.overall_progress_pct}%`} 
-          // نسبة الإنجاز لا تحتاج لنقر لأنها تخص المشروع ككل
-        />
+        <Card bgColor="#1F4E78" title="إجمالي الحمامات" value={summary.total_latrines} onClick={() => navigateTo('LIST', { filterStatus: '' })} />
+        <Card bgColor="#70AD47" title="مكتملة" value={summary.completed} onClick={() => navigateTo('LIST', { filterStatus: 'completed' })} />
+        <Card bgColor="#FFC000" title="جاري العمل" value={summary.in_progress} onClick={() => navigateTo('LIST', { filterStatus: 'in_progress' })} />
+        <Card bgColor="#C55A11" title="لم تبدأ" value={summary.not_started} onClick={() => navigateTo('LIST', { filterStatus: 'not_started' })} />
+        <Card bgColor="#4472C4" title="نسبة الإنجاز الكلية" value={`${summary.overall_progress_pct}%`} />
       </div>
 
-      {/* بطاقات الجودة والملاحظات - قابلة للنقر */}
       <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap', marginBottom: '24px' }}>
-        <Card 
-          bgColor="#C6EFCE" textColor="#1F4E78" borderColor="#70AD47" 
-          title="بنود مقبولة (Pass)" value={summary.accepted_items} 
-          onClick={() => navigateTo('QUALITY_INSPECTOR', { filterStatus: 'pass' })} // 🌟 تم التفعيل
-        />
-        <Card 
-          bgColor="#FFC7CE" textColor="#C00000" borderColor="#C00000" 
-          title="بنود مرفوضة (Fail)" value={summary.rejected_items} 
-          onClick={() => navigateTo('QUALITY_INSPECTOR', { filterStatus: 'fail' })} // 🌟 تم التفعيل
-        />
-        <Card 
-          bgColor="#FFEB9C" textColor="#333" borderColor="#FFC000" 
-          title="ملاحظات مفتوحة" value={summary.open_remarks} 
-          onClick={() => navigateTo('REMARKS', { filterStatus: 'open', latrineId: null })} 
-        />
-        <Card 
-          bgColor="#FFC7CE" textColor="#C00000" borderColor="#C00000" 
-          title="ملاحظات متأخرة" value={summary.overdue_remarks} 
-          onClick={() => navigateTo('REMARKS', { filterStatus: 'overdue', latrineId: null })} 
-        />
+        <Card bgColor="#C6EFCE" textColor="#1F4E78" borderColor="#70AD47" title="بنود مقبولة (Pass)" value={summary.accepted_items} onClick={() => navigateTo('QUALITY_INSPECTOR', { filterStatus: 'pass' })} />
+        <Card bgColor="#FFC7CE" textColor="#C00000" borderColor="#C00000" title="بنود مرفوضة (Fail)" value={summary.rejected_items} onClick={() => navigateTo('QUALITY_INSPECTOR', { filterStatus: 'fail' })} />
+        <Card bgColor="#FFEB9C" textColor="#333" borderColor="#FFC000" title="ملاحظات مفتوحة" value={summary.open_remarks} onClick={() => navigateTo('REMARKS_MANAGER', { filterStatus: 'open' })} />
+        <Card bgColor="#FFC7CE" textColor="#C00000" borderColor="#C00000" title="ملاحظات متأخرة" value={summary.overdue_remarks} onClick={() => navigateTo('REMARKS_MANAGER', { filterStatus: 'overdue' })} />
       </div>
 
-      {/* شريط الإنجاز المالي */}
       <div style={{ background: 'white', padding: '25px', borderRadius: '8px', boxShadow: '0 2px 4px rgba(0,0,0,0.05)', marginBottom: '24px' }}>
         <h3 style={{ margin: '0 0 15px 0', color: '#2c3e50' }}>نسبة الإنجاز المالية للمشروع (Earned Value)</h3>
         <div style={{ width: '100%', background: '#ecf0f1', borderRadius: '10px', height: '30px', overflow: 'hidden', position: 'relative' }}>
-          <div style={{ 
-            width: `${summary.overall_progress_pct}%`, 
-            background: summary.overall_progress_pct >= 80 ? '#27ae60' : summary.overall_progress_pct >= 40 ? '#f39c12' : '#e74c3c', 
-            height: '100%', 
-            transition: 'width 1s ease-in-out' 
-          }}></div>
-          <span style={{ 
-            position: 'absolute', 
-            top: '5px', 
-            right: '15px', 
-            color: summary.overall_progress_pct > 10 ? 'white' : '#2c3e50', 
-            fontWeight: 'bold' 
-          }}>
+          <div style={{ width: `${summary.overall_progress_pct}%`, background: summary.overall_progress_pct >= 80 ? '#27ae60' : summary.overall_progress_pct >= 40 ? '#f39c12' : '#e74c3c', height: '100%', transition: 'width 1s ease-in-out' }} />
+          <span style={{ position: 'absolute', top: '5px', right: '15px', color: summary.overall_progress_pct > 10 ? 'white' : '#2c3e50', fontWeight: 'bold' }}>
             {summary.overall_progress_pct}%
           </span>
         </div>
       </div>
 
-      {/* تقدم الفئات */}
       <div style={{ background: 'white', borderRadius: '8px', padding: '20px', boxShadow: '0 2px 8px rgba(0,0,0,0.08)' }}>
         <h3 style={{ color: '#1F4E78', marginTop: 0, marginBottom: '20px' }}>تقدم الأعمال حسب الفئة</h3>
         {categories.length === 0 ? (
@@ -224,10 +180,7 @@ const Dashboard = ({ navigateTo }) => {
             <div key={cat.category} style={{ marginBottom: '16px' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px', alignItems: 'center' }}>
                 <span style={{ fontWeight: 'bold', color: '#2c3e50' }}>{cat.category}</span>
-                <span style={{ 
-                  fontWeight: 'bold', 
-                  color: cat.avg_achievement_pct >= 80 ? '#27ae60' : cat.avg_achievement_pct >= 40 ? '#f39c12' : '#e74c3c' 
-                }}>
+                <span style={{ fontWeight: 'bold', color: cat.avg_achievement_pct >= 80 ? '#27ae60' : cat.avg_achievement_pct >= 40 ? '#f39c12' : '#e74c3c' }}>
                   {cat.avg_achievement_pct}%
                 </span>
               </div>
