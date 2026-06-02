@@ -1,4 +1,4 @@
-// AUTH-PATCH 2026-06-02: استخدام apiFetch بدلاً من fetch المباشر
+// AUTH-PATCH 2026-06-02: استخدام apiFetch
 
 import React, { useState, useEffect } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
@@ -10,16 +10,13 @@ const SyncStatus = () => {
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   const [isSyncing, setIsSyncing] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
-
   const pendingCount = useLiveQuery(() => db.sync_queue.count(), []);
 
   useEffect(() => {
     const handleOnline = () => setIsOnline(true);
     const handleOffline = () => setIsOnline(false);
-
     window.addEventListener('online', handleOnline);
     window.addEventListener('offline', handleOffline);
-
     return () => {
       window.removeEventListener('online', handleOnline);
       window.removeEventListener('offline', handleOffline);
@@ -45,10 +42,9 @@ const SyncStatus = () => {
       return;
     }
     if (pendingCount > 0) {
-      alert("لديك تعديلات محلية لم يتم إرسالها. يرجى مزامنة بياناتك أولاً قبل تحميل بيانات جديدة.");
+      alert("لديك تعديلات محلية لم يتم إرسالها. يرجى مزامنة بياناتك أولاً.");
       return;
     }
-
     setIsDownloading(true);
     try {
       const [latrinesRes, boqRes, remarksRes, templatesRes] = await Promise.all([
@@ -70,19 +66,15 @@ const SyncStatus = () => {
         await db.boq_items.clear();
         await db.remarks.clear();
         await db.remark_templates.clear();
-
-        if (latrines?.length > 0) await db.latrines.bulkAdd(latrines);
-        if (boqItems?.length > 0) await db.boq_items.bulkAdd(boqItems);
-        if (templates?.length > 0) await db.remark_templates.bulkAdd(templates);
-
-        if (remarks?.length > 0) {
+        if (latrines?.length) await db.latrines.bulkAdd(latrines);
+        if (boqItems?.length) await db.boq_items.bulkAdd(boqItems);
+        if (templates?.length) await db.remark_templates.bulkAdd(templates);
+        if (remarks?.length) {
           const remarksWithSync = remarks.map(r => ({...r, sync_status: 'synced'}));
           await db.remarks.bulkAdd(remarksWithSync);
         }
       });
-
-      alert("تم تحميل أحدث البيانات (بما فيها مكتبة الملاحظات) بنجاح!");
-
+      alert("تم تحميل أحدث البيانات بنجاح!");
     } catch (error) {
       console.error(error);
       alert("تعذر تحميل البيانات من الخادم.");
@@ -109,30 +101,15 @@ const SyncStatus = () => {
         <strong>{isOnline ? 'متصل بالإنترنت (Online)' : 'العمل دون اتصال (Offline)'}</strong>
         {pendingCount > 0 && <span style={{ marginRight: '15px', fontWeight: 'bold' }}>- عمليات تنتظر الإرسال: {pendingCount}</span>}
       </div>
-
       <div style={{ display: 'flex', gap: '10px' }}>
         {pendingCount > 0 && (
-          <button 
-            onClick={handlePushSync} 
-            disabled={!isOnline || isSyncing}
-            style={{
-              padding: '6px 12px', cursor: (!isOnline || isSyncing) ? 'not-allowed' : 'pointer',
-              backgroundColor: 'white', color: '#f39c12', border: 'none', borderRadius: '4px', fontWeight: 'bold'
-            }}
-          >
+          <button onClick={handlePushSync} disabled={!isOnline || isSyncing}
+            style={{ padding: '6px 12px', backgroundColor: 'white', color: '#f39c12', border: 'none', borderRadius: '4px', fontWeight: 'bold' }}>
             {isSyncing ? 'جاري الإرسال...' : 'إرسال التعديلات للخادم'}
           </button>
         )}
-
-        <button 
-          onClick={handleDownloadData} 
-          disabled={!isOnline || isDownloading || pendingCount > 0}
-          style={{
-            padding: '6px 12px', cursor: (!isOnline || isDownloading || pendingCount > 0) ? 'not-allowed' : 'pointer',
-            backgroundColor: 'rgba(255,255,255,0.2)', color: 'white', border: '1px solid white', borderRadius: '4px', fontWeight: 'bold'
-          }}
-          title={pendingCount > 0 ? "قم بإرسال تعديلاتك أولاً" : "سحب أحدث البيانات من الخادم"}
-        >
+        <button onClick={handleDownloadData} disabled={!isOnline || isDownloading || pendingCount > 0}
+          style={{ padding: '6px 12px', backgroundColor: 'rgba(255,255,255,0.2)', color: 'white', border: '1px solid white', borderRadius: '4px', fontWeight: 'bold' }}>
           {isDownloading ? 'جاري التحميل...' : 'تحميل أحدث البيانات من الخادم ↓'}
         </button>
       </div>
