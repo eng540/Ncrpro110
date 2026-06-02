@@ -3,8 +3,6 @@
 import { db } from './db/index.js';
 import { apiFetch } from './api';
 
-const API_BASE_URL = process.env.REACT_APP_API_URL || '/api';
-
 export const pushToSyncQueue = async (type, data) => {
   try {
     await db.sync_queue.add({
