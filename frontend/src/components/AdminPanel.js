@@ -1,4 +1,7 @@
+// AUTH-PATCH 2026-06-02: استخدام apiFetch بدلاً من fetch المباشر (AdminPanel كامل)
+
 import React, { useState, useEffect, useCallback } from 'react';
+import { apiFetch } from '../api';
 
 const API_BASE_URL = process.env.REACT_APP_API_URL || '/api';
 
@@ -61,7 +64,7 @@ const Button = ({ onClick, children, variant = 'primary', disabled = false, styl
 };
 
 // ==========================================
-// مكون رفع الملفات (Drag & Drop)
+// مكون رفع الملفات (Drag & Drop) – محدث بـ apiFetch
 // ==========================================
 const FileUploader = ({ onUpload, accept = '.xlsx,.xls', label, icon, templateUrl }) => {
   const [isDragging, setIsDragging] = useState(false);
@@ -109,9 +112,10 @@ const FileUploader = ({ onUpload, accept = '.xlsx,.xls', label, icon, templateUr
       const formData = new FormData();
       formData.append('file', file);
 
-      const res = await fetch(`${API_BASE_URL}${onUpload}`, {
+      const res = await apiFetch(onUpload, {
         method: 'POST',
-        body: formData
+        body: formData,
+        headers: {}  // إزالة Content-Type لتحديده تلقائياً
       });
 
       const data = await res.json();
@@ -131,7 +135,6 @@ const FileUploader = ({ onUpload, accept = '.xlsx,.xls', label, icon, templateUr
 
   return (
     <div style={{ direction: 'rtl' }}>
-      {/* منطقة السحب والإفلات */}
       <div
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
@@ -163,7 +166,6 @@ const FileUploader = ({ onUpload, accept = '.xlsx,.xls', label, icon, templateUr
         />
       </div>
 
-      {/* عرض الملف المختار */}
       {file && (
         <div style={{
           marginTop: '15px',
@@ -191,7 +193,6 @@ const FileUploader = ({ onUpload, accept = '.xlsx,.xls', label, icon, templateUr
         </div>
       )}
 
-      {/* نتيجة الاستيراد */}
       {result && (
         <div style={{
           marginTop: '15px',
@@ -235,7 +236,6 @@ const FileUploader = ({ onUpload, accept = '.xlsx,.xls', label, icon, templateUr
         </div>
       )}
 
-      {/* خطأ */}
       {error && (
         <div style={{
           marginTop: '15px',
@@ -249,7 +249,6 @@ const FileUploader = ({ onUpload, accept = '.xlsx,.xls', label, icon, templateUr
         </div>
       )}
 
-      {/* رابط التحميل */}
       {templateUrl && (
         <div style={{ marginTop: '10px', textAlign: 'center' }}>
           <a
@@ -273,7 +272,7 @@ const FileUploader = ({ onUpload, accept = '.xlsx,.xls', label, icon, templateUr
 };
 
 // ==========================================
-// مكون إدارة الأسعار (Price Manager)
+// مكون إدارة الأسعار (Price Manager) – محدث بـ apiFetch
 // ==========================================
 const PriceManager = () => {
   const [items, setItems] = useState([]);
@@ -285,7 +284,7 @@ const PriceManager = () => {
 
   const fetchDictionary = useCallback(async () => {
     try {
-      const res = await fetch(`${API_BASE_URL}/admin/boq-dictionary`);
+      const res = await apiFetch('/admin/boq-dictionary');
       if (res.ok) {
         const data = await res.json();
         setItems(data);
@@ -309,9 +308,8 @@ const PriceManager = () => {
   const handleSave = async (boqCode) => {
     setSaving(true);
     try {
-      const res = await fetch(`${API_BASE_URL}/admin/boq-dictionary/${boqCode}`, {
+      const res = await apiFetch(`/admin/boq-dictionary/${boqCode}`, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           unit_price: parseFloat(editForm.unit_price),
           description_ar: editForm.description_ar,
@@ -341,9 +339,7 @@ const PriceManager = () => {
     if (!window.confirm(`هل أنت متأكد من إلغاء تفعيل البند ${boqCode}؟`)) return;
 
     try {
-      const res = await fetch(`${API_BASE_URL}/admin/boq-dictionary/${boqCode}`, {
-        method: 'DELETE'
-      });
+      const res = await apiFetch(`/admin/boq-dictionary/${boqCode}`, { method: 'DELETE' });
       if (res.ok) {
         setMessage({ type: 'success', text: `تم إلغاء تفعيل البند ${boqCode}` });
         fetchDictionary();
@@ -514,7 +510,7 @@ const PriceManager = () => {
 };
 
 // ==========================================
-// الصفحة الرئيسية للوحة التحكم
+// الصفحة الرئيسية للوحة التحكم – محدثة بـ apiFetch
 // ==========================================
 const AdminPanel = ({ onBack }) => {
   const [activeTab, setActiveTab] = useState('beneficiaries');
@@ -598,7 +594,7 @@ const AdminPanel = ({ onBack }) => {
       )}
 
       {activeTab === 'dictionary' && (
-        <Card title="📥 استيراد قاموس البنود والأسعار">
+        <Card title="📘 استيراد قاموس البنود والأسعار">
           <p style={{ color: '#7f8c8d', marginBottom: '20px', lineHeight: '1.6' }}>
             ارفع ملف Excel يحتوي على قائمة البنود وأسعار الوحدات. هذا القاموس سيُستخدم في حساب نسب الإنجاز المالية.
             <br />
