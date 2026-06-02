@@ -1,10 +1,8 @@
+// AUTH-PATCH 2026-06-02: استخدام apiFetch
+
 import React, { useState, useEffect } from 'react';
+import { apiFetch } from '../api';
 
-const API_BASE_URL = process.env.REACT_APP_API_URL || '/api';
-
-// ==========================================
-// Constants & Styling
-// ==========================================
 const SYSTEM_CODES = {
   'APPROVE': { label: 'موافق للدفع', color: '#27ae60', bg: '#e8f8f5' },
   'APPROVE_WITH_NOTE': { label: 'موافق مع تنبيه', color: '#f39c12', bg: '#fef9e7' },
@@ -20,16 +18,11 @@ const HUMAN_CODES = {
   'OVERRIDE': 'تجاوز استثنائي'
 };
 
-// ==========================================
-// Main Component
-// ==========================================
 const GovernanceDashboard = ({ onBack }) => {
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [filter, setFilter] = useState('HOLD'); // الافتراضي: عرض الموقوف فقط
-  
-  // Modal State
+  const [filter, setFilter] = useState('HOLD');
   const [selectedItem, setSelectedItem] = useState(null);
   const [overrideData, setOverrideData] = useState({
     human_decision_code: 'OVERRIDE',
@@ -39,13 +32,12 @@ const GovernanceDashboard = ({ onBack }) => {
   });
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  // --- Fetch Data ---
   const fetchItems = async () => {
     setLoading(true);
     setError(null);
     try {
-      const url = filter ? `${API_BASE_URL}/admin/governance-items?status_filter=${filter}` : `${API_BASE_URL}/admin/governance-items`;
-      const res = await fetch(url);
+      const url = filter ? `/admin/governance-items?status_filter=${filter}` : '/admin/governance-items';
+      const res = await apiFetch(url);
       if (!res.ok) throw new Error('فشل جلب بيانات الحوكمة');
       const data = await res.json();
       setItems(data);
@@ -60,25 +52,22 @@ const GovernanceDashboard = ({ onBack }) => {
     fetchItems();
   }, [filter]);
 
-  // --- Submit Override ---
   const handleOverrideSubmit = async (e) => {
     e.preventDefault();
     if (!overrideData.override_reason.trim() || !overrideData.approved_by.trim()) {
-      alert('يجب إدخال سبب التجاوز واسم المعتمد.');
+      alert('يجب إدخال سبب التجاويز واسم المعتمد.');
       return;
     }
 
     setIsSubmitting(true);
     try {
-      const res = await fetch(`${API_BASE_URL}/admin/governance-items/${selectedItem.decision_id}/override`, {
+      const res = await apiFetch(`/admin/governance-items/${selectedItem.decision_id}/override`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(overrideData)
       });
 
       if (!res.ok) throw new Error('فشل تطبيق القرار');
       
-      // تحديث القائمة محلياً
       setItems(prev => prev.map(item => 
         item.decision_id === selectedItem.decision_id 
           ? { ...item, final_state: 'LOCKED', human_decision_code: overrideData.human_decision_code, human_payment_pct: overrideData.human_payment_pct }
@@ -94,12 +83,11 @@ const GovernanceDashboard = ({ onBack }) => {
     }
   };
 
-  // --- Render Helpers ---
   const openModal = (item) => {
     setSelectedItem(item);
     setOverrideData({
       human_decision_code: 'OVERRIDE',
-      human_payment_pct: item.system_payment_pct, // الافتراضي هو اقتراح النظام
+      human_payment_pct: item.system_payment_pct,
       override_reason: '',
       approved_by: ''
     });
@@ -107,7 +95,6 @@ const GovernanceDashboard = ({ onBack }) => {
 
   return (
     <div style={{ direction: 'rtl' }}>
-      {/* Header */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', flexWrap: 'wrap', gap: '10px' }}>
         <div>
           <h2 style={{ color: '#1F4E78', margin: 0 }}>⚖️ لوحة حوكمة القرارات (Governance Center)</h2>
@@ -120,7 +107,6 @@ const GovernanceDashboard = ({ onBack }) => {
         </button>
       </div>
 
-      {/* Filters */}
       <div style={{ background: 'white', padding: '15px', borderRadius: '8px', marginBottom: '20px', boxShadow: '0 2px 4px rgba(0,0,0,0.05)', display: 'flex', gap: '15px', alignItems: 'center' }}>
         <strong style={{ color: '#2c3e50' }}>تصفية حسب قرار النظام:</strong>
         <select value={filter} onChange={(e) => setFilter(e.target.value)} style={{ padding: '8px', borderRadius: '4px', border: '1px solid #ccc', minWidth: '200px' }}>
@@ -135,7 +121,6 @@ const GovernanceDashboard = ({ onBack }) => {
         </button>
       </div>
 
-      {/* Data Grid */}
       {loading ? (
         <div style={{ textAlign: 'center', padding: '40px', color: '#7f8c8d' }}>جاري جلب بيانات الحوكمة...</div>
       ) : error ? (
@@ -143,7 +128,7 @@ const GovernanceDashboard = ({ onBack }) => {
       ) : items.length === 0 ? (
         <div style={{ textAlign: 'center', padding: '60px', background: 'white', borderRadius: '8px', color: '#95a5a6' }}>
           <div style={{ fontSize: '48px', marginBottom: '10px' }}>✅</div>
-          <h3>لا توجد بنود تتطلب مراجعة إدارية حالياً.</h3>
+          <h3>لا توجد بنود تحتاج مراجعة إدارية حالياً.</h3>
         </div>
       ) : (
         <div style={{ background: 'white', borderRadius: '8px', overflow: 'hidden', boxShadow: '0 2px 8px rgba(0,0,0,0.08)', overflowX: 'auto' }}>
@@ -210,7 +195,6 @@ const GovernanceDashboard = ({ onBack }) => {
         </div>
       )}
 
-      {/* Override Modal */}
       {selectedItem && (
         <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
           <div style={{ background: 'white', padding: '25px', borderRadius: '8px', width: '90%', maxWidth: '500px', boxShadow: '0 4px 20px rgba(0,0,0,0.2)' }}>
@@ -251,7 +235,7 @@ const GovernanceDashboard = ({ onBack }) => {
               </div>
 
               <div style={{ marginBottom: '15px' }}>
-                <label style={{ display: 'block', marginBottom: '5px', fontWeight: 'bold', fontSize: '14px' }}>سبب التجاوز (Justification):</label>
+                <label style={{ display: 'block', marginBottom: '5px', fontWeight: 'bold', fontSize: '14px' }}>سبب التجاويز (Justification):</label>
                 <textarea 
                   rows="3"
                   value={selectedItem.final_state === 'LOCKED' ? selectedItem.override_reason : overrideData.override_reason}
