@@ -1,4 +1,7 @@
+// AUTH-PATCH 2026-06-02: استخدام apiFetch بدلاً من fetch المباشر للمزامنة
+
 import { db } from './db/index.js';
+import { apiFetch } from './api';
 
 const API_BASE_URL = process.env.REACT_APP_API_URL || '/api';
 
@@ -36,9 +39,8 @@ export const syncWithServer = async () => {
   };
 
   try {
-    const response = await fetch(`${API_BASE_URL}/sync`, {
+    const response = await apiFetch('/sync', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(batch)
     });
 
