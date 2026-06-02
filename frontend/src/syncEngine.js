@@ -1,5 +1,3 @@
-// AUTH-PATCH 2026-06-02: استخدام apiFetch بدلاً من fetch المباشر
-
 import { db } from './db/index.js';
 import { apiFetch } from './api';
 
@@ -37,6 +35,7 @@ export const syncWithServer = async () => {
   };
 
   try {
+    // ✅ التغيير الوحيد: استخدام apiFetch بدلاً من fetch
     const response = await apiFetch('/sync', {
       method: 'POST',
       body: JSON.stringify(batch)
