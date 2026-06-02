@@ -1,4 +1,4 @@
-# AUTH-PATCH 2026-06-02: إضافة دوال المستخدمين وسجل التدقيق و seed admin
+# AUTH-PATCH 2026-06-02: إضافة دوال المستخدمين وسجل التدقيق و seed admin (مصلح)
 import json
 from sqlalchemy.orm import Session
 from sqlalchemy import func
@@ -505,7 +505,7 @@ def seed_default_remark_templates(db: Session):
         db.commit()
 
 # ==========================================
-#  SYNC ENGINE PROCESSOR (مع دعم template_code وإصلاحات الأمان)
+#  SYNC ENGINE PROCESSOR
 # ==========================================
 def process_sync_queue(db: Session, sync_req: schemas.SyncRequest) -> schemas.SyncResponse:
     processed = []
@@ -556,7 +556,6 @@ def process_sync_queue(db: Session, sync_req: schemas.SyncRequest) -> schemas.Sy
                 remark_data.pop('id', None)
                 remark_data.pop('local_id', None)
 
-                # تحويل template_code إلى template_id
                 template_code = remark_data.pop('template_code', None)
                 if template_code:
                     template = db.query(models.RemarkTemplate).filter(
@@ -736,7 +735,7 @@ def process_sync_queue(db: Session, sync_req: schemas.SyncRequest) -> schemas.Sy
 
 
 # ==========================================
-# AUTH-PATCH 2026-06-02: USER & AUDIT CRUD
+# AUTH-PATCH 2026-06-02: USER & AUDIT CRUD (مصلح)
 # ==========================================
 
 def get_user(db: Session, user_id: int):
@@ -818,6 +817,9 @@ def get_audit_logs(db: Session, skip: int = 0, limit: int = 100, user_id: int = 
         query = query.filter(models.AuditLog.action == action)
     return query.order_by(models.AuditLog.timestamp.desc()).offset(skip).limit(limit).all()
 
+# ==========================================
+# SEED DEFAULT ADMIN (مصلح لمنع تضارب البريد الإلكتروني)
+# ==========================================
 def seed_default_admin(db: Session):
     import os
     admin_username = os.getenv("ADMIN_USERNAME", "admin")
@@ -825,27 +827,45 @@ def seed_default_admin(db: Session):
     if not admin_password:
         # لا ننشئ admin إذا لم تُحدد كلمة السر في البيئة (آمن)
         return
-    existing = get_user_by_username(db, admin_username)
-    if existing:
-        # تحديث placeholder إذا كان موجوداً وغير نشط
-        if existing.email == "admin@nrc.org" and existing.full_name == "Placeholder" and not existing.is_active:
-            from app.security import get_password_hash
-            existing.hashed_password = get_password_hash(admin_password)
-            existing.is_active = True
-            existing.username = admin_username
-            db.commit()
-        return
+
+    # البحث عن مستخدم موجود بنفس البريد الإلكتروني أو اسم المستخدم
+    existing_by_email = db.query(models.User).filter(models.User.email == "admin@nrc.org").first()
+    existing_by_username = db.query(models.User).filter(models.User.username == admin_username).first()
+    
     admin_role = db.query(models.Role).filter(models.Role.name == "admin").first()
     if not admin_role:
         return
+
     from app.security import get_password_hash
-    admin_user = models.User(
-        username=admin_username,
-        email=os.getenv("ADMIN_EMAIL", f"{admin_username}@nrc.org"),
-        full_name="System Administrator",
-        hashed_password=get_password_hash(admin_password),
-        role_id=admin_role.id,
-        is_active=True
-    )
-    db.add(admin_user)
-    db.commit()
+    hashed = get_password_hash(admin_password)
+
+    if existing_by_email:
+        # تحديث المستخدم الموجود بنفس البريد
+        existing_by_email.username = admin_username
+        existing_by_email.hashed_password = hashed
+        existing_by_email.is_active = True
+        existing_by_email.role_id = admin_role.id
+        existing_by_email.full_name = "System Administrator"
+        db.commit()
+        return
+    elif existing_by_username:
+        # تحديث المستخدم الموجود بنفس اسم المستخدم
+        existing_by_username.email = os.getenv("ADMIN_EMAIL", f"{admin_username}@nrc.org")
+        existing_by_username.hashed_password = hashed
+        existing_by_username.is_active = True
+        existing_by_username.role_id = admin_role.id
+        existing_by_username.full_name = "System Administrator"
+        db.commit()
+        return
+    else:
+        # إنشاء مستخدم جديد
+        admin_user = models.User(
+            username=admin_username,
+            email=os.getenv("ADMIN_EMAIL", f"{admin_username}@nrc.org"),
+            full_name="System Administrator",
+            hashed_password=hashed,
+            role_id=admin_role.id,
+            is_active=True
+        )
+        db.add(admin_user)
+        db.commit()
