@@ -1,4 +1,5 @@
 // AUTH-PATCH 2026-06-02: دمج شاشة تسجيل الدخول وإدارة الـ token وزر تسجيل الخروج
+// تم تحديث initializeData لاستخدام apiFetch
 
 import React, { useState, useEffect } from 'react';
 import SyncStatus from './components/SyncStatus';
@@ -16,13 +17,14 @@ import GovernanceDashboard from './components/GovernanceDashboard';
 import BoqAnalytics from './components/BoqAnalytics';
 import QualityInspector from './components/QualityInspector';
 import InstallPWA from './components/InstallPWA';
-import LoginScreen from './components/LoginScreen';  // AUTH-PATCH
+import LoginScreen from './components/LoginScreen';
 import { db } from './db';
+import { apiFetch } from './api';
 
 const API_BASE_URL = process.env.REACT_APP_API_URL || '/api';
 
 // ==========================================
-// أيقونات SVG (نفس السابق)
+// أيقونات SVG
 // ==========================================
 const ICONS = {
   list: <path d="M3 13h2v-2H3v2zm0 4h2v-2H3v2zm0-8h2V7H3v2zm4 4h14v-2H7v2zm0 4h14v-2H7v2zM7 7v2h14V7H7z"/>,
@@ -63,10 +65,8 @@ const navItems = [
 ];
 
 function App() {
-  // AUTH-PATCH: حالة المصادقة
   const [auth, setAuth] = useState(null);
   const [isInitializing, setIsInitializing] = useState(true);
-  
   const [currentView, setCurrentView] = useState({
     name: 'LIST',
     latrineId: null,
@@ -76,7 +76,7 @@ function App() {
   });
   const [sidebarExpanded, setSidebarExpanded] = useState(true);
 
-  // AUTH-PATCH: التحقق من وجود token عند التحميل
+  // التحقق من وجود token عند التحميل
   useEffect(() => {
     const token = localStorage.getItem('nrc_token');
     const userStr = localStorage.getItem('nrc_user');
@@ -92,14 +92,13 @@ function App() {
     setIsInitializing(false);
   }, []);
 
-  // AUTH-PATCH: الاستماع لحدث تسجيل الخروج من api.js
+  // الاستماع لحدث تسجيل الخروج من api.js
   useEffect(() => {
     const handleLogoutEvent = () => setAuth(null);
     window.addEventListener('auth:logout', handleLogoutEvent);
     return () => window.removeEventListener('auth:logout', handleLogoutEvent);
   }, []);
 
-  // AUTH-PATCH: دوال تسجيل الدخول والخروج
   const handleLogin = (authData) => setAuth(authData);
   const handleLogout = () => {
     localStorage.removeItem('nrc_token');
@@ -107,20 +106,17 @@ function App() {
     setAuth(null);
   };
 
-  // ========== تهيئة البيانات (نفس السابق) ==========
+  // ========== تهيئة البيانات (محدثة لاستخدام apiFetch) ==========
   const initializeData = async () => {
     try {
       const count = await db.latrines.count();
       if (count === 0 && navigator.onLine) {
-        // يجب إضافة الـ token في رؤوس الطلبات – نستخدم apiFetch بدلاً من fetch مباشر
-        // لكن هنا التهيئة الأولية قد تكون قبل وجود token، لذا نتعامل معها بحذر
         const token = localStorage.getItem('nrc_token');
-        const headers = token ? { 'Authorization': `Bearer ${token}` } : {};
         const [latrinesRes, boqRes, remarksRes, templatesRes] = await Promise.all([
-          fetch(`${API_BASE_URL}/latrines?limit=200`, { headers }),
-          fetch(`${API_BASE_URL}/boq-items`, { headers }),
-          fetch(`${API_BASE_URL}/remarks`, { headers }),
-          fetch(`${API_BASE_URL}/remark-templates`, { headers })
+          apiFetch('/latrines?limit=200'),
+          apiFetch('/boq-items'),
+          apiFetch('/remarks'),
+          apiFetch('/remark-templates')
         ]);
 
         if (latrinesRes.ok && boqRes.ok) {
@@ -156,7 +152,6 @@ function App() {
     initializeData();
   }, []);
 
-  // AUTH-PATCH: إذا لم يتم المصادقة بعد، أظهر شاشة الدخول
   if (isInitializing) {
     return (
       <div style={{ padding: '50px', textAlign: 'center', direction: 'rtl' }}>
@@ -171,7 +166,6 @@ function App() {
     return <LoginScreen onLogin={handleLogin} />;
   }
 
-  // دوال التنقل (نفس السابق)
   const navigateTo = (viewName, params = {}) => {
     setCurrentView(prev => ({
       name: viewName,
@@ -268,7 +262,7 @@ function App() {
           })}
         </nav>
 
-        {/* AUTH-PATCH: زر تسجيل الخروج في أسفل الشريط الجانبي */}
+        {/* زر تسجيل الخروج */}
         <div style={{ marginTop: 'auto', borderTop: '1px solid rgba(255,255,255,0.1)' }}>
           <button
             onClick={handleLogout}
@@ -371,7 +365,6 @@ function App() {
         </div>
       </div>
 
-      {/* زر تثبيت التطبيق (PWA) */}
       <InstallPWA />
     </div>
   );
