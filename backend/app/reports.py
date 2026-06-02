@@ -3,6 +3,9 @@ from reportlab.lib.pagesizes import A4, landscape
 from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, PageBreak
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import cm
+from reportlab.lib.enums import TA_RIGHT, TA_CENTER, TA_LEFT
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.ttfonts import TTFont
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from io import BytesIO
@@ -12,8 +15,24 @@ from app import models
 from datetime import datetime
 from typing import Optional
 
+# ==========================================
+# Arabic Font Registration
+# ==========================================
+FONT_PATH = '/app/fonts/'
+try:
+    pdfmetrics.registerFont(TTFont('Amiri', f'{FONT_PATH}Amiri-Regular.ttf'))
+    pdfmetrics.registerFont(TTFont('Amiri-Bold', f'{FONT_PATH}Amiri-Bold.ttf'))
+    ARABIC_FONT_AVAILABLE = True
+except Exception as e:
+    print(f"Warning: Could not load Arabic fonts: {e}")
+    ARABIC_FONT_AVAILABLE = False
+
+# ==========================================
+# Arabic Text Reshaping (Mandatory)
+# ==========================================
 def reshape_arabic(text: str) -> str:
-    if not text: return ""
+    if not text:
+        return ""
     try:
         import arabic_reshaper
         from bidi.algorithm import get_display
@@ -23,6 +42,62 @@ def reshape_arabic(text: str) -> str:
         return str(text)
 
 # ==========================================
+# Arabic Style Factory
+# ==========================================
+def get_arabic_styles(base_styles):
+    """Create Arabic-aware paragraph styles"""
+    return {
+        'title': ParagraphStyle(
+            'ArabicTitle',
+            parent=base_styles['Heading1'],
+            fontName='Amiri-Bold' if ARABIC_FONT_AVAILABLE else 'Helvetica-Bold',
+            fontSize=20,
+            alignment=TA_CENTER,
+            textColor=colors.HexColor('#1F4E78'),
+            spaceAfter=20,
+            leading=28
+        ),
+        'subtitle': ParagraphStyle(
+            'ArabicSubtitle',
+            parent=base_styles['Normal'],
+            fontName='Amiri' if ARABIC_FONT_AVAILABLE else 'Helvetica',
+            fontSize=12,
+            alignment=TA_CENTER,
+            textColor=colors.HexColor('#7f8c8d'),
+            spaceAfter=30,
+            leading=18
+        ),
+        'section': ParagraphStyle(
+            'ArabicSection',
+            parent=base_styles['Heading2'],
+            fontName='Amiri-Bold' if ARABIC_FONT_AVAILABLE else 'Helvetica-Bold',
+            fontSize=14,
+            alignment=TA_RIGHT,
+            textColor=colors.HexColor('#2c3e50'),
+            spaceAfter=10,
+            spaceBefore=15,
+            leading=20
+        ),
+        'normal': ParagraphStyle(
+            'ArabicNormal',
+            parent=base_styles['Normal'],
+            fontName='Amiri' if ARABIC_FONT_AVAILABLE else 'Helvetica',
+            fontSize=11,
+            alignment=TA_RIGHT,
+            leading=16,
+            rightIndent=10
+        ),
+        'cell': ParagraphStyle(
+            'ArabicCell',
+            parent=base_styles['Normal'],
+            fontName='Amiri' if ARABIC_FONT_AVAILABLE else 'Helvetica',
+            fontSize=10,
+            alignment=TA_CENTER,
+            leading=14
+        )
+    }
+
+# ==========================================
 # Summary Report (PDF & Excel)
 # ==========================================
 def generate_summary_pdf(db: Session, from_date: datetime = None, to_date: datetime = None) -> bytes:
@@ -30,14 +105,12 @@ def generate_summary_pdf(db: Session, from_date: datetime = None, to_date: datet
     doc = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=2*cm, leftMargin=2*cm, topMargin=2*cm, bottomMargin=2*cm)
     elements = []
     styles = getSampleStyleSheet()
+    arabic = get_arabic_styles(styles)
 
-    title_style = ParagraphStyle('CustomTitle', parent=styles['Heading1'], alignment=1, fontSize=20, textColor=colors.HexColor('#1F4E78'), spaceAfter=20, fontName='Helvetica-Bold')
-    subtitle_style = ParagraphStyle('CustomSubtitle', parent=styles['Normal'], alignment=1, fontSize=12, textColor=colors.HexColor('#7f8c8d'), spaceAfter=30)
-    section_style = ParagraphStyle('SectionTitle', parent=styles['Heading2'], fontSize=14, textColor=colors.HexColor('#2c3e50'), spaceAfter=10, spaceBefore=15, fontName='Helvetica-Bold')
-
-    elements.append(Paragraph("NRC Latrine Tracker", title_style))
-    elements.append(Paragraph("Project Executive Summary & Governance Report", subtitle_style))
-    elements.append(Paragraph(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}", subtitle_style))
+    # Title - Arabic
+    elements.append(Paragraph(reshape_arabic("نظام تتبع حمامات الأسر النازحة"), arabic['title']))
+    elements.append(Paragraph(reshape_arabic("NRC Latrine Tracker - تقرير تنفيذي ومالي"), arabic['subtitle']))
+    elements.append(Paragraph(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}", arabic['subtitle']))
     elements.append(Spacer(1, 20))
 
     total = db.query(models.Latrine).count()
@@ -53,41 +126,61 @@ def generate_summary_pdf(db: Session, from_date: datetime = None, to_date: datet
 
     avg_progress = round(float(db.query(func.avg(models.Latrine.overall_pct)).scalar() or 0), 2)
 
-    elements.append(Paragraph("1. Project Status", section_style))
+    # Section 1: Project Status - Arabic
+    elements.append(Paragraph(reshape_arabic("1. حالة المشروع التنفيذية"), arabic['section']))
+    
     summary_data = [
-        ['Indicator', 'Value', 'Percentage'],
-        ['Total Latrines', str(total), '100%'],
-        ['Completed', str(completed), f'{round(completed/total*100,1)}%' if total else '0%'],
-        ['In Progress', str(in_progress), f'{round(in_progress/total*100,1)}%' if total else '0%'],
-        ['Not Started', str(not_started), f'{round(not_started/total*100,1)}%' if total else '0%'],
-        ['Overall Financial Progress', f'{avg_progress}%', 'Based on Approved Payments'],
+        [Paragraph(reshape_arabic("المؤشر"), arabic['cell']), 
+         Paragraph(reshape_arabic("القيمة"), arabic['cell']), 
+         Paragraph(reshape_arabic("النسبة"), arabic['cell'])],
+        [Paragraph(reshape_arabic("إجمالي الحمامات"), arabic['cell']), str(total), '100%'],
+        [Paragraph(reshape_arabic("مكتملة"), arabic['cell']), str(completed), 
+         f'{round(completed/total*100,1)}%' if total else '0%'],
+        [Paragraph(reshape_arabic("جاري العمل"), arabic['cell']), str(in_progress), 
+         f'{round(in_progress/total*100,1)}%' if total else '0%'],
+        [Paragraph(reshape_arabic("لم تبدأ"), arabic['cell']), str(not_started), 
+         f'{round(not_started/total*100,1)}%' if total else '0%'],
+        [Paragraph(reshape_arabic("متوسط الإنجاز المالي"), arabic['cell']), 
+         f'{avg_progress}%', Paragraph(reshape_arabic("بناءً على المستخلصات المعتمدة"), arabic['cell'])],
     ]
+    
     t1 = Table(summary_data, colWidths=[7*cm, 4*cm, 5*cm])
     t1.setStyle(TableStyle([
         ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1F4E78')),
         ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
         ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+        ('FONTNAME', (0, 0), (-1, 0), 'Amiri-Bold' if ARABIC_FONT_AVAILABLE else 'Helvetica-Bold'),
+        ('FONTNAME', (0, 1), (-1, -1), 'Amiri' if ARABIC_FONT_AVAILABLE else 'Helvetica'),
         ('GRID', (0, 0), (-1, -1), 1, colors.grey),
         ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#f8f9fa')]),
     ]))
     elements.append(t1)
     elements.append(Spacer(1, 20))
 
-    elements.append(Paragraph("2. Decision & Governance Engine", section_style))
+    # Section 2: Governance - Arabic
+    elements.append(Paragraph(reshape_arabic("2. محرك الحوكمة والقرارات المالية"), arabic['section']))
+    
     gov_data = [
-        ['Decision Status', 'Item Count', 'Action Required'],
-        ['Approved for Payment', str(approved_count), 'None'],
-        ['On Hold (Pending/Minor Issues)', str(hold_count), 'Review & Inspect'],
-        ['Rework Required (Failed Quality)', str(rework_count), 'Contractor Action'],
-        ['Stopped (Critical Safety/Quality)', str(stop_count), 'Urgent PM Intervention'],
+        [Paragraph(reshape_arabic("حالة القرار"), arabic['cell']), 
+         Paragraph(reshape_arabic("عدد البنود"), arabic['cell']), 
+         Paragraph(reshape_arabic("الإجراء المطلوب"), arabic['cell'])],
+        [Paragraph(reshape_arabic("معتمد للدفع"), arabic['cell']), str(approved_count), 
+         Paragraph(reshape_arabic("لا شيء"), arabic['cell'])],
+        [Paragraph(reshape_arabic("إيقاف مؤقت"), arabic['cell']), str(hold_count), 
+         Paragraph(reshape_arabic("مراجعة وفحص"), arabic['cell'])],
+        [Paragraph(reshape_arabic("إعادة عمل"), arabic['cell']), str(rework_count), 
+         Paragraph(reshape_arabic("تدخل المقاول"), arabic['cell'])],
+        [Paragraph(reshape_arabic("إيقاف فوري"), arabic['cell']), str(stop_count), 
+         Paragraph(reshape_arabic("تدخل عاجل من مدير المشروع"), arabic['cell'])],
     ]
+    
     t2 = Table(gov_data, colWidths=[7*cm, 3*cm, 6*cm])
     t2.setStyle(TableStyle([
         ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#8e44ad')),
         ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
         ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+        ('FONTNAME', (0, 0), (-1, 0), 'Amiri-Bold' if ARABIC_FONT_AVAILABLE else 'Helvetica-Bold'),
+        ('FONTNAME', (0, 1), (-1, -1), 'Amiri' if ARABIC_FONT_AVAILABLE else 'Helvetica'),
         ('GRID', (0, 0), (-1, -1), 1, colors.grey),
         ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#f8f9fa')]),
     ]))
@@ -120,7 +213,7 @@ def generate_summary_excel(db: Session, from_date: datetime = None, to_date: dat
 
     # العنوان
     ws.merge_cells('A1:C1')
-    ws['A1'] = "NRC Latrine Tracker - Executive Summary"
+    ws['A1'] = "نظام تتبع حمامات الأسر النازحة - التقرير التنفيذي"
     ws['A1'].font = Font(size=16, bold=True, color="1F4E78")
     ws['A1'].alignment = Alignment(horizontal='center')
 
@@ -130,11 +223,11 @@ def generate_summary_excel(db: Session, from_date: datetime = None, to_date: dat
     ws.cell(row=3, column=3, value="النسبة").font = Font(bold=True)
 
     data_rows = [
-        ['Total Latrines', total, '100%'],
-        ['Completed', completed, f'{round(completed/total*100,1)}%' if total else '0%'],
-        ['In Progress', in_progress, f'{round(in_progress/total*100,1)}%' if total else '0%'],
-        ['Not Started', not_started, f'{round(not_started/total*100,1)}%' if total else '0%'],
-        ['Overall Financial Progress', f'{avg_progress}%', ''],
+        ['إجمالي الحمامات', total, '100%'],
+        ['مكتملة', completed, f'{round(completed/total*100,1)}%' if total else '0%'],
+        ['جاري العمل', in_progress, f'{round(in_progress/total*100,1)}%' if total else '0%'],
+        ['لم تبدأ', not_started, f'{round(not_started/total*100,1)}%' if total else '0%'],
+        ['متوسط الإنجاز المالي', f'{avg_progress}%', ''],
     ]
     for i, row_data in enumerate(data_rows, start=4):
         for j, val in enumerate(row_data, start=1):
@@ -146,10 +239,10 @@ def generate_summary_excel(db: Session, from_date: datetime = None, to_date: dat
     ws.cell(row=10, column=3, value="الإجراء").font = Font(bold=True)
 
     gov_data = [
-        ['Approved for Payment', approved_count, 'None'],
-        ['On Hold', hold_count, 'Review & Inspect'],
-        ['Rework Required', rework_count, 'Contractor Action'],
-        ['Stopped', stop_count, 'Urgent PM Intervention'],
+        ['معتمد للدفع', approved_count, 'لا شيء'],
+        ['إيقاف مؤقت', hold_count, 'مراجعة وفحص'],
+        ['إعادة عمل', rework_count, 'تدخل المقاول'],
+        ['إيقاف فوري', stop_count, 'تدخل عاجل من مدير المشروع'],
     ]
     for i, row_data in enumerate(gov_data, start=11):
         for j, val in enumerate(row_data, start=1):
@@ -174,25 +267,25 @@ def generate_ipc_excel(db: Session) -> bytes:
     ws.title = "IPC - Master Aggregation"
     ws.sheet_view.rightToLeft = True
 
-    ws['A1'] = "NRC Latrine Tracker - Governance IPC"
+    ws['A1'] = "نظام تتبع حمامات الأسر النازحة - مستخلص الدفع المؤقت"
     ws['A1'].font = Font(size=16, bold=True, color="1F4E78")
     ws.merge_cells('A1:I1')
     ws['A1'].alignment = Alignment(horizontal='center', vertical='center')
     ws.row_dimensions[1].height = 30
 
-    ws['A2'] = "Interim Payment Certificate (Aggregated by BoQ)"
+    ws['A2'] = "شهادة الدفع المؤقت (IPC) - تجميعي حسب البنود"
     ws['A2'].font = Font(size=12, bold=True, color="27ae60")
     ws.merge_cells('A2:I2')
     ws['A2'].alignment = Alignment(horizontal='center', vertical='center')
 
-    ws['A3'] = f"Date: {datetime.now().strftime('%Y-%m-%d')}"
+    ws['A3'] = f"التاريخ: {datetime.now().strftime('%Y-%m-%d')}"
     ws.merge_cells('A3:I3')
     ws['A3'].alignment = Alignment(horizontal='center')
 
     headers = [
-        'BoQ Code', 'Description (AR)', 'Unit', 'Unit Price ($)',
-        'Total Planned Qty', 'Total Executed Qty',
-        'Approved Qty (Passed)', 'Payable Amount ($)', 'Blocked Amount ($)'
+        'كود البند', 'الوصف', 'الوحدة', 'سعر الوحدة ($)',
+        'الكمية المخططة', 'الكمية المنفذة',
+        'الكمية المعتمدة (مقبولة)', 'المبلغ المستحق ($)', 'المبلغ المحجوز ($)'
     ]
     for col, header in enumerate(headers, 1):
         cell = ws.cell(row=5, column=col, value=header)
@@ -271,7 +364,7 @@ def generate_ipc_excel(db: Session) -> bytes:
 
     # صف الإجمالي
     ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=7)
-    tot_label = ws.cell(row=row, column=1, value="GRAND TOTAL (USD)")
+    tot_label = ws.cell(row=row, column=1, value="الإجمالي الكلي (USD)")
     tot_label.font = Font(bold=True, size=12)
     tot_label.alignment = Alignment(horizontal='right')
 
@@ -305,9 +398,10 @@ def generate_ipc_pdf(db: Session) -> bytes:
     doc = SimpleDocTemplate(buffer, pagesize=landscape(A4), rightMargin=1.5*cm, leftMargin=1.5*cm)
     elements = []
     styles = getSampleStyleSheet()
+    arabic = get_arabic_styles(styles)
 
-    elements.append(Paragraph("Interim Payment Certificate (IPC) - Summary", styles['Heading1']))
-    elements.append(Paragraph(f"Date: {datetime.now().strftime('%Y-%m-%d')}", styles['Normal']))
+    elements.append(Paragraph(reshape_arabic("شهادة الدفع المؤقت (IPC) - ملخص"), arabic['title']))
+    elements.append(Paragraph(f"التاريخ: {datetime.now().strftime('%Y-%m-%d')}", arabic['subtitle']))
     elements.append(Spacer(1, 10))
 
     dictionary = {d.boq_code: d for d in db.query(models.BoqDictionary).filter(models.BoqDictionary.is_active == True).all()}
@@ -333,15 +427,36 @@ def generate_ipc_pdf(db: Session) -> bytes:
         if executed > payable_qty:
             aggregation[code]['blocked_usd'] += ((executed - payable_qty) * price)
 
-    data = [['BoQ Code', 'Planned Qty', 'Executed Qty', 'Approved Qty', 'Payable ($)', 'Blocked ($)']]
+    data = [[Paragraph(reshape_arabic("كود البند"), arabic['cell']), 
+             Paragraph(reshape_arabic("كمية مخططة"), arabic['cell']), 
+             Paragraph(reshape_arabic("كمية منفذة"), arabic['cell']), 
+             Paragraph(reshape_arabic("كمية معتمدة"), arabic['cell']), 
+             Paragraph(reshape_arabic("مستحق ($)"), arabic['cell']), 
+             Paragraph(reshape_arabic("محجوز ($)"), arabic['cell'])]]
+    
     total_payable = 0.0
     total_blocked = 0.0
     for code in sorted(aggregation.keys()):
         d = aggregation[code]
-        data.append([code, str(d['planned']), str(d['executed']), str(round(d['approved_qty'],2)), str(round(d['payable_usd'],2)), str(round(d['blocked_usd'],2))])
+        data.append([
+            Paragraph(code, arabic['cell']),
+            Paragraph(str(d['planned']), arabic['cell']),
+            Paragraph(str(d['executed']), arabic['cell']),
+            Paragraph(str(round(d['approved_qty'],2)), arabic['cell']),
+            Paragraph(str(round(d['payable_usd'],2)), arabic['cell']),
+            Paragraph(str(round(d['blocked_usd'],2)), arabic['cell'])
+        ])
         total_payable += d['payable_usd']
         total_blocked += d['blocked_usd']
-    data.append(['TOTAL', '', '', '', str(round(total_payable,2)), str(round(total_blocked,2))])
+    
+    data.append([
+        Paragraph(reshape_arabic("الإجمالي"), arabic['cell']),
+        Paragraph('', arabic['cell']),
+        Paragraph('', arabic['cell']),
+        Paragraph('', arabic['cell']),
+        Paragraph(str(round(total_payable,2)), arabic['cell']),
+        Paragraph(str(round(total_blocked,2)), arabic['cell'])
+    ])
 
     table = Table(data, colWidths=[3*cm, 2.5*cm, 2.5*cm, 2.5*cm, 3*cm, 3*cm])
     table.setStyle(TableStyle([
@@ -349,7 +464,8 @@ def generate_ipc_pdf(db: Session) -> bytes:
         ('TEXTCOLOR', (0,0), (-1,0), colors.whitesmoke),
         ('ALIGN', (0,0), (-1,-1), 'CENTER'),
         ('GRID', (0,0), (-1,-1), 0.5, colors.grey),
-        ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
+        ('FONTNAME', (0,0), (-1,0), 'Amiri-Bold' if ARABIC_FONT_AVAILABLE else 'Helvetica-Bold'),
+        ('FONTNAME', (0,1), (-1,-1), 'Amiri' if ARABIC_FONT_AVAILABLE else 'Helvetica'),
         ('BACKGROUND', (0,-1), (-1,-1), colors.HexColor('#f2f2f2')),
     ]))
     elements.append(table)
@@ -366,12 +482,10 @@ def generate_remarks_pdf(db: Session, from_date: datetime = None, to_date: datet
     doc = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=2*cm, leftMargin=2*cm)
     elements = []
     styles = getSampleStyleSheet()
+    arabic = get_arabic_styles(styles)
 
-    title_style = ParagraphStyle('CustomTitle', parent=styles['Heading1'], alignment=1, fontSize=18, textColor=colors.HexColor('#1F4E78'), spaceAfter=20)
-    section_style = ParagraphStyle('SectionTitle', parent=styles['Heading2'], fontSize=14, textColor=colors.HexColor('#2c3e50'), spaceAfter=10, spaceBefore=15)
-
-    elements.append(Paragraph("Quality Control Remarks Log", title_style))
-    elements.append(Paragraph(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}", styles['Normal']))
+    elements.append(Paragraph(reshape_arabic("سجل ملاحظات مراقبة الجودة"), arabic['title']))
+    elements.append(Paragraph(f"تم التوليد: {datetime.now().strftime('%Y-%m-%d %H:%M')}", arabic['subtitle']))
     elements.append(Spacer(1, 20))
 
     query = db.query(models.Remark).join(models.Latrine)
@@ -382,25 +496,31 @@ def generate_remarks_pdf(db: Session, from_date: datetime = None, to_date: datet
     open_remarks = query.filter(models.Remark.status == 'open').order_by(models.Remark.date_logged.desc()).all()
 
     if open_remarks:
-        elements.append(Paragraph(f"OPEN REMARKS ({len(open_remarks)})", section_style))
+        elements.append(Paragraph(reshape_arabic(f"ملاحظات مفتوحة ({len(open_remarks)})"), arabic['section']))
         for remark in open_remarks:
+            desc_text = remark.description or remark.suffix_note or 'لا يوجد وصف'
             data = [
-                ['Latrine ID', remark.latrine.latrine_id if remark.latrine else 'N/A'],
-                ['BoQ Code', remark.boq_code or 'General'],
-                ['Severity', remark.severity.upper()],
-                ['Description', remark.description or ''],
+                [Paragraph(reshape_arabic("رقم الحمام"), arabic['cell']), 
+                 Paragraph(remark.latrine.latrine_id if remark.latrine else 'غير متوفر', arabic['cell'])],
+                [Paragraph(reshape_arabic("كود البند"), arabic['cell']), 
+                 Paragraph(remark.boq_code or reshape_arabic('عام'), arabic['cell'])],
+                [Paragraph(reshape_arabic("الخطورة"), arabic['cell']), 
+                 Paragraph(reshape_arabic(remark.severity.upper()), arabic['cell'])],
+                [Paragraph(reshape_arabic("الوصف"), arabic['cell']), 
+                 Paragraph(reshape_arabic(desc_text), arabic['normal'])],
             ]
             table = Table(data, colWidths=[4*cm, 12*cm])
             bg_color = colors.HexColor('#FFC7CE') if remark.severity == 'critical' else colors.HexColor('#FFEB9C') if remark.severity == 'major' else colors.HexColor('#e8f4f8')
             table.setStyle(TableStyle([
                 ('BACKGROUND', (0, 0), (0, -1), bg_color),
                 ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
-                ('FONTNAME', (0, 0), (0, -1), 'Helvetica-Bold'),
+                ('FONTNAME', (0, 0), (0, -1), 'Amiri-Bold' if ARABIC_FONT_AVAILABLE else 'Helvetica-Bold'),
+                ('FONTNAME', (1, 0), (1, -1), 'Amiri' if ARABIC_FONT_AVAILABLE else 'Helvetica'),
             ]))
             elements.append(table)
             elements.append(Spacer(1, 10))
     else:
-        elements.append(Paragraph("No open remarks found.", styles['Normal']))
+        elements.append(Paragraph(reshape_arabic("لا توجد ملاحظات مفتوحة."), arabic['normal']))
 
     doc.build(elements)
     buffer.seek(0)
@@ -414,7 +534,7 @@ def generate_remarks_excel(db: Session, from_date: datetime = None, to_date: dat
     ws.title = "Remarks Log"
     ws.sheet_view.rightToLeft = True
 
-    headers = ['Remark ID', 'Latrine ID', 'BoQ Code', 'Severity', 'Status', 'Description', 'Date Logged']
+    headers = ['رقم الملاحظة', 'رقم الحمام', 'كود البند', 'الخطورة', 'الحالة', 'الوصف', 'تاريخ التسجيل']
     for col, header in enumerate(headers, 1):
         cell = ws.cell(row=1, column=col, value=header)
         cell.font = Font(bold=True, color="FFFFFF")
@@ -429,12 +549,12 @@ def generate_remarks_excel(db: Session, from_date: datetime = None, to_date: dat
     remarks = query.order_by(models.Remark.date_logged.desc()).all()
 
     for i, remark in enumerate(remarks, start=2):
-        ws.cell(row=i, column=1, value=remark.remark_id or f"REM-{remark.local_uuid[:8]}" if remark.local_uuid else str(remark.id))
-        ws.cell(row=i, column=2, value=remark.latrine.latrine_id if remark.latrine else 'N/A')
-        ws.cell(row=i, column=3, value=remark.boq_code or 'General')
+        ws.cell(row=i, column=1, value=remark.remark_id or f"REM-{remark.id}")
+        ws.cell(row=i, column=2, value=remark.latrine.latrine_id if remark.latrine else 'غير متوفر')
+        ws.cell(row=i, column=3, value=remark.boq_code or reshape_arabic('عام'))
         ws.cell(row=i, column=4, value=remark.severity)
         ws.cell(row=i, column=5, value=remark.status)
-        ws.cell(row=i, column=6, value=remark.description or '')
+        ws.cell(row=i, column=6, value=remark.description or remark.suffix_note or '')
         ws.cell(row=i, column=7, value=remark.date_logged.strftime('%Y-%m-%d') if remark.date_logged else '')
 
     ws.column_dimensions['A'].width = 20
@@ -458,15 +578,14 @@ def generate_daily_logs_pdf(db: Session, from_date: datetime = None, to_date: da
     doc = SimpleDocTemplate(buffer, pagesize=landscape(A4), rightMargin=1.5*cm, leftMargin=1.5*cm)
     elements = []
     styles = getSampleStyleSheet()
+    arabic = get_arabic_styles(styles)
 
-    title_style = ParagraphStyle('CustomTitle', parent=styles['Heading1'], alignment=1, fontSize=18, textColor=colors.HexColor('#1F4E78'), spaceAfter=10)
-    subtitle_style = ParagraphStyle('CustomSubtitle', parent=styles['Normal'], alignment=1, fontSize=11, textColor=colors.HexColor('#7f8c8d'), spaceAfter=20)
-
-    elements.append(Paragraph("Site Diary & Daily Operations Log", title_style))
-    date_str = "All Records"
+    elements.append(Paragraph(reshape_arabic("يوميات الموقع وسجل العمليات اليومية"), arabic['title']))
+    
+    date_str = reshape_arabic("جميع السجلات")
     if from_date and to_date:
-        date_str = f"Period: {from_date.strftime('%Y-%m-%d')} to {to_date.strftime('%Y-%m-%d')}"
-    elements.append(Paragraph(date_str, subtitle_style))
+        date_str = reshape_arabic(f"الفترة: {from_date.strftime('%Y-%m-%d')} إلى {to_date.strftime('%Y-%m-%d')}")
+    elements.append(Paragraph(date_str, arabic['subtitle']))
 
     query = db.query(models.DailyLog).order_by(models.DailyLog.date.desc())
     if from_date: query = query.filter(models.DailyLog.date >= from_date)
@@ -474,25 +593,33 @@ def generate_daily_logs_pdf(db: Session, from_date: datetime = None, to_date: da
     logs = query.all()
 
     if not logs:
-        elements.append(Paragraph("No daily logs found.", styles['Normal']))
+        elements.append(Paragraph(reshape_arabic("لا توجد يوميات مسجلة."), arabic['normal']))
         doc.build(elements)
         buffer.seek(0)
         return buffer.getvalue()
 
-    data = [['Date', 'Engineer', 'Weather', 'Manpower', 'Inspected', 'Accepted', 'Remarks', 'Equipment / Notes']]
+    data = [[Paragraph(reshape_arabic("التاريخ"), arabic['cell']), 
+             Paragraph(reshape_arabic("المهندس"), arabic['cell']), 
+             Paragraph(reshape_arabic("الطقس"), arabic['cell']), 
+             Paragraph(reshape_arabic("العمال"), arabic['cell']), 
+             Paragraph(reshape_arabic("مفحوصة"), arabic['cell']), 
+             Paragraph(reshape_arabic("مقبولة"), arabic['cell']), 
+             Paragraph(reshape_arabic("ملاحظات"), arabic['cell']), 
+             Paragraph(reshape_arabic("معدات / ملاحظات"), arabic['cell'])]]
+    
     for log in logs:
         notes_text = ""
-        if log.equipment: notes_text += f"Eq: {log.equipment}\n"
-        if log.notes: notes_text += f"Note: {log.notes}"
+        if log.equipment: notes_text += f"معدات: {log.equipment}\n"
+        if log.notes: notes_text += f"ملاحظة: {log.notes}"
         data.append([
-            log.date.strftime('%Y-%m-%d'),
-            log.engineer or '-',
-            log.weather or '-',
-            str(log.manpower or 0),
-            str(log.latrines_inspected or 0),
-            str(log.latrines_accepted or 0),
-            str(log.remarks_issued or 0),
-            notes_text or '-'
+            Paragraph(log.date.strftime('%Y-%m-%d'), arabic['cell']),
+            Paragraph(log.engineer or '-', arabic['cell']),
+            Paragraph(log.weather or '-', arabic['cell']),
+            Paragraph(str(log.manpower or 0), arabic['cell']),
+            Paragraph(str(log.latrines_inspected or 0), arabic['cell']),
+            Paragraph(str(log.latrines_accepted or 0), arabic['cell']),
+            Paragraph(str(log.remarks_issued or 0), arabic['cell']),
+            Paragraph(reshape_arabic(notes_text) if notes_text else '-', arabic['normal'])
         ])
 
     col_widths = [2.5*cm, 3.5*cm, 2*cm, 2*cm, 2*cm, 2*cm, 2*cm, 10*cm]
@@ -502,7 +629,8 @@ def generate_daily_logs_pdf(db: Session, from_date: datetime = None, to_date: da
         ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
         ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
         ('ALIGN', (7, 1), (7, -1), 'LEFT'),
-        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+        ('FONTNAME', (0, 0), (-1, 0), 'Amiri-Bold' if ARABIC_FONT_AVAILABLE else 'Helvetica-Bold'),
+        ('FONTNAME', (0, 1), (-1, -1), 'Amiri' if ARABIC_FONT_AVAILABLE else 'Helvetica'),
         ('FONTSIZE', (0, 0), (-1, 0), 10),
         ('FONTSIZE', (0, 1), (-1, -1), 9),
         ('BOTTOMPADDING', (0, 0), (-1, 0), 8),
@@ -524,7 +652,7 @@ def generate_daily_logs_excel(db: Session, from_date: datetime = None, to_date: 
     ws.title = "Site Diary"
     ws.sheet_view.rightToLeft = True
 
-    headers = ['Date', 'Engineer', 'Weather', 'Manpower', 'Inspected', 'Accepted', 'Remarks', 'Equipment', 'Notes']
+    headers = ['التاريخ', 'المهندس', 'الطقس', 'العمال', 'مفحوصة', 'مقبولة', 'ملاحظات', 'معدات', 'ملاحظات عامة']
     for col, header in enumerate(headers, 1):
         cell = ws.cell(row=1, column=col, value=header)
         cell.font = Font(bold=True, color="FFFFFF")
@@ -576,7 +704,7 @@ def generate_matrix_excel(db: Session) -> bytes:
     boq_codes = [d.boq_code for d in dictionary]
 
     ws.merge_cells('A1:D1')
-    ws['A1'] = "Project Progress Matrix (Horizontal View)"
+    ws['A1'] = "مصفوفة تقدم المشروع (عرض أفقي)"
     ws['A1'].font = Font(size=14, bold=True)
 
     ws.cell(row=2, column=1, value="رقم الحمام").font = Font(bold=True)
@@ -606,7 +734,6 @@ def generate_matrix_excel(db: Session) -> bytes:
     row_idx = 3
     for latrine in latrines:
         ws.cell(row=row_idx, column=1, value=latrine.latrine_id)
-        # ✅ تم التعديل: عرض اسم المستفيد الحقيقي بدلاً من [Encrypted]
         ws.cell(row=row_idx, column=2, value=latrine.beneficiary_hh or '—')
         ws.cell(row=row_idx, column=3, value=latrine.block_no)
         ws.cell(row=row_idx, column=4, value=f"{latrine.overall_pct}%")
@@ -630,8 +757,9 @@ def generate_matrix_pdf(db: Session) -> bytes:
     doc = SimpleDocTemplate(buffer, pagesize=landscape(A4), rightMargin=1*cm, leftMargin=1*cm)
     elements = []
     styles = getSampleStyleSheet()
+    arabic = get_arabic_styles(styles)
 
-    elements.append(Paragraph("Project Progress Matrix - Summary", styles['Heading1']))
+    elements.append(Paragraph(reshape_arabic("مصفوفة تقدم المشروع - ملخص"), arabic['title']))
     elements.append(Spacer(1, 10))
 
     dictionary = db.query(models.BoqDictionary).filter(models.BoqDictionary.is_active == True).order_by(models.BoqDictionary.boq_code).all()
@@ -643,15 +771,22 @@ def generate_matrix_pdf(db: Session) -> bytes:
             items_map[item.latrine_id] = {}
         items_map[item.latrine_id][item.boq_code] = item
 
-    headers = ['Latrine ID', 'Block'] + [f"{d.boq_code}" for d in dictionary] + ['Overall %']
+    headers = [Paragraph(reshape_arabic("رقم الحمام"), arabic['cell']), 
+               Paragraph(reshape_arabic("المربع"), arabic['cell'])] + \
+              [Paragraph(d.boq_code, arabic['cell']) for d in dictionary] + \
+              [Paragraph(reshape_arabic("إجمالي %"), arabic['cell'])]
+    
     data = [headers]
     for latrine in latrines:
-        row = [latrine.latrine_id, latrine.block_no]
+        row = [
+            Paragraph(latrine.latrine_id, arabic['cell']),
+            Paragraph(latrine.block_no, arabic['cell'])
+        ]
         for d in dictionary:
             item = items_map.get(latrine.id, {}).get(d.boq_code)
             achieved = item.achieved_qty if item else 0
-            row.append(str(achieved))
-        row.append(f"{latrine.overall_pct}%")
+            row.append(Paragraph(str(achieved), arabic['cell']))
+        row.append(Paragraph(f"{latrine.overall_pct}%", arabic['cell']))
         data.append(row)
 
     col_widths = [2.5*cm, 1.5*cm] + [1.2*cm]*len(dictionary) + [2*cm]
@@ -660,7 +795,8 @@ def generate_matrix_pdf(db: Session) -> bytes:
         ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#1F4E78')),
         ('TEXTCOLOR', (0,0), (-1,0), colors.whitesmoke),
         ('ALIGN', (0,0), (-1,-1), 'CENTER'),
-        ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
+        ('FONTNAME', (0,0), (-1,0), 'Amiri-Bold' if ARABIC_FONT_AVAILABLE else 'Helvetica-Bold'),
+        ('FONTNAME', (0,1), (-1,-1), 'Amiri' if ARABIC_FONT_AVAILABLE else 'Helvetica'),
         ('FONTSIZE', (0,0), (-1,-1), 7),
         ('GRID', (0,0), (-1,-1), 0.3, colors.grey),
     ]))
