@@ -1,5 +1,5 @@
 // AdminPanel.js – لوحة تحكم الإدارة (المستفيدين، القاموس، الأسعار، المستخدمين)
-// AUTH-PATCH 2026-06-03: يعتمد على authFetch لإضافة التوكن تلقائياً (يستخدم fetch العادي)
+// AUTH-PATCH 2026-06-03: يعتمد على authFetch (يستخدم fetch العادي)
 
 import React, { useState, useEffect, useCallback } from 'react';
 import AdminUsers from './AdminUsers';
@@ -500,7 +500,7 @@ const PriceManager = () => {
                         </button>
                       </div>
                     )}
-                  <tr>
+                  </td>
                 </tr>
               ))
             )}
@@ -512,7 +512,7 @@ const PriceManager = () => {
 };
 
 // ==========================================
-// الصفحة الرئيسية للوحة التحكم – مع إضافة تبويب المستخدمين
+// الصفحة الرئيسية للوحة التحكم – مع تبويب إدارة المستخدمين
 // ==========================================
 const AdminPanel = ({ onBack }) => {
   const [activeTab, setActiveTab] = useState('beneficiaries');
