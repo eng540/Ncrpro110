@@ -1,16 +1,16 @@
+// AUTH-PATCH 2026-06-02: استخدام apiFetch بدلاً من fetch المباشر
+
 import React, { useState, useEffect } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '../db/index.js';
 import { syncWithServer } from '../syncEngine';
-
-const API_BASE_URL = process.env.REACT_APP_API_URL || '/api';
+import { apiFetch } from '../api';
 
 const SyncStatus = () => {
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   const [isSyncing, setIsSyncing] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
 
-  // مراقبة طابور العمليات المعلقة
   const pendingCount = useLiveQuery(() => db.sync_queue.count(), []);
 
   useEffect(() => {
@@ -26,7 +26,6 @@ const SyncStatus = () => {
     };
   }, []);
 
-  // دالة إرسال التعديلات للخادم (Push)
   const handlePushSync = async () => {
     if (!isOnline || pendingCount === 0) return;
     setIsSyncing(true);
@@ -40,25 +39,23 @@ const SyncStatus = () => {
     }
   };
 
-  // دالة تحميل البيانات من الخادم للهاتف (Pull) – محدثة لتشمل القوالب
   const handleDownloadData = async () => {
     if (!isOnline) {
       alert("يجب أن تكون متصلاً بالإنترنت لتحميل البيانات.");
       return;
     }
     if (pendingCount > 0) {
-      alert("يوجد لديك تعديلات محلية لم يتم إرسالها. يرجى مزامنة بياناتك أولاً قبل تحميل بيانات جديدة لتجنب فقدان عملك.");
+      alert("لديك تعديلات محلية لم يتم إرسالها. يرجى مزامنة بياناتك أولاً قبل تحميل بيانات جديدة.");
       return;
     }
 
     setIsDownloading(true);
     try {
-      // 🌟 إضافة جلب القوالب (remark-templates)
       const [latrinesRes, boqRes, remarksRes, templatesRes] = await Promise.all([
-        fetch(`${API_BASE_URL}/latrines?limit=200`),
-        fetch(`${API_BASE_URL}/boq-items`),
-        fetch(`${API_BASE_URL}/remarks`),
-        fetch(`${API_BASE_URL}/remark-templates`)
+        apiFetch('/latrines?limit=200'),
+        apiFetch('/boq-items'),
+        apiFetch('/remarks'),
+        apiFetch('/remark-templates')
       ]);
 
       if (!latrinesRes.ok || !boqRes.ok) throw new Error("فشل الاتصال بالخادم");
@@ -76,7 +73,7 @@ const SyncStatus = () => {
 
         if (latrines?.length > 0) await db.latrines.bulkAdd(latrines);
         if (boqItems?.length > 0) await db.boq_items.bulkAdd(boqItems);
-        if (templates?.length > 0) await db.remark_templates.bulkAdd(templates); // 🌟 حفظ القوالب
+        if (templates?.length > 0) await db.remark_templates.bulkAdd(templates);
 
         if (remarks?.length > 0) {
           const remarksWithSync = remarks.map(r => ({...r, sync_status: 'synced'}));
@@ -114,7 +111,6 @@ const SyncStatus = () => {
       </div>
 
       <div style={{ display: 'flex', gap: '10px' }}>
-        {/* زر إرسال البيانات (يظهر فقط إذا كان هناك تعديلات) */}
         {pendingCount > 0 && (
           <button 
             onClick={handlePushSync} 
@@ -128,7 +124,6 @@ const SyncStatus = () => {
           </button>
         )}
 
-        {/* زر تحميل البيانات (يظهر دائماً إذا كان متصلاً) */}
         <button 
           onClick={handleDownloadData} 
           disabled={!isOnline || isDownloading || pendingCount > 0}
