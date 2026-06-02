@@ -1,7 +1,8 @@
-// AUTH-PATCH 2026-06-02: استخدام apiFetch بدلاً من fetch المباشر (AdminPanel كامل)
+// AdminPanel.js – لوحة تحكم الإدارة (المستفيدين، القاموس، الأسعار، المستخدمين)
+// AUTH-PATCH 2026-06-03: يعتمد على authFetch لإضافة التوكن تلقائياً (يستخدم fetch العادي)
 
 import React, { useState, useEffect, useCallback } from 'react';
-import { apiFetch } from '../api';
+import AdminUsers from './AdminUsers';
 
 const API_BASE_URL = process.env.REACT_APP_API_URL || '/api';
 
@@ -64,7 +65,7 @@ const Button = ({ onClick, children, variant = 'primary', disabled = false, styl
 };
 
 // ==========================================
-// مكون رفع الملفات (Drag & Drop) – محدث بـ apiFetch
+// مكون رفع الملفات (Drag & Drop) – يستخدم fetch العادي
 // ==========================================
 const FileUploader = ({ onUpload, accept = '.xlsx,.xls', label, icon, templateUrl }) => {
   const [isDragging, setIsDragging] = useState(false);
@@ -112,10 +113,10 @@ const FileUploader = ({ onUpload, accept = '.xlsx,.xls', label, icon, templateUr
       const formData = new FormData();
       formData.append('file', file);
 
-      const res = await apiFetch(onUpload, {
+      const res = await fetch(`${API_BASE_URL}${onUpload}`, {
         method: 'POST',
-        body: formData,
-        headers: {}  // إزالة Content-Type لتحديده تلقائياً
+        body: formData
+        // لا نضيف Content-Type; ستتم إضافته تلقائياً مع FormData
       });
 
       const data = await res.json();
@@ -272,7 +273,7 @@ const FileUploader = ({ onUpload, accept = '.xlsx,.xls', label, icon, templateUr
 };
 
 // ==========================================
-// مكون إدارة الأسعار (Price Manager) – محدث بـ apiFetch
+// مكون إدارة الأسعار (Price Manager) – يستخدم fetch العادي
 // ==========================================
 const PriceManager = () => {
   const [items, setItems] = useState([]);
@@ -284,7 +285,7 @@ const PriceManager = () => {
 
   const fetchDictionary = useCallback(async () => {
     try {
-      const res = await apiFetch('/admin/boq-dictionary');
+      const res = await fetch(`${API_BASE_URL}/admin/boq-dictionary`);
       if (res.ok) {
         const data = await res.json();
         setItems(data);
@@ -308,8 +309,9 @@ const PriceManager = () => {
   const handleSave = async (boqCode) => {
     setSaving(true);
     try {
-      const res = await apiFetch(`/admin/boq-dictionary/${boqCode}`, {
+      const res = await fetch(`${API_BASE_URL}/admin/boq-dictionary/${boqCode}`, {
         method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           unit_price: parseFloat(editForm.unit_price),
           description_ar: editForm.description_ar,
@@ -339,7 +341,7 @@ const PriceManager = () => {
     if (!window.confirm(`هل أنت متأكد من إلغاء تفعيل البند ${boqCode}؟`)) return;
 
     try {
-      const res = await apiFetch(`/admin/boq-dictionary/${boqCode}`, { method: 'DELETE' });
+      const res = await fetch(`${API_BASE_URL}/admin/boq-dictionary/${boqCode}`, { method: 'DELETE' });
       if (res.ok) {
         setMessage({ type: 'success', text: `تم إلغاء تفعيل البند ${boqCode}` });
         fetchDictionary();
@@ -498,7 +500,7 @@ const PriceManager = () => {
                         </button>
                       </div>
                     )}
-                  </td>
+                  <tr>
                 </tr>
               ))
             )}
@@ -510,7 +512,7 @@ const PriceManager = () => {
 };
 
 // ==========================================
-// الصفحة الرئيسية للوحة التحكم – محدثة بـ apiFetch
+// الصفحة الرئيسية للوحة التحكم – مع إضافة تبويب المستخدمين
 // ==========================================
 const AdminPanel = ({ onBack }) => {
   const [activeTab, setActiveTab] = useState('beneficiaries');
@@ -518,7 +520,8 @@ const AdminPanel = ({ onBack }) => {
   const tabs = [
     { id: 'beneficiaries', label: '👥 استيراد المستفيدين', icon: '👥' },
     { id: 'dictionary', label: '📋 استيراد القاموس', icon: '📋' },
-    { id: 'prices', label: '💰 إدارة الأسعار', icon: '💰' }
+    { id: 'prices', label: '💰 إدارة الأسعار', icon: '💰' },
+    { id: 'users', label: '👥 إدارة المستخدمين', icon: '👥' }
   ];
 
   return (
@@ -537,7 +540,7 @@ const AdminPanel = ({ onBack }) => {
             ⚙️ لوحة تحكم الإدارة
           </h1>
           <p style={{ margin: 0, color: '#7f8c8d', fontSize: '14px' }}>
-            إدارة المشاريع والأسعار واستيراد البيانات
+            إدارة المشاريع والأسعار والمستخدمين واستيراد البيانات
           </p>
         </div>
         <Button onClick={onBack} variant="outline">
@@ -551,7 +554,8 @@ const AdminPanel = ({ onBack }) => {
         gap: '5px',
         marginBottom: '25px',
         borderBottom: `2px solid ${COLORS.border}`,
-        paddingBottom: '2px'
+        paddingBottom: '2px',
+        flexWrap: 'wrap'
       }}>
         {tabs.map(tab => (
           <button
@@ -615,6 +619,15 @@ const AdminPanel = ({ onBack }) => {
             تعديل الأسعار والأوصاف مباشرة. أي تغيير هنا سيؤثر فوراً على حسابات الإنجاز المالي للمشروع.
           </p>
           <PriceManager />
+        </Card>
+      )}
+
+      {activeTab === 'users' && (
+        <Card title="👥 إدارة المستخدمين والأدوار">
+          <p style={{ color: '#7f8c8d', marginBottom: '20px', lineHeight: '1.6' }}>
+            إضافة وتعديل وحذف المستخدمين، وتعيين الأدوار (مدير، مهندس، مشاهد). ملاحظة: المستخدم admin لا يمكن حذفه.
+          </p>
+          <AdminUsers />
         </Card>
       )}
     </div>
