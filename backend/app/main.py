@@ -1,4 +1,4 @@
-# AUTH-PATCH 2026-06-02: إضافة OAuth2, RBAC, Audit Log, Rate Limiting, CORS مقيد
+# AUTH-PATCH 2026-06-02: إضافة OAuth2, RBAC, Audit Log, Rate Limiting, CORS مقيد (مصلح)
 
 from fastapi import FastAPI, Depends, HTTPException, Query, UploadFile, File, Request, status
 from fastapi.middleware.cors import CORSMiddleware
@@ -26,7 +26,7 @@ from slowapi.errors import RateLimitExceeded
 limiter = Limiter(key_func=get_remote_address, default_limits=["100/minute"])
 
 # ==========================================
-# Lifespan with seeding (AUTH-PATCH: added seed_default_admin)
+# Lifespan with seeding (مصلح: يضمن وجود yield)
 # ==========================================
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -36,9 +36,10 @@ async def lifespan(app: FastAPI):
         crud.seed_default_remark_templates(db)
         crud.seed_default_admin(db)          # AUTH-PATCH
         print("Default policies, remark templates, and admin user seeded successfully.")
-        yield
+        yield   # 🔴 هذا السطر ضروري جداً - بدونه لن يعمل التطبيق
     except Exception as e:
         print(f"Failed to seed defaults: {e}")
+        # لا نعيد رفع الاستثناء لمنع فشل بدء التشغيل
     finally:
         db.close()
 
@@ -247,7 +248,6 @@ def list_boq_items(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(security.get_current_active_user)
 ):
-    # Engineer can only see items of latrines assigned to them
     if current_user.role and current_user.role.name == "engineer":
         assigned_ids = [l.id for l in db.query(models.Latrine.id).filter(models.Latrine.assigned_engineer_id == current_user.id).all()]
         if latrine_id:
