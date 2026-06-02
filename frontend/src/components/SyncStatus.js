@@ -1,4 +1,4 @@
-// AUTH-PATCH 2026-06-02: استخدام apiFetch
+// AUTH-PATCH 2026-06-02: استخدام apiFetch بدلاً من fetch المباشر (مع الاحتفاظ بكل الوظائف)
 
 import React, { useState, useEffect } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
@@ -23,6 +23,7 @@ const SyncStatus = () => {
     };
   }, []);
 
+  // دفع التعديلات إلى الخادم
   const handlePushSync = async () => {
     if (!isOnline || pendingCount === 0) return;
     setIsSyncing(true);
@@ -36,6 +37,7 @@ const SyncStatus = () => {
     }
   };
 
+  // سحب أحدث البيانات من الخادم (تحميل)
   const handleDownloadData = async () => {
     if (!isOnline) {
       alert("يجب أن تكون متصلاً بالإنترنت لتحميل البيانات.");
@@ -45,8 +47,10 @@ const SyncStatus = () => {
       alert("لديك تعديلات محلية لم يتم إرسالها. يرجى مزامنة بياناتك أولاً.");
       return;
     }
+
     setIsDownloading(true);
     try {
+      // ✅ التغيير الوحيد: استبدال fetch بـ apiFetch
       const [latrinesRes, boqRes, remarksRes, templatesRes] = await Promise.all([
         apiFetch('/latrines?limit=200'),
         apiFetch('/boq-items'),
@@ -70,11 +74,11 @@ const SyncStatus = () => {
         if (boqItems?.length) await db.boq_items.bulkAdd(boqItems);
         if (templates?.length) await db.remark_templates.bulkAdd(templates);
         if (remarks?.length) {
-          const remarksWithSync = remarks.map(r => ({...r, sync_status: 'synced'}));
+          const remarksWithSync = remarks.map(r => ({ ...r, sync_status: 'synced' }));
           await db.remarks.bulkAdd(remarksWithSync);
         }
       });
-      alert("تم تحميل أحدث البيانات بنجاح!");
+      alert("تم تحميل أحدث البيانات (بما فيها مكتبة الملاحظات) بنجاح!");
     } catch (error) {
       console.error(error);
       alert("تعذر تحميل البيانات من الخادم.");
@@ -104,12 +108,13 @@ const SyncStatus = () => {
       <div style={{ display: 'flex', gap: '10px' }}>
         {pendingCount > 0 && (
           <button onClick={handlePushSync} disabled={!isOnline || isSyncing}
-            style={{ padding: '6px 12px', backgroundColor: 'white', color: '#f39c12', border: 'none', borderRadius: '4px', fontWeight: 'bold' }}>
+            style={{ padding: '6px 12px', backgroundColor: 'white', color: '#f39c12', border: 'none', borderRadius: '4px', fontWeight: 'bold', cursor: (!isOnline || isSyncing) ? 'not-allowed' : 'pointer' }}>
             {isSyncing ? 'جاري الإرسال...' : 'إرسال التعديلات للخادم'}
           </button>
         )}
         <button onClick={handleDownloadData} disabled={!isOnline || isDownloading || pendingCount > 0}
-          style={{ padding: '6px 12px', backgroundColor: 'rgba(255,255,255,0.2)', color: 'white', border: '1px solid white', borderRadius: '4px', fontWeight: 'bold' }}>
+          style={{ padding: '6px 12px', backgroundColor: 'rgba(255,255,255,0.2)', color: 'white', border: '1px solid white', borderRadius: '4px', fontWeight: 'bold', cursor: (!isOnline || isDownloading || pendingCount > 0) ? 'not-allowed' : 'pointer' }}
+          title={pendingCount > 0 ? "قم بإرسال تعديلاتك أولاً" : "سحب أحدث البيانات من الخادم"}>
           {isDownloading ? 'جاري التحميل...' : 'تحميل أحدث البيانات من الخادم ↓'}
         </button>
       </div>
