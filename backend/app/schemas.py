@@ -1,4 +1,6 @@
-from pydantic import BaseModel, Field
+# AUTH-PATCH 2026-06-02: إضافة schemas المستخدمين والأدوار والـ Token و Audit Log
+
+from pydantic import BaseModel, Field, EmailStr
 from typing import Optional, List, Dict, Any
 from datetime import datetime
 from enum import Enum
@@ -24,11 +26,13 @@ class LatrineUpdate(BaseModel):
     site_engineer: Optional[str] = None
     start_date: Optional[datetime] = None
     expected_completion: Optional[datetime] = None
+    assigned_engineer_id: Optional[int] = None
 
 class LatrineOut(LatrineBase):
     id: int
     last_update: datetime
     remarks_count: int
+    assigned_engineer_id: Optional[int] = None
 
     class Config:
         from_attributes = True
@@ -75,10 +79,7 @@ class BoqItemOut(BoqItemBase):
     class Config:
         from_attributes = True
 
-# ==========================================
-# 🌟 SMART OBSERVATION ENGINE SCHEMAS (V3.0.0)
-# ==========================================
-
+# ---------- Remark Template Schemas ----------
 class MediaType(str, Enum):
     IMAGE = "image"
     PDF = "pdf"
@@ -90,12 +91,9 @@ class RemarkTemplateBase(BaseModel):
     description: str
     default_action: Optional[str] = None
     default_severity: Optional[str] = "minor"
-    
-    # 🌟 التصحيح 1: استخدام Field(default_factory=list) لمنع تداخل الذاكرة
     boq_tags: Optional[List[str]] = Field(default_factory=list)
-    
     reference_media_url: Optional[str] = None
-    media_type: Optional[MediaType] = None # 🌟 التصحيح 2: استخدام Enum
+    media_type: Optional[MediaType] = None
     is_active: Optional[bool] = True
 
 class RemarkTemplateCreate(RemarkTemplateBase):
@@ -122,28 +120,18 @@ class RemarkTemplateOut(RemarkTemplateBase):
     class Config:
         from_attributes = True
 
-# ==========================================
-# 🌟 Remark (Legacy + Smart Hybrid)
-# ==========================================
-
+# ---------- Remark Schemas ----------
 class RemarkBase(BaseModel):
     remark_id: Optional[str] = None
     boq_code: Optional[str] = None
     type: Optional[str] = None
     severity: Optional[str] = "minor"
-
-    # Legacy
     description: Optional[str] = None
-
-    # Smart
     template_id: Optional[int] = None
     suffix_note: Optional[str] = None
-
     action_required: Optional[str] = None
     deadline: Optional[datetime] = None
     status: Optional[str] = "open"
-
-    # Media
     photo_ref: Optional[str] = None
     evidence_photo_ref: Optional[str] = None
 
@@ -243,9 +231,7 @@ class BoqDictionaryOut(BoqDictionaryBase):
     class Config:
         from_attributes = True
 
-# ==========================================
-# 🌟 GOVERNANCE & DECISION SCHEMAS
-# ==========================================
+# ---------- Governance Schemas ----------
 class GovernanceItemOut(BaseModel):
     decision_id: int
     boq_item_id: int
@@ -285,3 +271,82 @@ class SyncResponse(BaseModel):
     processed_ids: List[int]
     failed_ids: List[int]
     errors: Dict[str, str]
+
+# ==========================================
+# AUTHENTICATION & AUTHORIZATION SCHEMAS (AUTH-PATCH)
+# ==========================================
+
+# ---------- Role Schemas ----------
+class RoleBase(BaseModel):
+    name: str
+    permissions: List[str] = []
+    description: Optional[str] = None
+
+class RoleCreate(RoleBase):
+    pass
+
+class RoleOut(RoleBase):
+    id: int
+
+    class Config:
+        from_attributes = True
+
+# ---------- User Schemas ----------
+class UserBase(BaseModel):
+    username: str
+    email: Optional[EmailStr] = None
+    full_name: Optional[str] = None
+    is_active: bool = True
+
+class UserCreate(UserBase):
+    password: str
+    role_id: int
+
+class UserUpdate(BaseModel):
+    username: Optional[str] = None
+    email: Optional[EmailStr] = None
+    full_name: Optional[str] = None
+    password: Optional[str] = None
+    role_id: Optional[int] = None
+    is_active: Optional[bool] = None
+
+class UserOut(UserBase):
+    id: int
+    role_id: int
+    created_at: datetime
+    last_login: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
+class UserLogin(BaseModel):
+    username: str
+    password: str
+
+# ---------- Token Schemas ----------
+class Token(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+    user: UserOut
+
+class TokenPayload(BaseModel):
+    sub: Optional[int] = None
+    exp: Optional[datetime] = None
+    role: Optional[str] = None
+
+# ---------- Audit Log Schemas ----------
+class AuditLogCreate(BaseModel):
+    action: str
+    entity_type: Optional[str] = None
+    entity_id: Optional[int] = None
+    old_values: Optional[Dict[str, Any]] = None
+    new_values: Optional[Dict[str, Any]] = None
+    ip_address: Optional[str] = None
+
+class AuditLogOut(AuditLogCreate):
+    id: int
+    user_id: Optional[int] = None
+    timestamp: datetime
+
+    class Config:
+        from_attributes = True
