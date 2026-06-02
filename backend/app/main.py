@@ -1,38 +1,50 @@
-from fastapi import FastAPI, Depends, HTTPException, Query, UploadFile, File
+# AUTH-PATCH 2026-06-02: إضافة OAuth2, RBAC, Audit Log, Rate Limiting, CORS مقيد
+
+from fastapi import FastAPI, Depends, HTTPException, Query, UploadFile, File, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 from typing import List, Optional
-from app import models, schemas, crud
-from app.database import engine, get_db, SessionLocal, Base
-from app import reports
-from io import BytesIO
+from datetime import datetime, timedelta
 import os
-from datetime import datetime
+from io import BytesIO
 import openpyxl
 from contextlib import asynccontextmanager
 
-# Create tables on startup (fallback for dev)
-try:
-    Base.metadata.create_all(bind=engine)
-    print("Database tables verified/created")
-except Exception as e:
-    print(f"Warning: Could not create tables: {e}")
+from app import models, schemas, crud, security
+from app.database import engine, get_db, SessionLocal, Base
+from app import reports
 
-# استخدام lifespan بدلاً من on_event("startup") لمنع تسرب الاتصالات
+# ==========================================
+# Rate Limiting (AUTH-PATCH)
+# ==========================================
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
+
+limiter = Limiter(key_func=get_remote_address, default_limits=["100/minute"])
+
+# ==========================================
+# Lifespan with seeding (AUTH-PATCH: added seed_default_admin)
+# ==========================================
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     db = SessionLocal()
     try:
         crud.seed_default_policies(db)
         crud.seed_default_remark_templates(db)
-        print("Default policies and remark templates seeded successfully.")
+        crud.seed_default_admin(db)          # AUTH-PATCH
+        print("Default policies, remark templates, and admin user seeded successfully.")
         yield
     except Exception as e:
         print(f"Failed to seed defaults: {e}")
     finally:
         db.close()
 
+# ==========================================
+# FastAPI App
+# ==========================================
 app = FastAPI(
     title="NRC Latrine Tracker",
     description="Dynamic SaaS Platform - Multi-Project WASH & Shelter Tracking",
@@ -43,119 +55,337 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-# CORS
+# ==========================================
+# Rate Limiter setup
+# ==========================================
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+# ==========================================
+# CORS (AUTH-PATCH: restricted origins)
+# ==========================================
+origins = os.getenv("ALLOWED_ORIGINS", "http://localhost:3000,https://yourdomain.railway.app").split(",")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=origins,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "Accept"],
 )
 
-# ========== API ROUTES (all under /api) ==========
+# ==========================================
+# AUTHENTICATION ENDPOINTS (AUTH-PATCH)
+# ==========================================
+@app.post("/api/token", response_model=schemas.Token)
+@limiter.limit("5/minute")
+async def login_for_access_token(
+    request: Request,
+    form_data: OAuth2PasswordRequestForm = Depends(),
+    db: Session = Depends(get_db)
+):
+    user = crud.authenticate_user(db, form_data.username, form_data.password)
+    if not user:
+        security.log_audit(db, None, "LOGIN_FAILED", request=request)
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect username or password",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    crud.update_last_login(db, user.id)
+    access_token_expires = timedelta(hours=security.ACCESS_TOKEN_EXPIRE_HOURS)
+    access_token = security.create_access_token(
+        data={"sub": user.id, "role": user.role.name if user.role else "viewer"},
+        expires_delta=access_token_expires
+    )
+    security.log_audit(db, user.id, "LOGIN_SUCCESS", request=request)
+    return {
+        "access_token": access_token,
+        "token_type": "bearer",
+        "user": schemas.UserOut.model_validate(user)
+    }
 
+@app.get("/api/me", response_model=schemas.UserOut)
+async def read_current_user(current_user: models.User = Depends(security.get_current_active_user)):
+    return current_user
+
+# ==========================================
+# USER MANAGEMENT (ADMIN ONLY)
+# ==========================================
+@app.post("/api/admin/users", response_model=schemas.UserOut)
+async def create_user(
+    user: schemas.UserCreate,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(security.require_admin),
+    request: Request = None
+):
+    existing = crud.get_user_by_username(db, user.username)
+    if existing:
+        raise HTTPException(status_code=400, detail="Username already exists")
+    if user.email:
+        existing_email = crud.get_user_by_email(db, user.email)
+        if existing_email:
+            raise HTTPException(status_code=400, detail="Email already exists")
+    new_user = crud.create_user(db, user)
+    security.log_audit(db, current_user.id, "CREATE_USER", "user", new_user.id, new_values=user.dict(), request=request)
+    return new_user
+
+@app.get("/api/admin/users", response_model=List[schemas.UserOut])
+async def list_users(
+    skip: int = 0,
+    limit: int = 100,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(security.require_admin)
+):
+    return db.query(models.User).offset(skip).limit(limit).all()
+
+@app.patch("/api/admin/users/{user_id}", response_model=schemas.UserOut)
+async def update_user(
+    user_id: int,
+    updates: schemas.UserUpdate,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(security.require_admin),
+    request: Request = None
+):
+    user = crud.get_user(db, user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    old_values = {k: getattr(user, k) for k in updates.dict(exclude_unset=True).keys()}
+    updated = crud.update_user(db, user_id, updates)
+    security.log_audit(db, current_user.id, "UPDATE_USER", "user", user_id, old_values=old_values, new_values=updates.dict(exclude_unset=True), request=request)
+    return updated
+
+@app.get("/api/admin/audit-logs", response_model=List[schemas.AuditLogOut])
+async def get_audit_logs(
+    skip: int = 0,
+    limit: int = 100,
+    user_id: Optional[int] = None,
+    action: Optional[str] = None,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(security.require_admin)
+):
+    return crud.get_audit_logs(db, skip=skip, limit=limit, user_id=user_id, action=action)
+
+# ==========================================
+# HEALTH CHECK
+# ==========================================
 @app.get("/api/health")
 def health_check():
     return {"status": "healthy", "service": "running", "version": "3.0.0", "mode": "dynamic_saas"}
 
+# ==========================================
+# LATRINES (محمية)
+# ==========================================
 @app.get("/api/latrines", response_model=List[schemas.LatrineOut])
-def list_latrines(skip: int = 0, limit: int = 100, status: Optional[str] = None, db: Session = Depends(get_db)):
-    return crud.get_latrines(db, skip=skip, limit=limit, status=status)
+def list_latrines(
+    skip: int = 0,
+    limit: int = 100,
+    status: Optional[str] = None,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(security.get_current_active_user)
+):
+    query = db.query(models.Latrine)
+    if current_user.role and current_user.role.name == "engineer":
+        query = query.filter(models.Latrine.assigned_engineer_id == current_user.id)
+    if status:
+        query = query.filter(models.Latrine.status == status)
+    return query.offset(skip).limit(limit).all()
 
 @app.get("/api/latrines/{latrine_id}", response_model=schemas.LatrineOut)
-def get_latrine(latrine_id: int, db: Session = Depends(get_db)):
+def get_latrine(
+    latrine_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(security.get_current_active_user)
+):
     latrine = crud.get_latrine(db, latrine_id)
     if not latrine:
         raise HTTPException(status_code=404, detail="Latrine not found")
+    if current_user.role and current_user.role.name == "engineer":
+        if latrine.assigned_engineer_id != current_user.id:
+            raise HTTPException(status_code=403, detail="Not assigned to this latrine")
     return latrine
 
 @app.post("/api/latrines", response_model=schemas.LatrineOut)
-def create_latrine(latrine: schemas.LatrineCreate, db: Session = Depends(get_db)):
+def create_latrine(
+    latrine: schemas.LatrineCreate,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(security.require_role(["latrines:write", "*"])),
+    request: Request = None
+):
     existing = crud.get_latrine_by_code(db, latrine.latrine_id)
     if existing:
         raise HTTPException(status_code=400, detail="Latrine ID already exists")
     db_latrine = crud.create_latrine(db, latrine)
+    security.log_audit(db, current_user.id, "CREATE_LATRINE", "latrine", db_latrine.id, new_values=latrine.dict(), request=request)
     crud.seed_boq_items(db, db_latrine.id)
     return db_latrine
 
 @app.patch("/api/latrines/{latrine_id}", response_model=schemas.LatrineOut)
-def patch_latrine(latrine_id: int, updates: schemas.LatrineUpdate, db: Session = Depends(get_db)):
-    latrine = crud.update_latrine(db, latrine_id, updates)
-    if not latrine:
+def patch_latrine(
+    latrine_id: int,
+    updates: schemas.LatrineUpdate,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(security.require_role(["latrines:write", "*"])),
+    request: Request = None
+):
+    existing = crud.get_latrine(db, latrine_id)
+    if not existing:
         raise HTTPException(status_code=404, detail="Latrine not found")
+    if current_user.role and current_user.role.name == "engineer":
+        if existing.assigned_engineer_id != current_user.id:
+            raise HTTPException(status_code=403, detail="Not assigned to this latrine")
+    old_values = {k: getattr(existing, k) for k in updates.dict(exclude_unset=True).keys()}
+    latrine = crud.update_latrine(db, latrine_id, updates)
+    security.log_audit(db, current_user.id, "UPDATE_LATRINE", "latrine", latrine_id, old_values=old_values, new_values=updates.dict(exclude_unset=True), request=request)
     return latrine
 
+# ==========================================
+# BOQ ITEMS
+# ==========================================
 @app.get("/api/boq-items", response_model=List[schemas.BoqItemOut])
-def list_boq_items(latrine_id: Optional[int] = None, db: Session = Depends(get_db)):
+def list_boq_items(
+    latrine_id: Optional[int] = None,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(security.get_current_active_user)
+):
+    # Engineer can only see items of latrines assigned to them
+    if current_user.role and current_user.role.name == "engineer":
+        assigned_ids = [l.id for l in db.query(models.Latrine.id).filter(models.Latrine.assigned_engineer_id == current_user.id).all()]
+        if latrine_id:
+            if latrine_id not in assigned_ids:
+                raise HTTPException(status_code=403, detail="Not assigned")
+        else:
+            if assigned_ids:
+                return db.query(models.BoqItem).filter(models.BoqItem.latrine_id.in_(assigned_ids)).all()
+            else:
+                return []
     return crud.get_boq_items(db, latrine_id=latrine_id)
+
+@app.patch("/api/boq-items/{item_id}", response_model=schemas.BoqItemOut)
+def update_boq_item(
+    item_id: int,
+    updates: schemas.BoqItemUpdate,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(security.require_role(["boq_items:write", "*"])),
+    request: Request = None
+):
+    item = crud.update_boq_item(db, item_id, updates)
+    if not item:
+        raise HTTPException(status_code=404, detail="BoQ item not found")
+    security.log_audit(db, current_user.id, "UPDATE_BOQ_ITEM", "boq_item", item_id, new_values=updates.dict(exclude_unset=True), request=request)
+    return item
 
 @app.patch("/api/boq-items/bulk")
 def bulk_update_boq_items(
-    request: schemas.BoqItemBulkRequest,
-    db: Session = Depends(get_db)
+    request_data: schemas.BoqItemBulkRequest,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(security.require_role(["boq_items:write", "*"]))
 ):
     try:
-        result = crud.bulk_update_boq_items(db, request.items)
+        result = crud.bulk_update_boq_items(db, request_data.items)
         return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Bulk update failed: {str(e)}")
 
-@app.patch("/api/boq-items/{item_id}", response_model=schemas.BoqItemOut)
-def update_boq_item(item_id: int, updates: schemas.BoqItemUpdate, db: Session = Depends(get_db)):
-    item = crud.update_boq_item(db, item_id, updates)
-    if not item:
-        raise HTTPException(status_code=404, detail="BoQ item not found")
-    return item
-
+# ==========================================
+# REMARKS
+# ==========================================
 @app.get("/api/remarks", response_model=List[schemas.RemarkOut])
-def list_remarks(latrine_id: Optional[int] = None, status: Optional[str] = None, db: Session = Depends(get_db)):
+def list_remarks(
+    latrine_id: Optional[int] = None,
+    status: Optional[str] = None,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(security.get_current_active_user)
+):
+    if current_user.role and current_user.role.name == "engineer":
+        assigned_ids = [l.id for l in db.query(models.Latrine.id).filter(models.Latrine.assigned_engineer_id == current_user.id).all()]
+        if latrine_id:
+            if latrine_id not in assigned_ids:
+                raise HTTPException(status_code=403, detail="Not assigned")
+        else:
+            return db.query(models.Remark).filter(models.Remark.latrine_id.in_(assigned_ids)).all()
     return crud.get_remarks(db, latrine_id=latrine_id, status=status)
 
 @app.post("/api/remarks", response_model=schemas.RemarkOut)
-def create_remark(remark: schemas.RemarkCreate, db: Session = Depends(get_db)):
-    return crud.create_remark(db, remark)
+def create_remark(
+    remark: schemas.RemarkCreate,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(security.require_role(["remarks:write", "*"])),
+    request: Request = None
+):
+    db_remark = crud.create_remark(db, remark)
+    security.log_audit(db, current_user.id, "CREATE_REMARK", "remark", db_remark.id, new_values=remark.dict(), request=request)
+    return db_remark
 
 @app.patch("/api/remarks/{remark_id}", response_model=schemas.RemarkOut)
-def patch_remark(remark_id: int, updates: schemas.RemarkUpdate, db: Session = Depends(get_db)):
+def patch_remark(
+    remark_id: int,
+    updates: schemas.RemarkUpdate,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(security.require_role(["remarks:write", "*"])),
+    request: Request = None
+):
     remark = crud.update_remark(db, remark_id, updates)
     if not remark:
         raise HTTPException(status_code=404, detail="Remark not found")
+    security.log_audit(db, current_user.id, "UPDATE_REMARK", "remark", remark_id, new_values=updates.dict(exclude_unset=True), request=request)
     return remark
 
-# ---------- Daily Log Endpoints ----------
+# ==========================================
+# DAILY LOGS
+# ==========================================
 @app.post("/api/daily-logs", response_model=schemas.DailyLogOut)
-def create_daily_log(log: schemas.DailyLogCreate, db: Session = Depends(get_db)):
+def create_daily_log(
+    log: schemas.DailyLogCreate,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(security.require_role(["daily_logs:write", "*"]))
+):
     return crud.create_daily_log(db, log)
 
 @app.get("/api/daily-logs", response_model=List[schemas.DailyLogOut])
 def list_daily_logs(
-    skip: int = 0, 
+    skip: int = 0,
     limit: int = 30,
     from_date: Optional[datetime] = None,
     to_date: Optional[datetime] = None,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(security.get_current_active_user)
 ):
     return crud.get_daily_logs(db, skip=skip, limit=limit, from_date=from_date, to_date=to_date)
 
 @app.get("/api/daily-logs/stats")
-def get_daily_stats(date: Optional[datetime] = None, db: Session = Depends(get_db)):
+def get_daily_stats(
+    date: Optional[datetime] = None,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(security.get_current_active_user)
+):
     target_date = date or datetime.utcnow()
     return crud.get_daily_log_stats(db, target_date)
 
-# ---------- Dashboard ----------
+# ==========================================
+# DASHBOARD
+# ==========================================
 @app.get("/api/dashboard/summary", response_model=schemas.DashboardSummary)
-def dashboard_summary(db: Session = Depends(get_db)):
+def dashboard_summary(
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(security.get_current_active_user)
+):
     return crud.get_dashboard_summary(db)
 
 @app.get("/api/dashboard/categories", response_model=List[schemas.CategoryProgress])
-def category_progress(db: Session = Depends(get_db)):
+def category_progress(
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(security.get_current_active_user)
+):
     return crud.get_category_progress(db)
 
-# ---------- Reports Endpoints (مع دعم الصيغ الديناميكية) ----------
+# ==========================================
+# REPORTS
+# ==========================================
 @app.get("/api/reports/summary")
 def download_summary_report(
     format: str = "pdf",
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(security.require_viewer)
 ):
     try:
         if format == "excel":
@@ -165,7 +395,7 @@ def download_summary_report(
                 media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 headers={"Content-Disposition": "attachment; filename=summary_report.xlsx"}
             )
-        else:  # default pdf
+        else:
             pdf_bytes = reports.generate_summary_pdf(db)
             return StreamingResponse(
                 BytesIO(pdf_bytes),
@@ -178,7 +408,8 @@ def download_summary_report(
 @app.get("/api/reports/ipc")
 def download_ipc_report(
     format: str = "excel",
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(security.require_viewer)
 ):
     try:
         if format == "pdf":
@@ -188,7 +419,7 @@ def download_ipc_report(
                 media_type="application/pdf",
                 headers={"Content-Disposition": "attachment; filename=ipc_report.pdf"}
             )
-        else:  # default excel
+        else:
             excel_bytes = reports.generate_ipc_excel(db)
             return StreamingResponse(
                 BytesIO(excel_bytes),
@@ -203,7 +434,8 @@ def download_remarks_report(
     format: str = "pdf",
     from_date: Optional[datetime] = None,
     to_date: Optional[datetime] = None,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(security.require_viewer)
 ):
     try:
         if format == "excel":
@@ -213,7 +445,7 @@ def download_remarks_report(
                 media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 headers={"Content-Disposition": "attachment; filename=remarks_report.xlsx"}
             )
-        else:  # default pdf
+        else:
             pdf_bytes = reports.generate_remarks_pdf(db, from_date, to_date)
             return StreamingResponse(
                 BytesIO(pdf_bytes),
@@ -228,7 +460,8 @@ def download_daily_logs_report(
     format: str = "pdf",
     from_date: Optional[datetime] = None,
     to_date: Optional[datetime] = None,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(security.require_viewer)
 ):
     try:
         if format == "excel":
@@ -238,7 +471,7 @@ def download_daily_logs_report(
                 media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 headers={"Content-Disposition": "attachment; filename=site_diary_report.xlsx"}
             )
-        else:  # default pdf
+        else:
             pdf_bytes = reports.generate_daily_logs_pdf(db, from_date, to_date)
             return StreamingResponse(
                 BytesIO(pdf_bytes),
@@ -251,7 +484,8 @@ def download_daily_logs_report(
 @app.get("/api/reports/matrix")
 def download_matrix_report(
     format: str = "excel",
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(security.require_viewer)
 ):
     try:
         if format == "pdf":
@@ -261,7 +495,7 @@ def download_matrix_report(
                 media_type="application/pdf",
                 headers={"Content-Disposition": "attachment; filename=matrix_report.pdf"}
             )
-        else:  # default excel
+        else:
             excel_bytes = reports.generate_matrix_excel(db)
             return StreamingResponse(
                 BytesIO(excel_bytes),
@@ -271,71 +505,91 @@ def download_matrix_report(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to generate report: {str(e)}")
 
-# ---------- Sync Engine Endpoint ----------
+# ==========================================
+# SYNC ENGINE
+# ==========================================
 @app.post("/api/sync", response_model=schemas.SyncResponse)
-def sync_offline_data(request: schemas.SyncRequest, db: Session = Depends(get_db)):
+def sync_offline_data(
+    request: schemas.SyncRequest,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(security.get_current_active_user)
+):
     try:
         return crud.process_sync_queue(db, request)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Critical Sync Failure: {str(e)}")
 
 # ==========================================
-# 🌟 ADMIN & DYNAMIC CONTROL ENDPOINTS
+# ADMIN & DYNAMIC CONTROL ENDPOINTS
 # ==========================================
-
 @app.get("/api/admin/boq-dictionary", response_model=List[schemas.BoqDictionaryOut])
-def list_boq_dictionary(db: Session = Depends(get_db)):
+def list_boq_dictionary(
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(security.require_admin)
+):
     return crud.get_boq_dictionary(db)
 
 @app.post("/api/admin/boq-dictionary", response_model=schemas.BoqDictionaryOut)
-def create_dictionary_item(item: schemas.BoqDictionaryCreate, db: Session = Depends(get_db)):
+def create_dictionary_item(
+    item: schemas.BoqDictionaryCreate,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(security.require_admin)
+):
     existing = crud.get_boq_dictionary_item(db, item.boq_code)
     if existing:
         raise HTTPException(status_code=400, detail=f"BoQ code {item.boq_code} already exists")
     return crud.create_boq_dictionary_item(db, item)
 
 @app.patch("/api/admin/boq-dictionary/{boq_code}", response_model=schemas.BoqDictionaryOut)
-def update_dictionary_item(boq_code: str, updates: schemas.BoqDictionaryUpdate, db: Session = Depends(get_db)):
+def update_dictionary_item(
+    boq_code: str,
+    updates: schemas.BoqDictionaryUpdate,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(security.require_admin)
+):
     item = crud.update_boq_dictionary_item(db, boq_code, updates)
     if not item:
         raise HTTPException(status_code=404, detail="BoQ Dictionary item not found")
     return item
 
 @app.delete("/api/admin/boq-dictionary/{boq_code}")
-def delete_dictionary_item(boq_code: str, db: Session = Depends(get_db)):
+def delete_dictionary_item(
+    boq_code: str,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(security.require_admin)
+):
     item = crud.delete_boq_dictionary_item(db, boq_code)
     if not item:
         raise HTTPException(status_code=404, detail="BoQ Dictionary item not found")
     return {"message": f"BoQ {boq_code} deactivated successfully"}
 
 @app.post("/api/admin/import-beneficiaries")
-async def import_beneficiaries(file: UploadFile = File(...), db: Session = Depends(get_db)):
+async def import_beneficiaries(
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(security.require_admin),
+    request: Request = None
+):
     if not file.filename.endswith(('.xlsx', '.xls')):
         raise HTTPException(status_code=400, detail="يجب رفع ملف Excel (.xlsx أو .xls)")
-
     try:
         contents = await file.read()
         wb = openpyxl.load_workbook(filename=BytesIO(contents), data_only=True)
         ws = wb.active
-
         updated_count = 0
         created_count = 0
         errors = []
-
         for idx, row in enumerate(ws.iter_rows(min_row=2, values_only=True), start=2):
             if not row or not row[0]:
                 continue
-
             try:
                 latrine_id = str(row[0]).strip()
                 if not latrine_id:
                     continue
-
                 beneficiary = str(row[1]).strip() if len(row) > 1 and row[1] else None
                 block_no = str(row[2]).strip() if len(row) > 2 and row[2] else "B01"
                 engineer = str(row[3]).strip() if len(row) > 3 and row[3] else None
                 gps = str(row[4]).strip() if len(row) > 4 and row[4] else None
-
                 existing = crud.get_latrine_by_code(db, latrine_id)
                 if existing:
                     if beneficiary: existing.beneficiary_hh = beneficiary
@@ -360,9 +614,8 @@ async def import_beneficiaries(file: UploadFile = File(...), db: Session = Depen
             except Exception as row_error:
                 errors.append(f"خطأ في الصف {idx}: {str(row_error)}")
                 continue
-
         db.commit()
-
+        security.log_audit(db, current_user.id, "IMPORT_BENEFICIARIES", "batch", None, new_values={"created": created_count, "updated": updated_count}, request=request)
         return {
             "message": "تم الاستيراد بنجاح",
             "updated": updated_count,
@@ -370,41 +623,39 @@ async def import_beneficiaries(file: UploadFile = File(...), db: Session = Depen
             "errors": errors if errors else None,
             "total_processed": updated_count + created_count
         }
-
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=f"خطأ أثناء معالجة الملف: {str(e)}")
 
 @app.post("/api/admin/import-boq-dictionary")
-async def import_boq_dictionary(file: UploadFile = File(...), db: Session = Depends(get_db)):
+async def import_boq_dictionary(
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(security.require_admin),
+    request: Request = None
+):
     if not file.filename.endswith(('.xlsx', '.xls')):
         raise HTTPException(status_code=400, detail="يجب رفع ملف Excel (.xlsx أو .xls)")
-
     try:
         contents = await file.read()
         wb = openpyxl.load_workbook(filename=BytesIO(contents), data_only=True)
         ws = wb.active
-
         imported_count = 0
         updated_count = 0
         errors = []
-
         for idx, row in enumerate(ws.iter_rows(min_row=2, values_only=True), start=2):
             if not row or not row[0]:
                 continue
-
             try:
                 boq_code = str(row[0]).strip().upper()
                 if not boq_code:
                     continue
-
                 category = str(row[1]).strip() if len(row) > 1 and row[1] else None
                 description_ar = str(row[2]).strip() if len(row) > 2 and row[2] else None
                 description_en = str(row[3]).strip() if len(row) > 3 and row[3] else None
                 unit = str(row[4]).strip() if len(row) > 4 and row[4] else None
                 default_qty = float(row[5]) if len(row) > 5 and row[5] is not None else 0.0
                 unit_price = float(row[6]) if len(row) > 6 and row[6] is not None else 0.0
-
                 existing = crud.get_boq_dictionary_item(db, boq_code)
                 if existing:
                     if category: existing.category = category
@@ -431,36 +682,48 @@ async def import_boq_dictionary(file: UploadFile = File(...), db: Session = Depe
             except Exception as row_error:
                 errors.append(f"خطأ في الصف {idx}: {str(row_error)}")
                 continue
-
         db.commit()
-
+        security.log_audit(db, current_user.id, "IMPORT_BOQ_DICTIONARY", "batch", None, new_values={"imported": imported_count, "updated": updated_count}, request=request)
         return {
             "message": "تم استيراد القاموس بنجاح",
             "imported": imported_count,
             "updated": updated_count,
             "errors": errors if errors else None
         }
-
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=f"خطأ أثناء معالجة الملف: {str(e)}")
 
 # ==========================================
-# 🌟 GOVERNANCE ENDPOINTS
+# GOVERNANCE ENDPOINTS
 # ==========================================
 @app.get("/api/admin/governance-items", response_model=List[schemas.GovernanceItemOut])
-def get_governance_items(status_filter: Optional[str] = None, db: Session = Depends(get_db)):
+def get_governance_items(
+    status_filter: Optional[str] = None,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(security.require_admin)
+):
     return crud.get_governance_items(db, status_filter)
 
 @app.post("/api/admin/governance-items/{decision_id}/override")
-def override_decision(decision_id: int, override_data: schemas.DecisionOverrideUpdate, db: Session = Depends(get_db)):
+def override_decision(
+    decision_id: int,
+    override_data: schemas.DecisionOverrideUpdate,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(security.require_admin),
+    request: Request = None
+):
     decision = crud.override_item_decision(db, decision_id, override_data)
     if not decision:
         raise HTTPException(status_code=404, detail="Decision record not found")
+    security.log_audit(db, current_user.id, "OVERRIDE_DECISION", "decision_record", decision_id, new_values=override_data.dict(), request=request)
     return {"message": "Decision overridden successfully", "new_state": decision.final_state}
 
 @app.post("/api/admin/governance-backfill")
-def backfill_governance_decisions(db: Session = Depends(get_db)):
+def backfill_governance_decisions(
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(security.require_admin)
+):
     all_items = db.query(models.BoqItem).all()
     processed_count = 0
     for item in all_items:
@@ -474,33 +737,55 @@ def backfill_governance_decisions(db: Session = Depends(get_db)):
     return {"message": f"Successfully backfilled decisions for {processed_count} items."}
 
 # ==========================================
-# 🌟 SMART OBSERVATION ENGINE ENDPOINTS
+# SMART OBSERVATION ENGINE ENDPOINTS
 # ==========================================
 @app.get("/api/remark-templates", response_model=List[schemas.RemarkTemplateOut])
-def list_remark_templates(db: Session = Depends(get_db)):
+def list_remark_templates(
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(security.get_current_active_user)
+):
     return crud.get_remark_templates(db)
 
 @app.post("/api/admin/remark-templates", response_model=schemas.RemarkTemplateOut)
-def create_remark_template(template: schemas.RemarkTemplateCreate, db: Session = Depends(get_db)):
+def create_remark_template(
+    template: schemas.RemarkTemplateCreate,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(security.require_admin)
+):
     return crud.create_remark_template(db, template)
 
 @app.patch("/api/admin/remark-templates/{template_code}", response_model=schemas.RemarkTemplateOut)
-def update_remark_template(template_code: str, updates: schemas.RemarkTemplateUpdate, db: Session = Depends(get_db)):
+def update_remark_template(
+    template_code: str,
+    updates: schemas.RemarkTemplateUpdate,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(security.require_admin)
+):
     template = crud.update_remark_template(db, template_code, updates)
     if not template:
         raise HTTPException(status_code=404, detail="Template not found")
     return template
 
 @app.delete("/api/admin/remark-templates/{template_code}")
-def delete_remark_template(template_code: str, db: Session = Depends(get_db)):
+def delete_remark_template(
+    template_code: str,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(security.require_admin)
+):
     template = crud.delete_remark_template(db, template_code)
     if not template:
         raise HTTPException(status_code=404, detail="Template not found")
     return {"message": f"Template {template_code} archived successfully"}
 
-# ---------- Legacy Seeding ----------
+# ==========================================
+# LEGACY SEEDING
+# ==========================================
 @app.post("/api/seed-latrines")
-def seed_latrines(count: int = 110, db: Session = Depends(get_db)):
+def seed_latrines(
+    count: int = 110,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(security.require_admin)
+):
     created = []
     for i in range(1, count + 1):
         code = f"LAT-{str(i).zfill(3)}"
@@ -521,7 +806,9 @@ def seed_latrines(count: int = 110, db: Session = Depends(get_db)):
         created.append(code)
     return {"created": len(created), "codes": created[:5]}
 
-# ========== REACT FRONTEND (serve static files) ==========
+# ==========================================
+# REACT FRONTEND (serve static files)
+# ==========================================
 static_dir = os.path.join(os.path.dirname(__file__), "static")
 
 def get_no_cache_response(file_path: str):
@@ -532,7 +819,6 @@ def get_no_cache_response(file_path: str):
     return response
 
 if os.path.exists(static_dir) and os.path.exists(os.path.join(static_dir, "index.html")):
-
     @app.get("/")
     async def serve_react_root():
         return get_no_cache_response(os.path.join(static_dir, "index.html"))
@@ -541,14 +827,11 @@ if os.path.exists(static_dir) and os.path.exists(os.path.join(static_dir, "index
     async def serve_react_catchall(full_path: str):
         if full_path.startswith("api/"):
             raise HTTPException(status_code=404, detail="API Route Not Found")
-
         file_path = os.path.join(static_dir, full_path)
-
         if os.path.exists(file_path) and os.path.isfile(file_path):
             if full_path == "service-worker.js" or full_path == "index.html":
                 return get_no_cache_response(file_path)
             return FileResponse(file_path)
-
         return get_no_cache_response(os.path.join(static_dir, "index.html"))
 else:
     @app.get("/")
