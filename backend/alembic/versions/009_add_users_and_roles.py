@@ -4,7 +4,7 @@ Revision ID: 009
 Revises: 008
 Create Date: 2026-06-02
 
-AUTH-PATCH: إضافة جداول المصادقة والصلاحيات وسجل العمليات
+AUTH-PATCH: إضافة جداول المصادقة والصلاحيات وسجل العمليات (بدون مستخدم افتراضي)
 """
 
 from alembic import op
@@ -74,20 +74,12 @@ def upgrade() -> None:
     op.create_index(op.f('ix_audit_logs_user_id'), 'audit_logs', ['user_id'], unique=False)
     op.create_index(op.f('ix_audit_logs_timestamp'), 'audit_logs', ['timestamp'], unique=False)
 
-    # 5. Seed default roles
+    # 5. Seed default roles (بدون مستخدمين)
     op.execute("""
         INSERT INTO roles (name, permissions, description) VALUES
         ('admin', '["*"]', 'مدير المشروع - كل الصلاحيات'),
         ('engineer', '["latrines:read", "latrines:write", "boq_items:read", "boq_items:write", "remarks:read", "remarks:write", "daily_logs:read", "daily_logs:write"]', 'مهندس ميداني'),
         ('viewer', '["latrines:read", "boq_items:read", "remarks:read", "daily_logs:read", "reports:read"]', 'مشرف / مانح - قراءة فقط')
-    """)
-
-    # 6. Placeholder admin – real password will be set via environment variable
-    #    This row will be replaced/updated by seed_default_admin() in lifespan
-    op.execute("""
-        INSERT INTO users (username, email, full_name, hashed_password, role_id, is_active, created_at)
-        VALUES ('admin_placeholder', 'admin@nrc.org', 'Placeholder', '$2b$12$PLACEHOLDERx', 
-                (SELECT id FROM roles WHERE name = 'admin'), false, NOW())
     """)
 
 
