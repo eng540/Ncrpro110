@@ -1,4 +1,4 @@
-// AUTH-PATCH 2026-06-02: مساعد موحد للطلبات مع إدارة الـ token وإعادة التوجيه عند انتهاء الصلاحية
+// AUTH-PATCH 2026-06-02: مساعد موحد للطلبات مع إدارة الـ token
 
 const API_BASE_URL = process.env.REACT_APP_API_URL || '/api';
 
