@@ -1,5 +1,6 @@
 // AdminPanel.js – لوحة تحكم الإدارة (المستفيدين، القاموس، الأسعار، المستخدمين)
 // AUTH-PATCH 2026-06-03: يعتمد على authFetch (يستخدم fetch العادي)
+// تم إصلاح خطأ JSX الذي تسبب في فشل التجميع
 
 import React, { useState, useEffect, useCallback } from 'react';
 import AdminUsers from './AdminUsers';
@@ -501,7 +502,7 @@ const PriceManager = () => {
                       </div>
                     )}
                   </td>
-                </tr>
+                </table>
               ))
             )}
           </tbody>
