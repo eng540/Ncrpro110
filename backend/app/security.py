@@ -1,13 +1,14 @@
 """
 Security Service - OAuth2 Password Bearer + RBAC + Audit Logging
 AUTH-PATCH 2026-06-02 (مع تصحيح Subject must be a string)
+AUTH-PATCH 2026-06-03: إضافة require_write_permission وتحسين logging
 """
 
 import os
 import logging
 import bcrypt
 from datetime import datetime, timedelta
-from typing import Optional
+from typing import Optional, List
 
 from jose import JWTError, jwt
 from fastapi import Depends, HTTPException, status, Request
@@ -67,7 +68,7 @@ def get_password_hash(password: str) -> str:
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
     to_encode = data.copy()
     
-    # 🔴 إصلاح المشكلة: تحويل sub إلى string (python-jose يتطلب string)
+    # إصلاح المشكلة: تحويل sub إلى string (python-jose يطلب string)
     if "sub" in to_encode and not isinstance(to_encode["sub"], str):
         logger.info(f"Converting sub from {type(to_encode['sub'])} to str")
         to_encode["sub"] = str(to_encode["sub"])
@@ -172,6 +173,7 @@ def require_role(required_permissions: list):
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Insufficient permissions for this operation"
             )
+        logger.info("Permission granted")
         return current_user
     return role_checker
 
@@ -185,6 +187,48 @@ require_viewer = require_role([
     "latrines:read", "boq_items:read",
     "remarks:read", "reports:read"
 ])
+
+# ==========================================
+# NEW: Write Permission Check (for /api/sync)
+# ==========================================
+def require_write_permission():
+    """
+    تتحقق من وجود أي صلاحية كتابة (تنتهي بـ :write) أو صلاحية admin (*)
+    تُستخدم لنقاط النهاية التي تحتاج إلى أي شكل من أشكال التعديل (مثل /api/sync)
+    """
+    async def write_checker(
+        current_user: models.User = Depends(get_current_user)
+    ) -> models.User:
+        logger.info(f"require_write_permission: checking user={current_user.username}")
+        
+        if not current_user.role:
+            logger.warning(f"No role assigned to user {current_user.username}")
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="No role assigned to user"
+            )
+        
+        permissions = current_user.role.permissions or []
+        logger.info(f"User permissions: {permissions}")
+        
+        # Admin (صلاحية '*') يسمح له بكل شيء
+        if "*" in permissions:
+            logger.info(f"Admin write access granted to {current_user.username}")
+            return current_user
+        
+        # أي صلاحية تنتهي بـ ":write" تعني قدرة على التعديل
+        has_write = any(p.endswith(":write") for p in permissions)
+        
+        if has_write:
+            logger.info(f"Write permission granted to {current_user.username}")
+            return current_user
+        
+        logger.warning(f"No write permission for {current_user.username}. Permissions: {permissions}")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Write permission required for this operation"
+        )
+    return write_checker
 
 # ==========================================
 # Audit Logging
