@@ -1,4 +1,5 @@
 # AUTH-PATCH 2026-06-02: إضافة OAuth2, RBAC, Audit Log, Rate Limiting, CORS مقيد (مصلح)
+# 2026-06-03: إضافة endpoint /api/admin/roles
 
 from fastapi import FastAPI, Depends, HTTPException, Query, UploadFile, File, Request, status
 from fastapi.middleware.cors import CORSMiddleware
@@ -165,6 +166,17 @@ async def get_audit_logs(
     current_user: models.User = Depends(security.require_admin)
 ):
     return crud.get_audit_logs(db, skip=skip, limit=limit, user_id=user_id, action=action)
+
+# ==========================================
+# ROLES ENDPOINT (لإدارة المستخدمين)
+# ==========================================
+@app.get("/api/admin/roles", response_model=List[schemas.RoleOut])
+def list_roles(
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(security.require_admin)
+):
+    """إرجاع قائمة جميع الأدوار (للاستخدام في لوحة الإدارة)"""
+    return db.query(models.Role).all()
 
 # ==========================================
 # HEALTH CHECK
