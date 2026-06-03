@@ -1,6 +1,6 @@
 // AdminPanel.js – لوحة تحكم الإدارة (المستفيدين، القاموس، الأسعار، المستخدمين)
 // AUTH-PATCH 2026-06-03: يعتمد على authFetch (يستخدم fetch العادي)
-// تم إصلاح خطأ JSX الذي تسبب في فشل التجميع
+// تم إصلاح أخطاء JSX بالكامل
 
 import React, { useState, useEffect, useCallback } from 'react';
 import AdminUsers from './AdminUsers';
@@ -117,7 +117,6 @@ const FileUploader = ({ onUpload, accept = '.xlsx,.xls', label, icon, templateUr
       const res = await fetch(`${API_BASE_URL}${onUpload}`, {
         method: 'POST',
         body: formData
-        // لا نضيف Content-Type; ستتم إضافته تلقائياً مع FormData
       });
 
       const data = await res.json();
@@ -502,7 +501,7 @@ const PriceManager = () => {
                       </div>
                     )}
                   </td>
-                </table>
+                </tr>
               ))
             )}
           </tbody>
