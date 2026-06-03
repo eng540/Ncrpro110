@@ -1,5 +1,6 @@
 # AUTH-PATCH 2026-06-02: إضافة OAuth2, RBAC, Audit Log, Rate Limiting, CORS مقيد (مصلح)
 # 2026-06-03: إضافة endpoint /api/admin/roles
+# 2026-06-03: إصلاح أمني – إضافة require_write_permission إلى /api/sync
 
 from fastapi import FastAPI, Depends, HTTPException, Query, UploadFile, File, Request, status
 from fastapi.middleware.cors import CORSMiddleware
@@ -12,6 +13,7 @@ import os
 from io import BytesIO
 import openpyxl
 from contextlib import asynccontextmanager
+import logging
 
 from app import models, schemas, crud, security
 from app.database import engine, get_db, SessionLocal, Base
@@ -26,6 +28,8 @@ from slowapi.errors import RateLimitExceeded
 
 limiter = Limiter(key_func=get_remote_address, default_limits=["100/minute"])
 
+logger = logging.getLogger(__name__)
+
 # ==========================================
 # Lifespan with seeding (مصلح: يضمن وجود yield)
 # ==========================================
@@ -37,7 +41,7 @@ async def lifespan(app: FastAPI):
         crud.seed_default_remark_templates(db)
         crud.seed_default_admin(db)          # AUTH-PATCH
         print("Default policies, remark templates, and admin user seeded successfully.")
-        yield   # 🔴 هذا السطر ضروري جداً - بدونه لن يعمل التطبيق
+        yield   # هذا السطر ضروري جداً - بدونه لن يعمل التطبيق
     except Exception as e:
         print(f"Failed to seed defaults: {e}")
         # لا نعيد رفع الاستثناء لمنع فشل بدء التشغيل
@@ -518,17 +522,49 @@ def download_matrix_report(
         raise HTTPException(status_code=500, detail=f"Failed to generate report: {str(e)}")
 
 # ==========================================
-# SYNC ENGINE
+# SYNC ENGINE (مع تطبيق الصلاحيات)
 # ==========================================
 @app.post("/api/sync", response_model=schemas.SyncResponse)
 def sync_offline_data(
     request: schemas.SyncRequest,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(security.get_current_active_user)
+    # 🔒 أفضل ممارسة: استخدام require_write_permission بدلاً من get_current_active_user
+    # يضمن أن المستخدم لديه صلاحية كتابة على الأقل على كيان واحد
+    current_user: models.User = Depends(security.require_write_permission()),
+    req: Request = None
 ):
+    """
+    مزامنة البيانات غير المتصلة (Offline Sync)
+    🔒 تتطلب صلاحية كتابة (أي دور له :write أو admin)
+    """
     try:
-        return crud.process_sync_queue(db, request)
+        # تسجيل عملية المزامنة في سجل التدقيق (Audit Log) اختياري
+        security.log_audit(
+            db, 
+            current_user.id, 
+            "SYNC_REQUEST", 
+            "batch", 
+            None, 
+            new_values={"operation_count": len(request.operations)},
+            request=req
+        )
+        
+        result = crud.process_sync_queue(db, request)
+        
+        # تسجيل النتيجة
+        security.log_audit(
+            db,
+            current_user.id,
+            "SYNC_COMPLETE",
+            "batch",
+            None,
+            new_values={"processed": len(result.processed_ids), "failed": len(result.failed_ids)},
+            request=req
+        )
+        
+        return result
     except Exception as e:
+        logger.error(f"Sync failed for user {current_user.username}: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Critical Sync Failure: {str(e)}")
 
 # ==========================================
