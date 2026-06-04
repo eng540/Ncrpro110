@@ -57,7 +57,7 @@ const ErrorBanner = ({ error, onDismiss }) => {
   const color = error.type === 'success' ? '#155724' : error.type === 'warning' ? '#856404' : '#721c24';
   const icon = error.type === 'success' ? '✅' : error.type === 'warning' ? '⚠️' : '❌';
   return (
-    <div style={{ background: bg, color: color, padding: '12px 16px', borderRadius: '6px', marginBottom: '15px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontWeight: 'bold' }}>
+    <div style={{ background: bg, color, padding: '12px 16px', borderRadius: '6px', marginBottom: '15px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontWeight: 'bold' }}>
       <span>{icon} {error.message}</span>
       <button onClick={onDismiss} style={{ background: 'transparent', border: 'none', fontSize: '16px', cursor: 'pointer', color: 'inherit' }}>✖</button>
     </div>
@@ -71,7 +71,69 @@ const LoadingSkeleton = () => (
   </div>
 );
 
-// --- SmartRemarkForm (مع template_code وإصلاح التعديل) ---
+// --- PhotoStrip (جديد موحد لعرض الصور) ---
+const PhotoStrip = ({ remark, onAddImage, disabled }) => {
+  const beforeKey = remark.before_photo_ref;
+  const afterKey = remark.after_photo_ref;
+  const beforePending = beforeKey?.startsWith('pending:');
+  const afterPending = afterKey?.startsWith('pending:');
+
+  return (
+    <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap', marginTop: '6px' }}>
+      {/* Before */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+        {beforeKey && !beforePending && (
+          <div style={{ position: 'relative' }}>
+            <img 
+              src={`/api/evidence/view?key=${encodeURIComponent(beforeKey)}`}
+              alt="قبل"
+              style={{ width: '48px', height: '48px', objectFit: 'cover', borderRadius: '6px', cursor: 'pointer', border: '2px solid #3498db' }}
+              onClick={() => window.open(`/api/evidence/view?key=${encodeURIComponent(beforeKey)}`, '_blank')}
+            />
+            <span style={{ position: 'absolute', bottom: '2px', right: '2px', background: '#3498db', color: 'white', fontSize: '9px', padding: '1px 4px', borderRadius: '3px' }}>قبل</span>
+          </div>
+        )}
+        {beforePending && (
+          <div style={{ width: '48px', height: '48px', background: '#fff3cd', borderRadius: '6px', display: 'flex', alignItems: 'center', justifyContent: 'center', border: '2px dashed #ffc107', cursor: 'help' }} title="في انتظار الرفع">
+            <span style={{ fontSize: '20px' }}>⏳</span>
+          </div>
+        )}
+        {!beforeKey && (
+          <button onClick={() => onAddImage(remark, 'before')} disabled={disabled} style={{ padding: '4px 10px', background: '#ecf0f1', border: '1px dashed #3498db', borderRadius: '4px', cursor: disabled ? 'not-allowed' : 'pointer', fontSize: '11px', color: '#3498db' }}>
+            📷 قبل
+          </button>
+        )}
+      </div>
+
+      {/* After */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+        {afterKey && !afterPending && (
+          <div style={{ position: 'relative' }}>
+            <img 
+              src={`/api/evidence/view?key=${encodeURIComponent(afterKey)}`}
+              alt="بعد"
+              style={{ width: '48px', height: '48px', objectFit: 'cover', borderRadius: '6px', cursor: 'pointer', border: '2px solid #27ae60' }}
+              onClick={() => window.open(`/api/evidence/view?key=${encodeURIComponent(afterKey)}`, '_blank')}
+            />
+            <span style={{ position: 'absolute', bottom: '2px', right: '2px', background: '#27ae60', color: 'white', fontSize: '9px', padding: '1px 4px', borderRadius: '3px' }}>بعد</span>
+          </div>
+        )}
+        {afterPending && (
+          <div style={{ width: '48px', height: '48px', background: '#fff3cd', borderRadius: '6px', display: 'flex', alignItems: 'center', justifyContent: 'center', border: '2px dashed #ffc107', cursor: 'help' }} title="في انتظار الرفع">
+            <span style={{ fontSize: '20px' }}>⏳</span>
+          </div>
+        )}
+        {!afterKey && (
+          <button onClick={() => onAddImage(remark, 'after')} disabled={disabled} style={{ padding: '4px 10px', background: '#ecf0f1', border: '1px dashed #27ae60', borderRadius: '4px', cursor: disabled ? 'not-allowed' : 'pointer', fontSize: '11px', color: '#27ae60' }}>
+            📷 بعد
+          </button>
+        )}
+      </div>
+    </div>
+  );
+};
+
+// --- SmartRemarkForm ---
 const SmartRemarkForm = ({ initialData, boqCode, isSaving, onSubmit, onCancel, templates }) => {
   const [desc, setDesc] = useState(initialData?.description || (initialData?.template ? initialData.template.title : ''));
   const [suffix, setSuffix] = useState(initialData?.suffix_note || '');
@@ -252,8 +314,8 @@ const ContractorBoqCard = ({ boqCode, issues, getLatrineCode, onClose, processin
   );
 };
 
-// --- InspectionCard ---
-const InspectionCard = ({ latrineId, remarks, getLatrineCode, onClose, onEdit, onSaveAsTemplate, processingIds, statusFilter }) => {
+// --- InspectionCard (مُحدّث بأزرار الصور) ---
+const InspectionCard = ({ latrineId, remarks, getLatrineCode, onClose, onEdit, onSaveAsTemplate, processingIds, statusFilter, onAddImage }) => {
   let filtered = remarks;
   if (statusFilter) {
     filtered = remarks.filter(r => r.status === statusFilter);
@@ -267,18 +329,21 @@ const InspectionCard = ({ latrineId, remarks, getLatrineCode, onClose, onEdit, o
         <span style={{ fontSize: '12px', color: '#7f8c8d' }}>{openCount} مفتوحة</span>
       </div>
       {sorted.map(r => (
-        <div key={r.id} style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '8px 0', borderBottom: '1px solid #f0f0f0', flexWrap: 'wrap' }}>
-          <span style={{ background: UI_COLORS.severity[r.severity], color: 'white', padding: '2px 6px', borderRadius: '4px', fontSize: '10px' }}>{r.severity}</span>
-          <span style={{ fontSize: '12px', color: '#666', minWidth: '60px' }}>بند {r.boq_code || 'عام'}</span>
-          <span style={{ flex: 1, fontSize: '13px' }}>{r.template ? `📋 ${r.template.title}` : r.description}</span>
-          <span style={{ color: '#e67e22', fontSize: '11px', maxWidth: '200px' }}>{r.action_required || r.template?.default_action}</span>
-          {r.status === 'open' && (
-            <div style={{ display: 'flex', gap: '4px' }}>
-              <button onClick={() => onEdit(r)} disabled={processingIds.has(r.id)} style={{ padding: '4px 8px', background: '#f39c12', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '11px' }}>✏️</button>
-              {!r.template_id && <button onClick={() => onSaveAsTemplate(r)} disabled={processingIds.has(r.id)} style={{ padding: '4px 8px', background: '#8e44ad', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '11px' }}>📋</button>}
-              <button onClick={() => onClose([r])} disabled={processingIds.has(r.id)} style={{ padding: '4px 8px', background: '#27ae60', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '11px' }}>✓</button>
-            </div>
-          )}
+        <div key={r.id} style={{ padding: '8px 0', borderBottom: '1px solid #f0f0f0' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+            <span style={{ background: UI_COLORS.severity[r.severity], color: 'white', padding: '2px 6px', borderRadius: '4px', fontSize: '10px' }}>{r.severity}</span>
+            <span style={{ fontSize: '12px', color: '#666', minWidth: '60px' }}>بند {r.boq_code || 'عام'}</span>
+            <span style={{ flex: 1, fontSize: '13px' }}>{r.template ? `📋 ${r.template.title}` : r.description}</span>
+            <span style={{ color: '#e67e22', fontSize: '11px', maxWidth: '200px' }}>{r.action_required || r.template?.default_action}</span>
+            {r.status === 'open' && (
+              <div style={{ display: 'flex', gap: '4px' }}>
+                <button onClick={() => onEdit(r)} disabled={processingIds.has(r.id)} style={{ padding: '4px 8px', background: '#f39c12', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '11px' }}>✏️</button>
+                {!r.template_id && <button onClick={() => onSaveAsTemplate(r)} disabled={processingIds.has(r.id)} style={{ padding: '4px 8px', background: '#8e44ad', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '11px' }}>📋</button>}
+                <button onClick={() => onClose([r])} disabled={processingIds.has(r.id)} style={{ padding: '4px 8px', background: '#27ae60', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '11px' }}>✓</button>
+              </div>
+            )}
+          </div>
+          <PhotoStrip remark={r} onAddImage={onAddImage} disabled={processingIds.has(r.id)} />
         </div>
       ))}
     </div>
@@ -354,7 +419,7 @@ const AnalyticsPanel = ({ filteredRemarks, onFilterByBoq, onFilterByIssue }) => 
   );
 };
 
-// --- QuickAddRemark (مع template_code وإصلاح action_required) ---
+// --- QuickAddRemark ---
 const QuickAddRemark = ({ allLatrines, templates, onAdd }) => {
   const [selectedLatrine, setSelectedLatrine] = useState('');
   const [desc, setDesc] = useState('');
@@ -493,13 +558,16 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
     }
   }, []);
 
+  // ✅ إصلاح 1: مزامنة الصور المعلقة + البيانات الفاشلة عند العودة للإنترنت
   useEffect(() => {
     const handleOnline = async () => {
+      const pendingImages = await db.pending_images?.where('sync_status').equals('pending').count() || 0;
       const failedCount = await db.remarks.where('sync_status').equals('failed').count();
-      if (failedCount > 0) {
+      if (pendingImages > 0 || failedCount > 0) {
         setError({ type: 'warning', message: 'عاد الاتصال. جاري المزامنة...' });
-        await imageService.syncPendingImages();
-        await retryFailedSync();
+        if (pendingImages > 0) await imageService.syncPendingImages();
+        if (failedCount > 0) await retryFailedSync();
+        setError({ type: 'success', message: 'تمت المزامنة بنجاح.' });
       }
     };
     window.addEventListener('online', handleOnline);
@@ -819,14 +887,49 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
     }
   };
 
-  const handleAddImage = async (localUuid, type) => {
-    const key = await imageService.addImageToRemark(localUuid, type);
-    if (key) {
-      const remark = await db.remarks.where('local_uuid').equals(localUuid).first();
-      if (remark) {
-        const field = type === 'before' ? 'before_photo_ref' : 'after_photo_ref';
-        await db.remarks.update(remark.id, { [field]: key });
+  // ✅ إصلاح 2: handleAddImage مُصلح بالكامل — يضمن local_uuid ويُرسل للسيرفر
+  const handleAddImage = async (remark, type) => {
+    setProcessingIds(prev => new Set(prev).add(remark.id));
+    try {
+      // ✅ التأكد من وجود local_uuid (إنشاء جديد إذا لم يكن موجوداً)
+      let localUuid = remark.local_uuid || remark.remark_id;
+      if (!localUuid) {
+        localUuid = uuidv4();
+        await db.remarks.update(remark.id, { local_uuid: localUuid });
       }
+
+      const key = await imageService.addImageToRemark(localUuid, type);
+      if (!key) return; // المستخدم ألغى التصوير
+
+      const field = type === 'before' ? 'before_photo_ref' : 'after_photo_ref';
+      const isPending = key.startsWith('pending:');
+
+      // ✅ تحديث IndexedDB
+      await db.remarks.update(remark.id, { 
+        [field]: key, 
+        sync_status: 'local',
+        last_update: new Date().toISOString()
+      });
+
+      // ✅ إصلاح 3: إرسال UPDATE_REMARK للسيرفر فوراً إذا كان الرفع مباشراً (Online)
+      // إذا كان offline (pending)، فإن imageService.syncPendingImages() ستتولى الأمر لاحقاً
+      if (!isPending) {
+        await pushToSyncQueue('UPDATE_REMARK', {
+          id: remark.id,
+          local_uuid: localUuid,
+          [field]: key,
+          last_update: new Date().toISOString()
+        });
+      }
+    } catch (err) {
+      console.error('Image add error:', err);
+      setError({ type: 'error', message: 'فشل إضافة الصورة: ' + err.message });
+    } finally {
+      setProcessingIds(prev => {
+        const n = new Set(prev);
+        n.delete(remark.id);
+        return n;
+      });
     }
   };
 
@@ -932,7 +1035,6 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
   const handleQuickAdd = async (data) => {
     setIsSaving(true);
     try {
-      // إصلاح: سحب default_action من القالب المختار
       const selectedTemplateData = allTemplates?.find(t => t.id === data.template_id);
       const localUuid = uuidv4();
       const newRemark = {
@@ -1059,7 +1161,18 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
                 acc[r.latrine_id].push(r);
                 return acc;
               }, {})).map(([lid, remarks]) => (
-                <InspectionCard key={lid} latrineId={parseInt(lid)} remarks={remarks} getLatrineCode={getLatrineCode} onClose={handleBulkClose} onEdit={setEditingRemark} onSaveAsTemplate={handleSaveAsTemplateFromCard} processingIds={processingIds} statusFilter={statusFilter} />
+                <InspectionCard 
+                  key={lid} 
+                  latrineId={parseInt(lid)} 
+                  remarks={remarks} 
+                  getLatrineCode={getLatrineCode} 
+                  onClose={handleBulkClose} 
+                  onEdit={setEditingRemark} 
+                  onSaveAsTemplate={handleSaveAsTemplateFromCard} 
+                  processingIds={processingIds} 
+                  statusFilter={statusFilter}
+                  onAddImage={handleAddImage}
+                />
               ))}
             </div>
           )}
@@ -1080,26 +1193,8 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
                       <span style={{ background: UI_COLORS.sync[r.sync_status || 'local'], color: 'white', padding: '1px 6px', borderRadius: '4px', fontSize: '10px' }}>{UI_LABELS.sync[r.sync_status || 'local']}</span>
                     </div>
                     <div>{r.template ? `📋 ${r.template.title}` : r.description}</div>
-                    <div style={{ display: 'flex', gap: '8px', marginTop: '8px', alignItems: 'center' }}>
-                      {r.before_photo_ref && !r.before_photo_ref.startsWith('pending:') && (
-                        <img 
-                          src={`/api/evidence/view?key=${encodeURIComponent(r.before_photo_ref)}`}
-                          alt="Before"
-                          style={{ width: '40px', height: '40px', cursor: 'pointer', objectFit: 'cover', borderRadius: '4px' }}
-                          onClick={() => window.open(`/api/evidence/view?key=${encodeURIComponent(r.before_photo_ref)}`, '_blank')}
-                        />
-                      )}
-                      <button onClick={() => handleAddImage(r.local_uuid || r.remark_id || r.id, 'before')}>📷 قبل</button>
-                      {r.after_photo_ref && !r.after_photo_ref.startsWith('pending:') && (
-                        <img 
-                          src={`/api/evidence/view?key=${encodeURIComponent(r.after_photo_ref)}`}
-                          alt="After"
-                          style={{ width: '40px', height: '40px', cursor: 'pointer', objectFit: 'cover', borderRadius: '4px' }}
-                          onClick={() => window.open(`/api/evidence/view?key=${encodeURIComponent(r.after_photo_ref)}`, '_blank')}
-                        />
-                      )}
-                      <button onClick={() => handleAddImage(r.local_uuid || r.remark_id || r.id, 'after')}>📷 بعد</button>
-                    </div>
+                    {/* ✅ إصلاح 4: PhotoStrip موحد في السجل الخام */}
+                    <PhotoStrip remark={r} onAddImage={handleAddImage} disabled={processingIds.has(r.id)} />
                   </div>
                   {r.status === 'open' && (
                     <div style={{ display: 'flex', gap: '4px' }}>
@@ -1132,26 +1227,8 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
                             <span style={{ background: UI_COLORS.sync[r.sync_status || 'local'], color: 'white', padding: '1px 6px', borderRadius: '4px', fontSize: '10px' }}>{UI_LABELS.sync[r.sync_status || 'local']}</span>
                           </div>
                           <div>{r.template ? `📋 ${r.template.title}` : r.description}</div>
-                          <div style={{ display: 'flex', gap: '8px', marginTop: '8px', alignItems: 'center' }}>
-                            {r.before_photo_ref && !r.before_photo_ref.startsWith('pending:') && (
-                              <img 
-                                src={`/api/evidence/view?key=${encodeURIComponent(r.before_photo_ref)}`}
-                                alt="Before"
-                                style={{ width: '40px', height: '40px', cursor: 'pointer', objectFit: 'cover', borderRadius: '4px' }}
-                                onClick={() => window.open(`/api/evidence/view?key=${encodeURIComponent(r.before_photo_ref)}`, '_blank')}
-                              />
-                            )}
-                            <button onClick={() => handleAddImage(r.local_uuid || r.remark_id || r.id, 'before')}>📷 قبل</button>
-                            {r.after_photo_ref && !r.after_photo_ref.startsWith('pending:') && (
-                              <img 
-                                src={`/api/evidence/view?key=${encodeURIComponent(r.after_photo_ref)}`}
-                                alt="After"
-                                style={{ width: '40px', height: '40px', cursor: 'pointer', objectFit: 'cover', borderRadius: '4px' }}
-                                onClick={() => window.open(`/api/evidence/view?key=${encodeURIComponent(r.after_photo_ref)}`, '_blank')}
-                              />
-                            )}
-                            <button onClick={() => handleAddImage(r.local_uuid || r.remark_id || r.id, 'after')}>📷 بعد</button>
-                          </div>
+                          {/* ✅ إصلاح 5: PhotoStrip موحد في التجميعات */}
+                          <PhotoStrip remark={r} onAddImage={handleAddImage} disabled={processingIds.has(r.id)} />
                         </div>
                         {r.status === 'open' && (
                           <div style={{ display: 'flex', gap: '4px', marginTop: '8px' }}>
