@@ -1,6 +1,5 @@
 import { db } from './db/index.js';
-
-const API_BASE_URL = process.env.REACT_APP_API_URL || '/api';
+import { apiFetch } from './api';
 
 export const pushToSyncQueue = async (type, data) => {
   try {
@@ -36,9 +35,9 @@ export const syncWithServer = async () => {
   };
 
   try {
-    const response = await fetch(`${API_BASE_URL}/sync`, {
+    // ✅ التغيير الوحيد: استخدام apiFetch بدلاً من fetch
+    const response = await apiFetch('/sync', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(batch)
     });
 

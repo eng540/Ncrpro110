@@ -1,3 +1,6 @@
+// DailyLogForm.js – نموذج إضافة التقرير اليومي
+// يعتمد على authFetch لإضافة التوكن تلقائياً (يستخدم fetch العادي)
+
 import React, { useState, useEffect } from 'react';
 
 const API_BASE_URL = process.env.REACT_APP_API_URL || '/api';
@@ -15,19 +18,20 @@ const DailyLogForm = ({ onSaved }) => {
   const [isLoading, setIsLoading] = useState(false);
   const [message, setMessage] = useState('');
 
-  // جلب الإحصائيات التلقائية عند فتح النموذج
+  // جلب الإحصائيات عند تغيير التاريخ
   useEffect(() => {
-    fetchStats();
+    if (navigator.onLine) fetchStats();
   }, [formData.date]);
 
   const fetchStats = async () => {
     if (!navigator.onLine) return;
-    
     try {
       const res = await fetch(`${API_BASE_URL}/daily-logs/stats?date=${formData.date}`);
       if (res.ok) {
         const data = await res.json();
         setStats(data);
+      } else {
+        console.warn('Failed to fetch stats, status:', res.status);
       }
     } catch (err) {
       console.error('Failed to fetch stats:', err);
@@ -42,6 +46,8 @@ const DailyLogForm = ({ onSaved }) => {
     }
 
     setIsLoading(true);
+    setMessage('');
+
     try {
       const payload = {
         ...formData,
@@ -51,20 +57,29 @@ const DailyLogForm = ({ onSaved }) => {
         remarks_issued: stats?.remarks_issued || 0
       };
 
+      // استخدام fetch العادي – authFetch سيضيف التوكن تلقائياً
       const res = await fetch(`${API_BASE_URL}/daily-logs`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
       });
 
-      if (res.ok) {
-        setMessage('✅ تم حفظ التقرير اليومي بنجاح');
-        setFormData({ ...formData, notes: '', equipment: '', manpower: '' });
-        onSaved?.();
-      } else {
-        throw new Error('Failed to save');
+      if (!res.ok) {
+        const errorText = await res.text();
+        throw new Error(`فشل الحفظ: ${res.status} ${errorText}`);
       }
+
+      setMessage('✅ تم حفظ التقرير اليومي بنجاح');
+      // إعادة تعيين الحقول الاختيارية فقط
+      setFormData((prev) => ({
+        ...prev,
+        notes: '',
+        equipment: '',
+        manpower: ''
+      }));
+      if (onSaved) onSaved();
     } catch (err) {
+      console.error('DailyLogForm submit error:', err);
       setMessage('❌ فشل الحفظ: ' + err.message);
     } finally {
       setIsLoading(false);
@@ -74,72 +89,164 @@ const DailyLogForm = ({ onSaved }) => {
   return (
     <div style={{ direction: 'rtl', maxWidth: '800px', margin: '0 auto' }}>
       <h2 style={{ color: '#1F4E78' }}>التقرير اليومي</h2>
-      
+
       {message && (
-        <div style={{ 
-          padding: '12px', 
-          background: message.includes('✅') ? '#d4edda' : '#f8d7da', 
-          color: message.includes('✅') ? '#155724' : '#721c24',
-          borderRadius: '4px', 
-          marginBottom: '15px',
-          fontWeight: 'bold'
-        }}>
+        <div
+          style={{
+            padding: '12px',
+            background: message.includes('✅') ? '#d4edda' : '#f8d7da',
+            color: message.includes('✅') ? '#155724' : '#721c24',
+            borderRadius: '4px',
+            marginBottom: '15px',
+            fontWeight: 'bold'
+          }}
+        >
           {message}
         </div>
       )}
 
-      <form onSubmit={handleSubmit} style={{ background: 'white', padding: '20px', borderRadius: '8px', boxShadow: '0 2px 8px rgba(0,0,0,0.08)' }}>
-        
-        {/* الإحصائيات التلقائية */}
+      <form
+        onSubmit={handleSubmit}
+        style={{
+          background: 'white',
+          padding: '20px',
+          borderRadius: '8px',
+          boxShadow: '0 2px 8px rgba(0,0,0,0.08)'
+        }}
+      >
         {stats && (
-          <div style={{ background: '#e8f4f8', padding: '15px', borderRadius: '6px', marginBottom: '20px', border: '1px solid #bee5eb' }}>
-            <h4 style={{ margin: '0 0 10px 0', color: '#2980b9' }}>📊 بيانات تلقائية من النظام</h4>
+          <div
+            style={{
+              background: '#e8f4f8',
+              padding: '15px',
+              borderRadius: '6px',
+              marginBottom: '20px',
+              border: '1px solid #bee5eb'
+            }}
+          >
+            <h4 style={{ margin: '0 0 10px 0', color: '#2980b9' }}>
+              📠 بيانات تلقائية من النظام
+            </h4>
             <div style={{ display: 'flex', gap: '20px', flexWrap: 'wrap' }}>
-              <div style={{ background: 'white', padding: '10px', borderRadius: '4px', minWidth: '120px', textAlign: 'center' }}>
-                <div style={{ fontSize: '24px', fontWeight: 'bold', color: '#1F4E78' }}>{stats.latrines_inspected}</div>
+              <div
+                style={{
+                  background: 'white',
+                  padding: '10px',
+                  borderRadius: '4px',
+                  minWidth: '120px',
+                  textAlign: 'center'
+                }}
+              >
+                <div style={{ fontSize: '24px', fontWeight: 'bold', color: '#1F4E78' }}>
+                  {stats.latrines_inspected}
+                </div>
                 <div style={{ fontSize: '12px', color: '#666' }}>حمامات مُفحوصة</div>
               </div>
-              <div style={{ background: 'white', padding: '10px', borderRadius: '4px', minWidth: '120px', textAlign: 'center' }}>
-                <div style={{ fontSize: '24px', fontWeight: 'bold', color: '#27ae60' }}>{stats.latrines_accepted}</div>
+              <div
+                style={{
+                  background: 'white',
+                  padding: '10px',
+                  borderRadius: '4px',
+                  minWidth: '120px',
+                  textAlign: 'center'
+                }}
+              >
+                <div style={{ fontSize: '24px', fontWeight: 'bold', color: '#27ae60' }}>
+                  {stats.latrines_accepted}
+                </div>
                 <div style={{ fontSize: '12px', color: '#666' }}>حمامات مُقبولة</div>
               </div>
-              <div style={{ background: 'white', padding: '10px', borderRadius: '4px', minWidth: '120px', textAlign: 'center' }}>
-                <div style={{ fontSize: '24px', fontWeight: 'bold', color: '#e74c3c' }}>{stats.remarks_issued}</div>
+              <div
+                style={{
+                  background: 'white',
+                  padding: '10px',
+                  borderRadius: '4px',
+                  minWidth: '120px',
+                  textAlign: 'center'
+                }}
+              >
+                <div style={{ fontSize: '24px', fontWeight: 'bold', color: '#e74c3c' }}>
+                  {stats.remarks_issued}
+                </div>
                 <div style={{ fontSize: '12px', color: '#666' }}>ملاحظات مُصدرة</div>
               </div>
             </div>
           </div>
         )}
 
-        {/* الإدخالات اليدوية */}
         <div style={{ display: 'grid', gap: '15px' }}>
           <div>
-            <label style={{ display: 'block', marginBottom: '5px', fontWeight: 'bold', color: '#2c3e50' }}>📅 التاريخ:</label>
-            <input 
-              type="date" 
-              value={formData.date} 
-              onChange={e => setFormData({...formData, date: e.target.value})}
-              style={{ padding: '10px', borderRadius: '4px', border: '1px solid #ccc', width: '200px', fontSize: '14px' }}
+            <label
+              style={{
+                display: 'block',
+                marginBottom: '5px',
+                fontWeight: 'bold',
+                color: '#2c3e50'
+              }}
+            >
+              📅 التاريخ:
+            </label>
+            <input
+              type="date"
+              value={formData.date}
+              onChange={(e) => setFormData({ ...formData, date: e.target.value })}
+              style={{
+                padding: '10px',
+                borderRadius: '4px',
+                border: '1px solid #ccc',
+                width: '200px',
+                fontSize: '14px'
+              }}
             />
           </div>
 
           <div>
-            <label style={{ display: 'block', marginBottom: '5px', fontWeight: 'bold', color: '#2c3e50' }}>👷 المهندس المسؤول:</label>
-            <input 
-              type="text" 
-              value={formData.engineer} 
-              onChange={e => setFormData({...formData, engineer: e.target.value})}
+            <label
+              style={{
+                display: 'block',
+                marginBottom: '5px',
+                fontWeight: 'bold',
+                color: '#2c3e50'
+              }}
+            >
+              👷 المهندس المسؤول:
+            </label>
+            <input
+              type="text"
+              value={formData.engineer}
+              onChange={(e) => setFormData({ ...formData, engineer: e.target.value })}
               placeholder="اسم المهندس المسؤول عن اليوم"
-              style={{ padding: '10px', borderRadius: '4px', border: '1px solid #ccc', width: '100%', fontSize: '14px' }}
+              style={{
+                padding: '10px',
+                borderRadius: '4px',
+                border: '1px solid #ccc',
+                width: '100%',
+                fontSize: '14px'
+              }}
             />
           </div>
 
           <div>
-            <label style={{ display: 'block', marginBottom: '5px', fontWeight: 'bold', color: '#2c3e50' }}>🌤️ الطقس:</label>
-            <select 
-              value={formData.weather} 
-              onChange={e => setFormData({...formData, weather: e.target.value})}
-              style={{ padding: '10px', borderRadius: '4px', border: '1px solid #ccc', fontSize: '14px', minWidth: '150px' }}
+            <label
+              style={{
+                display: 'block',
+                marginBottom: '5px',
+                fontWeight: 'bold',
+                color: '#2c3e50'
+              }}
+            >
+              🌤️ الطقس:
+            </label>
+            <select
+              value={formData.weather}
+              onChange={(e) => setFormData({ ...formData, weather: e.target.value })}
+              style={{
+                padding: '10px',
+                borderRadius: '4px',
+                border: '1px solid #ccc',
+                fontSize: '14px',
+                minWidth: '150px'
+              }}
             >
               <option value="مشمس">☀️ مشمس</option>
               <option value="غائم">☁️ غائم</option>
@@ -150,50 +257,98 @@ const DailyLogForm = ({ onSaved }) => {
           </div>
 
           <div>
-            <label style={{ display: 'block', marginBottom: '5px', fontWeight: 'bold', color: '#2c3e50' }}>👷 عدد العمال:</label>
-            <input 
-              type="number" 
-              value={formData.manpower} 
-              onChange={e => setFormData({...formData, manpower: e.target.value})}
+            <label
+              style={{
+                display: 'block',
+                marginBottom: '5px',
+                fontWeight: 'bold',
+                color: '#2c3e50'
+              }}
+            >
+              👷 عدد العمال:
+            </label>
+            <input
+              type="number"
+              value={formData.manpower}
+              onChange={(e) => setFormData({ ...formData, manpower: e.target.value })}
               placeholder="0"
               min="0"
-              style={{ padding: '10px', borderRadius: '4px', border: '1px solid #ccc', width: '150px', fontSize: '14px' }}
+              style={{
+                padding: '10px',
+                borderRadius: '4px',
+                border: '1px solid #ccc',
+                width: '150px',
+                fontSize: '14px'
+              }}
             />
           </div>
 
           <div>
-            <label style={{ display: 'block', marginBottom: '5px', fontWeight: 'bold', color: '#2c3e50' }}>🚜 المعدات المستخدمة:</label>
-            <input 
-              type="text" 
-              value={formData.equipment} 
-              onChange={e => setFormData({...formData, equipment: e.target.value})}
+            <label
+              style={{
+                display: 'block',
+                marginBottom: '5px',
+                fontWeight: 'bold',
+                color: '#2c3e50'
+              }}
+            >
+              🚜 المعدات المستخدمة:
+            </label>
+            <input
+              type="text"
+              value={formData.equipment}
+              onChange={(e) =>
+                setFormData({ ...formData, equipment: e.target.value })
+              }
               placeholder="مثال: حفارة صغيرة، خلاطة، مولد كهربائي"
-              style={{ padding: '10px', borderRadius: '4px', border: '1px solid #ccc', width: '100%', fontSize: '14px' }}
+              style={{
+                padding: '10px',
+                borderRadius: '4px',
+                border: '1px solid #ccc',
+                width: '100%',
+                fontSize: '14px'
+              }}
             />
           </div>
 
           <div>
-            <label style={{ display: 'block', marginBottom: '5px', fontWeight: 'bold', color: '#2c3e50' }}>📝 ملاحظات عامة عن اليوم:</label>
-            <textarea 
-              value={formData.notes} 
-              onChange={e => setFormData({...formData, notes: e.target.value})}
+            <label
+              style={{
+                display: 'block',
+                marginBottom: '5px',
+                fontWeight: 'bold',
+                color: '#2c3e50'
+              }}
+            >
+              📝 ملاحظات عامة عن اليوم:
+            </label>
+            <textarea
+              value={formData.notes}
+              onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
               rows="4"
               placeholder="أي ملاحظات عن سير العمل، مشاكل، إنجازات، توصيات..."
-              style={{ padding: '10px', borderRadius: '4px', border: '1px solid #ccc', width: '100%', fontSize: '14px', resize: 'vertical' }}
+              style={{
+                padding: '10px',
+                borderRadius: '4px',
+                border: '1px solid #ccc',
+                width: '100%',
+                fontSize: '14px',
+                resize: 'vertical'
+              }}
             />
           </div>
         </div>
 
-        <button 
-          type="submit" 
+        <button
+          type="submit"
           disabled={isLoading || !navigator.onLine}
-          style={{ 
-            marginTop: '20px', 
-            padding: '12px 40px', 
-            background: navigator.onLine ? '#27ae60' : '#95a5a6', 
-            color: 'white', 
-            border: 'none', 
-            borderRadius: '4px', 
+          style={{
+            marginTop: '20px',
+            padding: '12px 40px',
+            background: navigator.onLine ? '#27ae60' : '#95a5a6',
+            color: 'white',
+            border: 'none',
+            borderRadius: '4px',
             cursor: navigator.onLine ? 'pointer' : 'not-allowed',
             fontWeight: 'bold',
             fontSize: '16px',
@@ -204,7 +359,14 @@ const DailyLogForm = ({ onSaved }) => {
         </button>
 
         {!navigator.onLine && (
-          <p style={{ textAlign: 'center', color: '#e74c3c', marginTop: '15px', fontWeight: 'bold' }}>
+          <p
+            style={{
+              textAlign: 'center',
+              color: '#e74c3c',
+              marginTop: '15px',
+              fontWeight: 'bold'
+            }}
+          >
             ⚠️ التقرير اليومي يتطلب الاتصال بالإنترنت — لا يمكن حفظه Offline
           </p>
         )}

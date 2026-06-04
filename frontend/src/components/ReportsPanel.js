@@ -1,12 +1,13 @@
+// AUTH-PATCH 2026-06-02: استخدام apiFetch لتنزيل التقارير
+
 import React, { useState } from 'react';
+import { apiFetch } from '../api';
 
 const API_BASE_URL = process.env.REACT_APP_API_URL || '/api';
 
 const ReportsPanel = () => {
   const [isDownloading, setIsDownloading] = useState(false);
   const [error, setError] = useState(null);
-  
-  // فلاتر التقارير الزمنية
   const [fromDate, setFromDate] = useState('');
   const [toDate, setToDate] = useState('');
 
@@ -20,18 +21,17 @@ const ReportsPanel = () => {
     setError(null);
 
     try {
-      let url = `${API_BASE_URL}${endpoint}?format=${format}`;
+      let url = `${endpoint}?format=${format}`;
       
-      // إضافة الفلاتر إذا كان التقرير يدعم ذلك
       if (endpoint === '/reports/remarks' || endpoint === '/reports/daily-logs') {
         const params = new URLSearchParams();
         params.append('format', format);
         if (fromDate) params.append('from_date', new Date(fromDate).toISOString());
         if (toDate) params.append('to_date', new Date(toDate).toISOString());
-        url = `${API_BASE_URL}${endpoint}?${params.toString()}`;
+        url = `${endpoint}?${params.toString()}`;
       }
 
-      const response = await fetch(url, { method: 'GET' });
+      const response = await apiFetch(url, { method: 'GET' });
 
       if (!response.ok) {
         throw new Error('فشل توليد التقرير من الخادم.');
@@ -41,7 +41,6 @@ const ReportsPanel = () => {
       const downloadUrl = window.URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = downloadUrl;
-      // تعديل الامتداد حسب الصيغة
       const ext = format === 'excel' ? 'xlsx' : 'pdf';
       link.download = filename.replace(/\.(pdf|xlsx)$/, `.${ext}`);
       document.body.appendChild(link);
@@ -57,13 +56,10 @@ const ReportsPanel = () => {
     }
   };
 
-  // دالة مساعدة لإنشاء بطاقة تقرير مع أزرار PDF/Excel
   const ReportCard = ({ title, description, color, endpoint, filenameBase, supportsDates = false }) => (
     <div style={{ background: 'white', padding: '25px', borderRadius: '8px', boxShadow: '0 2px 8px rgba(0,0,0,0.08)', borderTop: `4px solid ${color}`, display: 'flex', flexDirection: 'column' }}>
       <h3 style={{ color: color, marginTop: 0 }}>{title}</h3>
-      <p style={{ fontSize: '13px', color: '#666', flex: 1 }}>
-        {description}
-      </p>
+      <p style={{ fontSize: '13px', color: '#666', flex: 1 }}>{description}</p>
       <div style={{ display: 'flex', gap: '10px', marginTop: '15px' }}>
         <button 
           onClick={() => handleDownload(endpoint, filenameBase, 'pdf')}
@@ -98,7 +94,6 @@ const ReportsPanel = () => {
         </div>
       )}
 
-      {/* شريط الفلاتر العامة (للتقارير التي تدعم التاريخ) */}
       <div style={{ background: 'white', padding: '15px', borderRadius: '8px', marginBottom: '20px', boxShadow: '0 2px 4px rgba(0,0,0,0.05)', display: 'flex', gap: '15px', alignItems: 'center', flexWrap: 'wrap' }}>
         <strong style={{ color: '#2c3e50' }}>تحديد الفترة الزمنية (للتقارير المدعومة):</strong>
         <div style={{ display: 'flex', gap: '10px', flex: 1 }}>
@@ -115,7 +110,6 @@ const ReportsPanel = () => {
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '20px' }}>
         
-        {/* 1. المستخلص المالي (IPC) */}
         <ReportCard
           title="المستخلص المالي (IPC)"
           description="شهادة دفع مؤقتة شاملة توضح الكميات المنفذة، المبالغ المستحقة والمحتجزة بناءً على قرارات الحوكمة والجودة."
@@ -124,7 +118,6 @@ const ReportsPanel = () => {
           filenameBase={`IPC_Report_${new Date().toISOString().split('T')[0]}`}
         />
 
-        {/* 2. الملخص التنفيذي */}
         <ReportCard
           title="الملخص التنفيذي"
           description="تقرير رسمي يحتوي على إحصائيات المشروع الكلية، نسب الإنجاز، وملخص قرارات الإدارة والجودة."
@@ -133,7 +126,6 @@ const ReportsPanel = () => {
           filenameBase={`Executive_Summary_${new Date().toISOString().split('T')[0]}`}
         />
 
-        {/* 3. سجل الملاحظات */}
         <ReportCard
           title="سجل ملاحظات الجودة"
           description="جميع الملاحظات المفتوحة والمغلقة مع إمكانية تحديد فترة زمنية. (يتأثر بالفترة المحددة أعلاه)."
@@ -143,7 +135,6 @@ const ReportsPanel = () => {
           supportsDates={true}
         />
 
-        {/* 4. يوميات الموقع */}
         <ReportCard
           title="يوميات الموقع (Site Diary)"
           description="سجلات العمل اليومية، العمالة، المعدات، وإحصائيات الفحص. (يتأثر بالفترة المحددة أعلاه)."
@@ -153,7 +144,6 @@ const ReportsPanel = () => {
           supportsDates={true}
         />
 
-        {/* 5. مصفوفة الإنجاز (Matrix) */}
         <ReportCard
           title="مصفوفة الإنجاز (Matrix)"
           description="تقرير أفقي يعرض كل مستفيد في صف، وكل بند كعمودين (كمية منفذة / تكلفة)."

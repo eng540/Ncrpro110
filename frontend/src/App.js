@@ -1,3 +1,6 @@
+// AUTH-PATCH 2026-06-02: دمج شاشة تسجيل الدخول وإدارة الـ token وزر تسجيل الخروج
+// تم تحديث initializeData لاستخدام apiFetch
+
 import React, { useState, useEffect } from 'react';
 import SyncStatus from './components/SyncStatus';
 import LatrineList from './components/LatrineList';
@@ -14,7 +17,9 @@ import GovernanceDashboard from './components/GovernanceDashboard';
 import BoqAnalytics from './components/BoqAnalytics';
 import QualityInspector from './components/QualityInspector';
 import InstallPWA from './components/InstallPWA';
+import LoginScreen from './components/LoginScreen';
 import { db } from './db';
+import { apiFetch } from './api';
 
 const API_BASE_URL = process.env.REACT_APP_API_URL || '/api';
 
@@ -52,7 +57,7 @@ const navItems = [
   { name: 'DAILY_LOG_LIST', label: 'سجل التقارير', icon: ICONS.logs },
   { name: 'DASHBOARD', label: 'لوحة المؤشرات', icon: ICONS.dashboard },
   { name: 'REPORTS', label: 'التقارير', icon: ICONS.reports },
-  { name: 'REMARKS_MANAGER', label: 'إدارة الملاحظات', icon: ICONS.remarks },   // 🌟 جديد
+  { name: 'REMARKS_MANAGER', label: 'إدارة الملاحظات', icon: ICONS.remarks },
   { name: 'BOQ_ANALYTICS', label: 'تحليل البنود', icon: ICONS.boq },
   { name: 'GOVERNANCE', label: 'الحوكمة', icon: ICONS.governance },
   { name: 'QUALITY_INSPECTOR', label: 'فحص الجودة', icon: ICONS.quality },
@@ -60,6 +65,8 @@ const navItems = [
 ];
 
 function App() {
+  const [auth, setAuth] = useState(null);
+  const [isInitializing, setIsInitializing] = useState(true);
   const [currentView, setCurrentView] = useState({
     name: 'LIST',
     latrineId: null,
@@ -67,21 +74,49 @@ function App() {
     filterStatus: '',
     previousView: 'LIST'
   });
-  const [isInitializing, setIsInitializing] = useState(true);
   const [sidebarExpanded, setSidebarExpanded] = useState(true);
 
-  // ==========================================
-  // 🌟 التحديث: جلب القوالب الذكية مع البيانات
-  // ==========================================
+  // التحقق من وجود token عند التحميل
+  useEffect(() => {
+    const token = localStorage.getItem('nrc_token');
+    const userStr = localStorage.getItem('nrc_user');
+    if (token && userStr) {
+      try {
+        const user = JSON.parse(userStr);
+        setAuth({ token, user });
+      } catch (e) {
+        localStorage.removeItem('nrc_token');
+        localStorage.removeItem('nrc_user');
+      }
+    }
+    setIsInitializing(false);
+  }, []);
+
+  // الاستماع لحدث تسجيل الخروج من api.js
+  useEffect(() => {
+    const handleLogoutEvent = () => setAuth(null);
+    window.addEventListener('auth:logout', handleLogoutEvent);
+    return () => window.removeEventListener('auth:logout', handleLogoutEvent);
+  }, []);
+
+  const handleLogin = (authData) => setAuth(authData);
+  const handleLogout = () => {
+    localStorage.removeItem('nrc_token');
+    localStorage.removeItem('nrc_user');
+    setAuth(null);
+  };
+
+  // ========== تهيئة البيانات (محدثة لاستخدام apiFetch) ==========
   const initializeData = async () => {
     try {
       const count = await db.latrines.count();
       if (count === 0 && navigator.onLine) {
+        const token = localStorage.getItem('nrc_token');
         const [latrinesRes, boqRes, remarksRes, templatesRes] = await Promise.all([
-          fetch(`${API_BASE_URL}/latrines?limit=200`),
-          fetch(`${API_BASE_URL}/boq-items`),
-          fetch(`${API_BASE_URL}/remarks`),
-          fetch(`${API_BASE_URL}/remark-templates`)
+          apiFetch('/latrines?limit=200'),
+          apiFetch('/boq-items'),
+          apiFetch('/remarks'),
+          apiFetch('/remark-templates')
         ]);
 
         if (latrinesRes.ok && boqRes.ok) {
@@ -98,8 +133,7 @@ function App() {
 
             if (latrines?.length > 0) await db.latrines.bulkAdd(latrines);  
             if (boqItems?.length > 0) await db.boq_items.bulkAdd(boqItems);  
-            if (templates?.length > 0) await db.remark_templates.bulkAdd(templates); // 🌟 حفظ القوالب محلياً
-
+            if (templates?.length > 0) await db.remark_templates.bulkAdd(templates);
             if (remarks?.length > 0) {  
               const remarksWithSync = remarks.map(r => ({...r, sync_status: 'synced'}));  
               await db.remarks.bulkAdd(remarksWithSync);  
@@ -126,6 +160,10 @@ function App() {
         <p style={{ color: '#7f8c8d' }}>يرجى الانتظار أثناء تحميل البيانات</p>
       </div>
     );
+  }
+
+  if (!auth) {
+    return <LoginScreen onLogin={handleLogin} />;
   }
 
   const navigateTo = (viewName, params = {}) => {
@@ -224,6 +262,34 @@ function App() {
           })}
         </nav>
 
+        {/* زر تسجيل الخروج */}
+        <div style={{ marginTop: 'auto', borderTop: '1px solid rgba(255,255,255,0.1)' }}>
+          <button
+            onClick={handleLogout}
+            style={{
+              width: '100%',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '12px',
+              padding: sidebarExpanded ? '12px 20px' : '12px 0',
+              justifyContent: sidebarExpanded ? 'flex-start' : 'center',
+              background: 'rgba(231, 76, 60, 0.2)',
+              color: '#e74c3c',
+              border: 'none',
+              cursor: 'pointer',
+              fontSize: '14px',
+              fontWeight: 'bold',
+              transition: 'background 0.2s',
+              whiteSpace: 'nowrap',
+            }}
+            onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(231, 76, 60, 0.4)'}
+            onMouseLeave={(e) => e.currentTarget.style.background = 'rgba(231, 76, 60, 0.2)'}
+          >
+            <span style={{ fontSize: '20px' }}>🚪</span>
+            {sidebarExpanded && <span>تسجيل الخروج ({auth.user.username})</span>}
+          </button>
+        </div>
+
         {sidebarExpanded && (
           <div style={{ padding: '15px', fontSize: '11px', color: 'rgba(255,255,255,0.5)', textAlign: 'center', borderTop: '1px solid rgba(255,255,255,0.1)' }}>
             NRC Latrine Tracker v3.0
@@ -256,7 +322,6 @@ function App() {
               onBack={goBack}
             />
           )}
-          {/* 🌟 جديد: عرض إدارة الملاحظات الشاملة */}
           {currentView.name === 'REMARKS_MANAGER' && (
             <RemarksManager
               latrineId={null}
@@ -300,7 +365,6 @@ function App() {
         </div>
       </div>
 
-      {/* زر تثبيت التطبيق (PWA) */}
       <InstallPWA />
     </div>
   );

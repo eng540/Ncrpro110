@@ -1,3 +1,5 @@
+# AUTH-PATCH 2026-06-02: إضافة نماذج User, Role, AuditLog وربط المهندس بالحمامات
+
 from sqlalchemy import Column, Integer, String, Float, DateTime, Text, ForeignKey, Enum, Boolean, CheckConstraint, Index
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import relationship
@@ -61,10 +63,12 @@ class Latrine(Base):
     remarks_count = Column(Integer, default=0)
 
     policy_id = Column(Integer, ForeignKey("policy_profiles.id"), nullable=True)
+    assigned_engineer_id = Column(Integer, ForeignKey("users.id"), nullable=True)   # AUTH-PATCH
 
     boq_items = relationship("BoqItem", back_populates="latrine", cascade="all, delete-orphan")
     remarks = relationship("Remark", back_populates="latrine", cascade="all, delete-orphan")
     policy = relationship("PolicyProfile")
+    assigned_engineer = relationship("User", back_populates="assigned_latrines")    # AUTH-PATCH
 
 # ==========================================
 # 2. BOQ TRACKING
@@ -92,26 +96,20 @@ class BoqItem(Base):
     decision_record = relationship("DecisionRecord", back_populates="boq_item", uselist=False, cascade="all, delete-orphan")
 
 # ==========================================
-# 3. SMART OBSERVATION ENGINE (V3.0.0)
+# 3. SMART OBSERVATION ENGINE
 # ==========================================
-
 class RemarkTemplate(Base):
-    """مكتبة القوالب القياسية للملاحظات (Governed Knowledge Base)"""
     __tablename__ = "remark_templates"
 
     id = Column(Integer, primary_key=True, index=True)
-    template_code = Column(String(20), unique=True, index=True, nullable=False) # e.g., TPL-001
+    template_code = Column(String(20), unique=True, index=True, nullable=False)
     title = Column(String(200), nullable=False)
     description = Column(Text, nullable=False)
     default_action = Column(Text)
     default_severity = Column(String(20), default=RemarkSeverity.MINOR.value)
-    
-    boq_tags = Column(JSONB, default=list) 
-    
+    boq_tags = Column(JSONB, default=list)
     reference_media_url = Column(String(500), nullable=True)
-    # 🌟 التصحيح 2: استخدام Enum الحقيقي لفرض القيود في قاعدة البيانات
-    media_type = Column(Enum(MediaType, name="media_type_enum", create_type=True), nullable=True) 
-    
+    media_type = Column(Enum(MediaType, name="media_type_enum", create_type=True), nullable=True)
     is_active = Column(Boolean, default=True)
     version = Column(Integer, default=1)
     created_by = Column(String(100), index=True, nullable=True)
@@ -119,17 +117,12 @@ class RemarkTemplate(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     archived_at = Column(DateTime, nullable=True)
 
-    # 🌟 التصحيح 3: إضافة passive_deletes=True لمنع تحميل السجلات للذاكرة عند الحذف
     remarks = relationship("Remark", back_populates="template", passive_deletes=True)
 
 Index("ix_remark_templates_boq_tags", RemarkTemplate.boq_tags, postgresql_using="gin")
 
 class Remark(Base):
-    """سجل التنفيذ (Observation Instances)"""
     __tablename__ = "remarks"
-
-    # 🌟 التصحيح 1: تشديد القيد ليكون حصرياً (XOR Logic)
-    # إما (قديمة: لها وصف وليس لها قالب) أو (جديدة: لها قالب وليس لها وصف)
     __table_args__ = (
         CheckConstraint(
             "((template_id IS NULL) AND (description IS NOT NULL)) OR "
@@ -142,23 +135,17 @@ class Remark(Base):
     remark_id = Column(String(36), unique=True)
     latrine_id = Column(Integer, ForeignKey("latrines.id"), nullable=False)
     boq_code = Column(String(10))
-    
     template_id = Column(Integer, ForeignKey("remark_templates.id", ondelete="SET NULL"), nullable=True)
-    
     date_logged = Column(DateTime, default=datetime.utcnow)
     type = Column(String(50))
     severity = Column(String(20), default=RemarkSeverity.MINOR.value)
-    
-    description = Column(Text, nullable=True) # للملاحظات الحرة القديمة (Legacy)
-    suffix_note = Column(Text, nullable=True) # إضافة نصية للقالب القياسي (Smart)
-    
+    description = Column(Text, nullable=True)
+    suffix_note = Column(Text, nullable=True)
     action_required = Column(Text)
     deadline = Column(DateTime)
     status = Column(String(20), default=RemarkStatus.OPEN.value)
     closed_date = Column(DateTime, nullable=True)
-    
-    evidence_photo_ref = Column(String(100), nullable=True) 
-    
+    evidence_photo_ref = Column(String(100), nullable=True)
     last_update = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     latrine = relationship("Latrine", back_populates="remarks")
@@ -208,29 +195,68 @@ class PolicyProfile(Base):
     name = Column(String(50), unique=True, nullable=False)
     description = Column(Text)
     is_default = Column(Boolean, default=False)
-    rules_json = Column(JSONB, nullable=False) 
+    rules_json = Column(JSONB, nullable=False)
 
 class DecisionRecord(Base):
     __tablename__ = "decision_records"
 
     id = Column(Integer, primary_key=True, index=True)
     boq_item_id = Column(Integer, ForeignKey("boq_items.id"), unique=True, nullable=False)
-    
     execution_pct = Column(Float)
     quality_status = Column(String(20))
     highest_remark_severity = Column(String(20), nullable=True)
-    
     system_recommendation_code = Column(String(50))
     system_recommendation_note = Column(Text)
     system_payment_pct = Column(Float)
-    
     human_decision_code = Column(String(50), nullable=True)
     human_payment_pct = Column(Float, nullable=True)
     override_reason = Column(Text, nullable=True)
-    
     approved_by = Column(String(100), nullable=True)
     approved_at = Column(DateTime, nullable=True)
-    
     final_state = Column(String(20), default="OPEN")
 
     boq_item = relationship("BoqItem", back_populates="decision_record")
+
+# ==========================================
+# 7. AUTHENTICATION & AUTHORIZATION (AUTH-PATCH)
+# ==========================================
+class Role(Base):
+    __tablename__ = "roles"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(50), unique=True, nullable=False)
+    permissions = Column(JSONB, nullable=False, default=list)
+    description = Column(Text)
+
+    users = relationship("User", back_populates="role")
+
+class User(Base):
+    __tablename__ = "users"
+
+    id = Column(Integer, primary_key=True, index=True)
+    username = Column(String(50), unique=True, nullable=False, index=True)
+    email = Column(String(100), unique=True, nullable=True)
+    full_name = Column(String(100), nullable=True)
+    hashed_password = Column(String(255), nullable=False)
+    role_id = Column(Integer, ForeignKey("roles.id"), nullable=True)
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    last_login = Column(DateTime, nullable=True)
+
+    role = relationship("Role", back_populates="users")
+    assigned_latrines = relationship("Latrine", back_populates="assigned_engineer")
+
+class AuditLog(Base):
+    __tablename__ = "audit_logs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    action = Column(String(50), nullable=False)
+    entity_type = Column(String(50), nullable=True)
+    entity_id = Column(Integer, nullable=True)
+    old_values = Column(JSONB, nullable=True)
+    new_values = Column(JSONB, nullable=True)
+    ip_address = Column(String(45), nullable=True)
+    timestamp = Column(DateTime, default=datetime.utcnow)
+
+    user = relationship("User")

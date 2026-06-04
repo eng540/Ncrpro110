@@ -1,3 +1,4 @@
+# AUTH-PATCH 2026-06-02: إضافة دوال المستخدمين وسجل التدقيق و seed admin (مصلح)
 import json
 from sqlalchemy.orm import Session
 from sqlalchemy import func
@@ -245,7 +246,7 @@ def seed_boq_items(db: Session, latrine_id: int):
             {'boq_code': 'A3', 'category': 'A-Building & Concrete', 'description_ar': 'لياسة داخلية وخارجية', 'description_en': 'Plaster', 'unit': 'm2', 'planned_qty': 3.20},
             {'boq_code': 'A4', 'category': 'A-Building & Concrete', 'description_ar': 'سقف خرسانة مسلحة', 'description_en': 'RC Roof', 'unit': 'Lum', 'planned_qty': 1.00},
             {'boq_code': 'A5', 'category': 'A-Building & Concrete', 'description_ar': 'كرسي عربي + كوع ريحة', 'description_en': 'Pan + UPVC', 'unit': 'No', 'planned_qty': 1.00},
-            {'boq_code': 'A6', 'category': 'A-Building & Concrete', 'description_ar': 'بلاط موزايكو', 'description_en': 'Mosaic Tiles', 'unit': 'm2', 'planned_qty': 1.32},
+            {'boq_code': 'A6', 'category': 'A-Building & Concrete', 'description_ar': 'بلاط موزاييكو', 'description_en': 'Mosaic Tiles', 'unit': 'm2', 'planned_qty': 1.32},
             {'boq_code': 'B1', 'category': 'B-Septic & Pipes', 'description_ar': 'حفر بيارة قطر 1م', 'description_en': 'Septic Excavation', 'unit': 'm3', 'planned_qty': 2.00},
             {'boq_code': 'B2', 'category': 'B-Septic & Pipes', 'description_ar': 'تمديد UPVC 4 انش + تهوية', 'description_en': 'UPVC Drainage', 'unit': 'LM', 'planned_qty': 12.00},
             {'boq_code': 'B3', 'category': 'B-Septic & Pipes', 'description_ar': 'غطاء بيارة خرساني', 'description_en': 'Septic Cover', 'unit': 'No', 'planned_qty': 1.00},
@@ -486,8 +487,8 @@ def seed_default_remark_templates(db: Session):
     default_templates = [
         {"template_code": "TPL-001", "title": "تطبيل في البلاط", "description": "وجود فراغات تحت البلاط تسبب صوتاً أجوفاً عند الطرق.", "default_action": "إزالة البلاط المطبل وإعادة تركيبه بمونة كافية.", "default_severity": "major", "boq_tags": ["A6"]},
         {"template_code": "TPL-002", "title": "تسريب مياه من التوصيلات", "description": "وجود تسريب مياه واضح من نقاط لحام المواسير أو المحابس.", "default_action": "فك الوصلة، وضع التيفلون/الغراء بشكل صحيح وإعادة الربط.", "default_severity": "critical", "boq_tags": ["B2", "E10"]},
-        {"template_code": "TPL-003", "title": "عدم استواء اللياسة", "description": "سطح اللياسة غير مستوٍ ويظهر تموجات عند الفحص بالقدة.", "default_action": "صنفرة المناطق البارزة أو إعادة التلبيس للمناطق المعيبة.", "default_severity": "minor", "boq_tags": ["A3"]},
-        {"template_code": "TPL-004", "title": "ميول غير كافٍ في الأرضية", "description": "تجمع مياه في أرضية الحمام بسبب عدم توجيه الميول نحو الصفاية.", "default_action": "إعادة تبليط الأرضية مع ضبط الميول بشكل صحيح.", "default_severity": "major", "boq_tags": ["A6"]},
+        {"template_code": "TPL-003", "title": "عدم استواء اللياسة", "description": "سطح اللياسة غير مستوٍ ويظهر تموجات عند الفحص بالقده.", "default_action": "صنفرة المناطق البارزة أو إعادة التلبيس للمناطق المعيبة.", "default_severity": "minor", "boq_tags": ["A3"]},
+        {"template_code": "TPL-004", "title": "ميل غير كافٍ في الأرضية", "description": "تجمع مياه في أرضية الحمام بسبب عدم توجيه الميول نحو الصفاية.", "default_action": "إعادة تبلط الأرضية مع ضبط الميول بشكل صحيح.", "default_severity": "major", "boq_tags": ["A6"]},
         {"template_code": "GEN-001", "title": "مخلفات بناء في الموقع", "description": "ترك المقاول لمخلفات البناء والأنقاض داخل أو حول الحمام.", "default_action": "تنظيف الموقع بالكامل وترحيل المخلفات للمقالب المعتمدة.", "default_severity": "minor", "boq_tags": ["ALL"]},
         {"template_code": "GEN-002", "title": "عدم الالتزام بمعدات السلامة", "description": "العمال لا يرتدون معدات السلامة المهنية (خوذة، حذاء، قفازات).", "default_action": "إيقاف العمال المخالفين وتوفير معدات السلامة فوراً.", "default_severity": "major", "boq_tags": ["ALL"]},
     ]
@@ -504,7 +505,7 @@ def seed_default_remark_templates(db: Session):
         db.commit()
 
 # ==========================================
-#  SYNC ENGINE PROCESSOR (مع دعم template_code وإصلاحات الأمان)
+#  SYNC ENGINE PROCESSOR
 # ==========================================
 def process_sync_queue(db: Session, sync_req: schemas.SyncRequest) -> schemas.SyncResponse:
     processed = []
@@ -555,7 +556,6 @@ def process_sync_queue(db: Session, sync_req: schemas.SyncRequest) -> schemas.Sy
                 remark_data.pop('id', None)
                 remark_data.pop('local_id', None)
 
-                # ✅ تحويل template_code إلى template_id
                 template_code = remark_data.pop('template_code', None)
                 if template_code:
                     template = db.query(models.RemarkTemplate).filter(
@@ -564,10 +564,8 @@ def process_sync_queue(db: Session, sync_req: schemas.SyncRequest) -> schemas.Sy
                     if template:
                         remark_data['template_id'] = template.id
                     else:
-                        # ✅ إذا لم يوجد القالب، احفظ template_code كـ null ولا تفشل
                         remark_data['template_id'] = None
 
-                # تعقيم البيانات
                 if remark_data.get('description') == "":
                     remark_data['description'] = None
                 if remark_data.get('suffix_note') == "":
@@ -575,7 +573,6 @@ def process_sync_queue(db: Session, sync_req: schemas.SyncRequest) -> schemas.Sy
                 if remark_data.get('template_id') == "":
                     remark_data['template_id'] = None
 
-                # ✅ التحقق من وجود latrine_id و boq_code
                 if not remark_data.get('latrine_id'):
                     failed.append(op.seq)
                     errors[str(op.seq)] = "Missing latrine_id"
@@ -606,13 +603,11 @@ def process_sync_queue(db: Session, sync_req: schemas.SyncRequest) -> schemas.Sy
                 local_uuid = op_data.get("local_uuid")
                 remark = None
 
-                # ✅ البحث أولاً بـ local_uuid (الأكثر موثوقية)
                 if local_uuid:
                     remark = db.query(models.Remark).filter(
                         models.Remark.remark_id == str(local_uuid)[:36]
                     ).first()
 
-                # ✅ البحث بـ id مع حماية كاملة ضد القيم غير الصالحة
                 op_id = op_data.get("id")
                 if not remark and op_id is not None:
                     try:
@@ -625,7 +620,6 @@ def process_sync_queue(db: Session, sync_req: schemas.SyncRequest) -> schemas.Sy
                         pass
 
                 if remark:
-                    # ✅ تحويل template_code إلى template_id
                     template_code = op_data.pop('template_code', None)
                     if template_code:
                         template = db.query(models.RemarkTemplate).filter(
@@ -636,7 +630,6 @@ def process_sync_queue(db: Session, sync_req: schemas.SyncRequest) -> schemas.Sy
                         else:
                             op_data['template_id'] = None
 
-                    # ✅ الحفاظ على البيانات الأساسية إذا لم تُرسل
                     if 'boq_code' not in op_data or op_data.get('boq_code') is None:
                         op_data['boq_code'] = remark.boq_code
                     if 'latrine_id' not in op_data or op_data.get('latrine_id') is None:
@@ -646,7 +639,6 @@ def process_sync_queue(db: Session, sync_req: schemas.SyncRequest) -> schemas.Sy
                         if hasattr(remark, key) and key not in ["id", "local_uuid", "sync_status", "local_id"]:
                             if value == "" and key in ['description', 'suffix_note', 'template_id']:
                                 value = None
-                            # ✅ لا تسمح بفقدان البند أو الحمام
                             if key in ['boq_code', 'latrine_id'] and value is None:
                                 continue
                             setattr(remark, key, value)
@@ -692,7 +684,6 @@ def process_sync_queue(db: Session, sync_req: schemas.SyncRequest) -> schemas.Sy
                 db.add(new_log)
                 processed.append(op.seq)
 
-            # معالج CREATE_TEMPLATE (إضافة القوالب من الأجهزة المحمولة)
             elif op.type == "CREATE_TEMPLATE":
                 template_data = op_data.copy()
                 if not template_data.get('template_code'):
@@ -707,7 +698,6 @@ def process_sync_queue(db: Session, sync_req: schemas.SyncRequest) -> schemas.Sy
                     processed.append(op.seq)
                 else:
                     try:
-                        # ✅ تعقيم boq_tags إذا كانت سلسلة نصية
                         if isinstance(template_data.get('boq_tags'), str):
                             try:
                                 template_data['boq_tags'] = json.loads(template_data['boq_tags'])
@@ -742,3 +732,140 @@ def process_sync_queue(db: Session, sync_req: schemas.SyncRequest) -> schemas.Sy
         failed_ids=failed,
         errors=errors
     )
+
+
+# ==========================================
+# AUTH-PATCH 2026-06-02: USER & AUDIT CRUD (مصلح)
+# ==========================================
+
+def get_user(db: Session, user_id: int):
+    return db.query(models.User).filter(models.User.id == user_id).first()
+
+def get_user_by_username(db: Session, username: str):
+    return db.query(models.User).filter(models.User.username == username).first()
+
+def get_user_by_email(db: Session, email: str):
+    return db.query(models.User).filter(models.User.email == email).first()
+
+def create_user(db: Session, user: schemas.UserCreate):
+    from app.security import get_password_hash
+    hashed_password = get_password_hash(user.password)
+    db_user = models.User(
+        username=user.username,
+        email=user.email,
+        full_name=user.full_name,
+        hashed_password=hashed_password,
+        role_id=user.role_id,
+        is_active=user.is_active
+    )
+    db.add(db_user)
+    db.commit()
+    db.refresh(db_user)
+    return db_user
+
+def update_user(db: Session, user_id: int, updates: schemas.UserUpdate):
+    user = get_user(db, user_id)
+    if not user:
+        return None
+    update_data = updates.dict(exclude_unset=True)
+    if "password" in update_data:
+        from app.security import get_password_hash
+        update_data["hashed_password"] = get_password_hash(update_data.pop("password"))
+    for key, value in update_data.items():
+        setattr(user, key, value)
+    db.commit()
+    db.refresh(user)
+    return user
+
+def authenticate_user(db: Session, username: str, password: str):
+    user = get_user_by_username(db, username)
+    if not user:
+        return None
+    from app.security import verify_password
+    if not verify_password(password, user.hashed_password):
+        return None
+    if not user.is_active:
+        return None
+    return user
+
+def update_last_login(db: Session, user_id: int):
+    user = get_user(db, user_id)
+    if user:
+        user.last_login = datetime.utcnow()
+        db.commit()
+
+def create_audit_log(db: Session, log: schemas.AuditLogCreate, user_id: int):
+    db_log = models.AuditLog(
+        user_id=user_id,
+        action=log.action,
+        entity_type=log.entity_type,
+        entity_id=log.entity_id,
+        old_values=log.old_values,
+        new_values=log.new_values,
+        ip_address=log.ip_address
+    )
+    db.add(db_log)
+    db.commit()
+    db.refresh(db_log)
+    return db_log
+
+def get_audit_logs(db: Session, skip: int = 0, limit: int = 100, user_id: int = None, action: str = None):
+    query = db.query(models.AuditLog)
+    if user_id:
+        query = query.filter(models.AuditLog.user_id == user_id)
+    if action:
+        query = query.filter(models.AuditLog.action == action)
+    return query.order_by(models.AuditLog.timestamp.desc()).offset(skip).limit(limit).all()
+
+# ==========================================
+# SEED DEFAULT ADMIN (مصلح لمنع تضارب البريد الإلكتروني)
+# ==========================================
+def seed_default_admin(db: Session):
+    import os
+    admin_username = os.getenv("ADMIN_USERNAME", "admin")
+    admin_password = os.getenv("ADMIN_PASSWORD")
+    if not admin_password:
+        # لا ننشئ admin إذا لم تُحدد كلمة السر في البيئة (آمن)
+        return
+
+    # البحث عن مستخدم موجود بنفس البريد الإلكتروني أو اسم المستخدم
+    existing_by_email = db.query(models.User).filter(models.User.email == "admin@nrc.org").first()
+    existing_by_username = db.query(models.User).filter(models.User.username == admin_username).first()
+    
+    admin_role = db.query(models.Role).filter(models.Role.name == "admin").first()
+    if not admin_role:
+        return
+
+    from app.security import get_password_hash
+    hashed = get_password_hash(admin_password)
+
+    if existing_by_email:
+        # تحديث المستخدم الموجود بنفس البريد
+        existing_by_email.username = admin_username
+        existing_by_email.hashed_password = hashed
+        existing_by_email.is_active = True
+        existing_by_email.role_id = admin_role.id
+        existing_by_email.full_name = "System Administrator"
+        db.commit()
+        return
+    elif existing_by_username:
+        # تحديث المستخدم الموجود بنفس اسم المستخدم
+        existing_by_username.email = os.getenv("ADMIN_EMAIL", f"{admin_username}@nrc.org")
+        existing_by_username.hashed_password = hashed
+        existing_by_username.is_active = True
+        existing_by_username.role_id = admin_role.id
+        existing_by_username.full_name = "System Administrator"
+        db.commit()
+        return
+    else:
+        # إنشاء مستخدم جديد
+        admin_user = models.User(
+            username=admin_username,
+            email=os.getenv("ADMIN_EMAIL", f"{admin_username}@nrc.org"),
+            full_name="System Administrator",
+            hashed_password=hashed,
+            role_id=admin_role.id,
+            is_active=True
+        )
+        db.add(admin_user)
+        db.commit()

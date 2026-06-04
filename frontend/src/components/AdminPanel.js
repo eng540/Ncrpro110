@@ -1,4 +1,9 @@
+// AdminPanel.js – لوحة تحكم الإدارة (المستفيدين، القاموس، الأسعار، المستخدمين)
+// AUTH-PATCH 2026-06-03: يعتمد على authFetch (يستخدم fetch العادي)
+// تم إصلاح أخطاء JSX بالكامل
+
 import React, { useState, useEffect, useCallback } from 'react';
+import AdminUsers from './AdminUsers';
 
 const API_BASE_URL = process.env.REACT_APP_API_URL || '/api';
 
@@ -61,7 +66,7 @@ const Button = ({ onClick, children, variant = 'primary', disabled = false, styl
 };
 
 // ==========================================
-// مكون رفع الملفات (Drag & Drop)
+// مكون رفع الملفات (Drag & Drop) – يستخدم fetch العادي
 // ==========================================
 const FileUploader = ({ onUpload, accept = '.xlsx,.xls', label, icon, templateUrl }) => {
   const [isDragging, setIsDragging] = useState(false);
@@ -131,7 +136,6 @@ const FileUploader = ({ onUpload, accept = '.xlsx,.xls', label, icon, templateUr
 
   return (
     <div style={{ direction: 'rtl' }}>
-      {/* منطقة السحب والإفلات */}
       <div
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
@@ -163,7 +167,6 @@ const FileUploader = ({ onUpload, accept = '.xlsx,.xls', label, icon, templateUr
         />
       </div>
 
-      {/* عرض الملف المختار */}
       {file && (
         <div style={{
           marginTop: '15px',
@@ -191,7 +194,6 @@ const FileUploader = ({ onUpload, accept = '.xlsx,.xls', label, icon, templateUr
         </div>
       )}
 
-      {/* نتيجة الاستيراد */}
       {result && (
         <div style={{
           marginTop: '15px',
@@ -235,7 +237,6 @@ const FileUploader = ({ onUpload, accept = '.xlsx,.xls', label, icon, templateUr
         </div>
       )}
 
-      {/* خطأ */}
       {error && (
         <div style={{
           marginTop: '15px',
@@ -249,7 +250,6 @@ const FileUploader = ({ onUpload, accept = '.xlsx,.xls', label, icon, templateUr
         </div>
       )}
 
-      {/* رابط التحميل */}
       {templateUrl && (
         <div style={{ marginTop: '10px', textAlign: 'center' }}>
           <a
@@ -273,7 +273,7 @@ const FileUploader = ({ onUpload, accept = '.xlsx,.xls', label, icon, templateUr
 };
 
 // ==========================================
-// مكون إدارة الأسعار (Price Manager)
+// مكون إدارة الأسعار (Price Manager) – يستخدم fetch العادي
 // ==========================================
 const PriceManager = () => {
   const [items, setItems] = useState([]);
@@ -341,9 +341,7 @@ const PriceManager = () => {
     if (!window.confirm(`هل أنت متأكد من إلغاء تفعيل البند ${boqCode}؟`)) return;
 
     try {
-      const res = await fetch(`${API_BASE_URL}/admin/boq-dictionary/${boqCode}`, {
-        method: 'DELETE'
-      });
+      const res = await fetch(`${API_BASE_URL}/admin/boq-dictionary/${boqCode}`, { method: 'DELETE' });
       if (res.ok) {
         setMessage({ type: 'success', text: `تم إلغاء تفعيل البند ${boqCode}` });
         fetchDictionary();
@@ -514,7 +512,7 @@ const PriceManager = () => {
 };
 
 // ==========================================
-// الصفحة الرئيسية للوحة التحكم
+// الصفحة الرئيسية للوحة التحكم – مع تبويب إدارة المستخدمين
 // ==========================================
 const AdminPanel = ({ onBack }) => {
   const [activeTab, setActiveTab] = useState('beneficiaries');
@@ -522,7 +520,8 @@ const AdminPanel = ({ onBack }) => {
   const tabs = [
     { id: 'beneficiaries', label: '👥 استيراد المستفيدين', icon: '👥' },
     { id: 'dictionary', label: '📋 استيراد القاموس', icon: '📋' },
-    { id: 'prices', label: '💰 إدارة الأسعار', icon: '💰' }
+    { id: 'prices', label: '💰 إدارة الأسعار', icon: '💰' },
+    { id: 'users', label: '👥 إدارة المستخدمين', icon: '👥' }
   ];
 
   return (
@@ -541,7 +540,7 @@ const AdminPanel = ({ onBack }) => {
             ⚙️ لوحة تحكم الإدارة
           </h1>
           <p style={{ margin: 0, color: '#7f8c8d', fontSize: '14px' }}>
-            إدارة المشاريع والأسعار واستيراد البيانات
+            إدارة المشاريع والأسعار والمستخدمين واستيراد البيانات
           </p>
         </div>
         <Button onClick={onBack} variant="outline">
@@ -555,7 +554,8 @@ const AdminPanel = ({ onBack }) => {
         gap: '5px',
         marginBottom: '25px',
         borderBottom: `2px solid ${COLORS.border}`,
-        paddingBottom: '2px'
+        paddingBottom: '2px',
+        flexWrap: 'wrap'
       }}>
         {tabs.map(tab => (
           <button
@@ -598,7 +598,7 @@ const AdminPanel = ({ onBack }) => {
       )}
 
       {activeTab === 'dictionary' && (
-        <Card title="📥 استيراد قاموس البنود والأسعار">
+        <Card title="📘 استيراد قاموس البنود والأسعار">
           <p style={{ color: '#7f8c8d', marginBottom: '20px', lineHeight: '1.6' }}>
             ارفع ملف Excel يحتوي على قائمة البنود وأسعار الوحدات. هذا القاموس سيُستخدم في حساب نسب الإنجاز المالية.
             <br />
@@ -619,6 +619,15 @@ const AdminPanel = ({ onBack }) => {
             تعديل الأسعار والأوصاف مباشرة. أي تغيير هنا سيؤثر فوراً على حسابات الإنجاز المالي للمشروع.
           </p>
           <PriceManager />
+        </Card>
+      )}
+
+      {activeTab === 'users' && (
+        <Card title="👥 إدارة المستخدمين والأدوار">
+          <p style={{ color: '#7f8c8d', marginBottom: '20px', lineHeight: '1.6' }}>
+            إضافة وتعديل وحذف المستخدمين، وتعيين الأدوار (مدير، مهندس، مشاهد). ملاحظة: المستخدم admin لا يمكن حذفه.
+          </p>
+          <AdminUsers />
         </Card>
       )}
     </div>
