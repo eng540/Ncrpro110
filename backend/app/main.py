@@ -1,5 +1,7 @@
-# AUTH-PATCH 2026-06-02: ШҘШ¶Ш§ЩҒШ© OAuth2, RBAC, Audit Log, Rate Limiting, CORS Щ…ЩӮЩҠШҜ (Щ…ШөЩ„Шӯ)
-# 2026-06-03: ШҘШ¶Ш§ЩҒШ© endpoint /api/evidence/presigned-url ЩҲ /api/evidence/view Щ„ШҜШ№Щ… Ш§Щ„ШөЩҲШұ
+# AUTH-PATCH 2026-06-02: إضافة OAuth2, RBAC, Audit Log, Rate Limiting, CORS مقيد (مصلح)
+# 2026-06-03: إضافة endpoint /api/admin/roles
+# 2026-06-03: إصلاح أمني – إضافة require_write_permission إلى /api/sync
+# 2026-06-03: إضافة endpoint /api/evidence/presigned-url و /api/evidence/view لدعم الصور
 
 from fastapi import FastAPI, Depends, HTTPException, Query, UploadFile, File, Request, status
 from fastapi.middleware.cors import CORSMiddleware
@@ -12,6 +14,7 @@ import os
 from io import BytesIO
 import openpyxl
 from contextlib import asynccontextmanager
+import logging
 import boto3
 from botocore.config import Config
 from botocore.exceptions import ClientError
@@ -30,8 +33,10 @@ from slowapi.errors import RateLimitExceeded
 
 limiter = Limiter(key_func=get_remote_address, default_limits=["100/minute"])
 
+logger = logging.getLogger(__name__)
+
 # ==========================================
-# Lifespan with seeding (Щ…ШөЩ„Шӯ: ЩҠШ¶Щ…ЩҶ ЩҲШ¬ЩҲШҜ yield)
+# Lifespan with seeding (مصلح: يضمن وجود yield)
 # ==========================================
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -41,10 +46,10 @@ async def lifespan(app: FastAPI):
         crud.seed_default_remark_templates(db)
         crud.seed_default_admin(db)          # AUTH-PATCH
         print("Default policies, remark templates, and admin user seeded successfully.")
-        yield   # рҹ”ҙ ЩҮШ°Ш§ Ш§Щ„ШіШ·Шұ Ш¶ШұЩҲШұЩҠ Ш¬ШҜШ§ЩӢ - ШЁШҜЩҲЩҶЩҮ Щ„ЩҶ ЩҠШ№Щ…Щ„ Ш§Щ„ШӘШ·ШЁЩҠЩӮ
+        yield   # هذا السطر ضروري جداً - بدونه لن يعمل التطبيق
     except Exception as e:
         print(f"Failed to seed defaults: {e}")
-        # Щ„Ш§ ЩҶШ№ЩҠШҜ ШұЩҒШ№ Ш§Щ„Ш§ШіШӘШ«ЩҶШ§ШЎ Щ„Щ…ЩҶШ№ ЩҒШҙЩ„ ШЁШҜШЎ Ш§Щ„ШӘШҙШәЩҠЩ„
+        # لا نعيد رفع الاستثناء لمنع فشل بدء التشغيل
     finally:
         db.close()
 
@@ -190,14 +195,14 @@ async def get_audit_logs(
     return crud.get_audit_logs(db, skip=skip, limit=limit, user_id=user_id, action=action)
 
 # ==========================================
-# ROLES ENDPOINT (Щ„ШҘШҜШ§ШұШ© Ш§Щ„Щ…ШіШӘШ®ШҜЩ…ЩҠЩҶ)
+# ROLES ENDPOINT (لإدارة المستخدمين)
 # ==========================================
 @app.get("/api/admin/roles", response_model=List[schemas.RoleOut])
 def list_roles(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(security.require_admin)
 ):
-    """ШҘШұШ¬Ш§Ш№ ЩӮШ§ШҰЩ…Ш© Ш¬Щ…ЩҠШ№ Ш§Щ„ШЈШҜЩҲШ§Шұ (Щ„Щ„Ш§ШіШӘШ®ШҜШ§Щ… ЩҒЩҠ Щ„ЩҲШӯШ© Ш§Щ„ШҘШҜШ§ШұШ©)"""
+    """إرجاع قائمة جميع الأدوار (للاستخدام في لوحة الإدارة)"""
     return db.query(models.Role).all()
 
 # ==========================================
@@ -208,7 +213,7 @@ def health_check():
     return {"status": "healthy", "service": "running", "version": "3.0.0", "mode": "dynamic_saas"}
 
 # ==========================================
-# LATRINES (Щ…ШӯЩ…ЩҠШ©)
+# LATRINES (محمية)
 # ==========================================
 @app.get("/api/latrines", response_model=List[schemas.LatrineOut])
 def list_latrines(
@@ -225,7 +230,7 @@ def list_latrines(
         query = query.filter(models.Latrine.status == status)
     return query.offset(skip).limit(limit).all()
 
-@app.get("/api/latrines/{latrine_id}", response_model=schemas.LatrineOut)
+@app.get("/api/latrines/{latrine_id}", response_model=schemas.LatrineOut])
 def get_latrine(
     latrine_id: int,
     db: Session = Depends(get_db),
@@ -239,7 +244,7 @@ def get_latrine(
             raise HTTPException(status_code=403, detail="Not assigned to this latrine")
     return latrine
 
-@app.post("/api/latrines", response_model=schemas.LatrineOut)
+@app.post("/api/latrines", response_model=schemas.LatrineOut])
 def create_latrine(
     latrine: schemas.LatrineCreate,
     db: Session = Depends(get_db),
@@ -254,7 +259,7 @@ def create_latrine(
     crud.seed_boq_items(db, db_latrine.id)
     return db_latrine
 
-@app.patch("/api/latrines/{latrine_id}", response_model=schemas.LatrineOut)
+@app.patch("/api/latrines/{latrine_id}", response_model=schemas.LatrineOut])
 def patch_latrine(
     latrine_id: int,
     updates: schemas.LatrineUpdate,
@@ -294,7 +299,7 @@ def list_boq_items(
                 return []
     return crud.get_boq_items(db, latrine_id=latrine_id)
 
-@app.patch("/api/boq-items/{item_id}", response_model=schemas.BoqItemOut)
+@app.patch("/api/boq-items/{item_id}", response_model=schemas.BoqItemOut])
 def update_boq_item(
     item_id: int,
     updates: schemas.BoqItemUpdate,
@@ -339,7 +344,7 @@ def list_remarks(
             return db.query(models.Remark).filter(models.Remark.latrine_id.in_(assigned_ids)).all()
     return crud.get_remarks(db, latrine_id=latrine_id, status=status)
 
-@app.post("/api/remarks", response_model=schemas.RemarkOut)
+@app.post("/api/remarks", response_model=schemas.RemarkOut])
 def create_remark(
     remark: schemas.RemarkCreate,
     db: Session = Depends(get_db),
@@ -350,7 +355,7 @@ def create_remark(
     security.log_audit(db, current_user.id, "CREATE_REMARK", "remark", db_remark.id, new_values=remark.dict(), request=request)
     return db_remark
 
-@app.patch("/api/remarks/{remark_id}", response_model=schemas.RemarkOut)
+@app.patch("/api/remarks/{remark_id}", response_model=schemas.RemarkOut])
 def patch_remark(
     remark_id: int,
     updates: schemas.RemarkUpdate,
@@ -367,7 +372,7 @@ def patch_remark(
 # ==========================================
 # DAILY LOGS
 # ==========================================
-@app.post("/api/daily-logs", response_model=schemas.DailyLogOut)
+@app.post("/api/daily-logs", response_model=schemas.DailyLogOut])
 def create_daily_log(
     log: schemas.DailyLogCreate,
     db: Session = Depends(get_db),
@@ -540,17 +545,49 @@ def download_matrix_report(
         raise HTTPException(status_code=500, detail=f"Failed to generate report: {str(e)}")
 
 # ==========================================
-# SYNC ENGINE
+# SYNC ENGINE (مع تطبيق الصلاحيات)
 # ==========================================
 @app.post("/api/sync", response_model=schemas.SyncResponse)
 def sync_offline_data(
     request: schemas.SyncRequest,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(security.get_current_active_user)
+    # 🔒 أفضل ممارسة: استخدام require_write_permission بدلاً من get_current_active_user
+    # يضمن أن المستخدم لديه صلاحية كتابة على الأقل على كيان واحد
+    current_user: models.User = Depends(security.require_write_permission()),
+    req: Request = None
 ):
+    """
+    مزامنة البيانات غير المتصلة (Offline Sync)
+    🔒 تتطلب صلاحية كتابة (أي دور له :write أو admin)
+    """
     try:
-        return crud.process_sync_queue(db, request)
+        # تسجيل عملية المزامنة في سجل التدقيق (Audit Log) اختياري
+        security.log_audit(
+            db, 
+            current_user.id, 
+            "SYNC_REQUEST", 
+            "batch", 
+            None, 
+            new_values={"operation_count": len(request.operations)},
+            request=req
+        )
+
+        result = crud.process_sync_queue(db, request)
+
+        # تسجيل النتيجة
+        security.log_audit(
+            db,
+            current_user.id,
+            "SYNC_COMPLETE",
+            "batch",
+            None,
+            new_values={"processed": len(result.processed_ids), "failed": len(result.failed_ids)},
+            request=req
+        )
+
+        return result
     except Exception as e:
+        logger.error(f"Sync failed for user {current_user.username}: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Critical Sync Failure: {str(e)}")
 
 # ==========================================
@@ -563,7 +600,7 @@ def list_boq_dictionary(
 ):
     return crud.get_boq_dictionary(db)
 
-@app.post("/api/admin/boq-dictionary", response_model=schemas.BoqDictionaryOut)
+@app.post("/api/admin/boq-dictionary", response_model=schemas.BoqDictionaryOut])
 def create_dictionary_item(
     item: schemas.BoqDictionaryCreate,
     db: Session = Depends(get_db),
@@ -574,7 +611,7 @@ def create_dictionary_item(
         raise HTTPException(status_code=400, detail=f"BoQ code {item.boq_code} already exists")
     return crud.create_boq_dictionary_item(db, item)
 
-@app.patch("/api/admin/boq-dictionary/{boq_code}", response_model=schemas.BoqDictionaryOut)
+@app.patch("/api/admin/boq-dictionary/{boq_code}", response_model=schemas.BoqDictionaryOut])
 def update_dictionary_item(
     boq_code: str,
     updates: schemas.BoqDictionaryUpdate,
@@ -605,7 +642,7 @@ async def import_beneficiaries(
     request: Request = None
 ):
     if not file.filename.endswith(('.xlsx', '.xls')):
-        raise HTTPException(status_code=400, detail="ЩҠШ¬ШЁ ШұЩҒШ№ Щ…Щ„ЩҒ Excel (.xlsx ШЈЩҲ .xls)")
+        raise HTTPException(status_code=400, detail="يجب رفع ملف Excel (.xlsx أو .xls)")
     try:
         contents = await file.read()
         wb = openpyxl.load_workbook(filename=BytesIO(contents), data_only=True)
@@ -646,12 +683,12 @@ async def import_beneficiaries(
                     crud.seed_boq_items(db, db_latrine.id)
                     created_count += 1
             except Exception as row_error:
-                errors.append(f"Ш®Ш·ШЈ ЩҒЩҠ Ш§Щ„ШөЩҒ {idx}: {str(row_error)}")
+                errors.append(f"خطأ في الصف {idx}: {str(row_error)}")
                 continue
         db.commit()
         security.log_audit(db, current_user.id, "IMPORT_BENEFICIARIES", "batch", None, new_values={"created": created_count, "updated": updated_count}, request=request)
         return {
-            "message": "ШӘЩ… Ш§Щ„Ш§ШіШӘЩҠШұШ§ШҜ ШЁЩҶШ¬Ш§Шӯ",
+            "message": "تم الاستيراد بنجاح",
             "updated": updated_count,
             "created": created_count,
             "errors": errors if errors else None,
@@ -659,7 +696,7 @@ async def import_beneficiaries(
         }
     except Exception as e:
         db.rollback()
-        raise HTTPException(status_code=500, detail=f"Ш®Ш·ШЈ ШЈШ«ЩҶШ§ШЎ Щ…Ш№Ш§Щ„Ш¬Ш© Ш§Щ„Щ…Щ„ЩҒ: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"خطأ أثناء معالجة الملف: {str(e)}")
 
 @app.post("/api/admin/import-boq-dictionary")
 async def import_boq_dictionary(
@@ -669,7 +706,7 @@ async def import_boq_dictionary(
     request: Request = None
 ):
     if not file.filename.endswith(('.xlsx', '.xls')):
-        raise HTTPException(status_code=400, detail="ЩҠШ¬ШЁ ШұЩҒШ№ Щ…Щ„ЩҒ Excel (.xlsx ШЈЩҲ .xls)")
+        raise HTTPException(status_code=400, detail="يجب رفع ملف Excel (.xlsx أو .xls)")
     try:
         contents = await file.read()
         wb = openpyxl.load_workbook(filename=BytesIO(contents), data_only=True)
@@ -714,19 +751,19 @@ async def import_boq_dictionary(
                     crud.create_boq_dictionary_item(db, new_item)
                     imported_count += 1
             except Exception as row_error:
-                errors.append(f"Ш®Ш·ШЈ ЩҒЩҠ Ш§Щ„ШөЩҒ {idx}: {str(row_error)}")
+                errors.append(f"خطأ في الصف {idx}: {str(row_error)}")
                 continue
         db.commit()
         security.log_audit(db, current_user.id, "IMPORT_BOQ_DICTIONARY", "batch", None, new_values={"imported": imported_count, "updated": updated_count}, request=request)
         return {
-            "message": "ШӘЩ… Ш§ШіШӘЩҠШұШ§ШҜ Ш§Щ„ЩӮШ§Щ…ЩҲШі ШЁЩҶШ¬Ш§Шӯ",
+            "message": "تم استيراد القاموس بنجاح",
             "imported": imported_count,
             "updated": updated_count,
             "errors": errors if errors else None
         }
     except Exception as e:
         db.rollback()
-        raise HTTPException(status_code=500, detail=f"Ш®Ш·ШЈ ШЈШ«ЩҶШ§ШЎ Щ…Ш№Ш§Щ„Ш¬Ш© Ш§Щ„Щ…Щ„ЩҒ: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"خطأ أثناء معالجة الملف: {str(e)}")
 
 # ==========================================
 # GOVERNANCE ENDPOINTS
@@ -780,7 +817,7 @@ def list_remark_templates(
 ):
     return crud.get_remark_templates(db)
 
-@app.post("/api/admin/remark-templates", response_model=schemas.RemarkTemplateOut)
+@app.post("/api/admin/remark-templates", response_model=schemas.RemarkTemplateOut])
 def create_remark_template(
     template: schemas.RemarkTemplateCreate,
     db: Session = Depends(get_db),
@@ -788,7 +825,7 @@ def create_remark_template(
 ):
     return crud.create_remark_template(db, template)
 
-@app.patch("/api/admin/remark-templates/{template_code}", response_model=schemas.RemarkTemplateOut)
+@app.patch("/api/admin/remark-templates/{template_code}", response_model=schemas.RemarkTemplateOut])
 def update_remark_template(
     template_code: str,
     updates: schemas.RemarkTemplateUpdate,
