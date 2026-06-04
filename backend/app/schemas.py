@@ -1,4 +1,5 @@
-# AUTH-PATCH 2026-06-02: ШҘШ¶Ш§ЩҒШ© schemas Ш§Щ„Щ…ШіШӘШ®ШҜЩ…ЩҠЩҶ ЩҲШ§Щ„ШЈШҜЩҲШ§Шұ ЩҲШ§Щ„ЩҖ Token ЩҲ Audit Log
+# AUTH-PATCH 2026-06-02: إضافة schemas المستخدمين والأدوار والـ Token و Audit Log
+# 2026-06-03: إضافة before_photo_ref و after_photo_ref في RemarkBase و RemarkUpdate
 
 from pydantic import BaseModel, Field, EmailStr
 from typing import Optional, List, Dict, Any
