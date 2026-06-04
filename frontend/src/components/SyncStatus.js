@@ -1,10 +1,11 @@
-// AUTH-PATCH 2026-06-02: استخدام apiFetch بدلاً من fetch المباشر (مع الاحتفاظ بكل الوظائف)
+// AUTH-PATCH 2026-06-02: Ш§ШіШӘШ®ШҜШ§Щ… apiFetch ШЁШҜЩ„Ш§ЩӢ Щ…ЩҶ fetch Ш§Щ„Щ…ШЁШ§ШҙШұ (Щ…Ш№ Ш§Щ„Ш§ШӯШӘЩҒШ§Шё ШЁЩғЩ„ Ш§Щ„ЩҲШёШ§ШҰЩҒ)
 
 import React, { useState, useEffect } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '../db/index.js';
 import { syncWithServer } from '../syncEngine';
 import { apiFetch } from '../api';
+import { imageService } from '../services/imageService';
 
 const SyncStatus = () => {
   const [isOnline, setIsOnline] = useState(navigator.onLine);
@@ -13,7 +14,19 @@ const SyncStatus = () => {
   const pendingCount = useLiveQuery(() => db.sync_queue.count(), []);
 
   useEffect(() => {
-    const handleOnline = () => setIsOnline(true);
+    let isSyncingImages = false;
+    const handleOnline = async () => {
+      if (isSyncingImages) return;
+      isSyncingImages = true;
+      setIsOnline(true);
+      try {
+        await imageService.syncPendingImages();
+      } catch (err) {
+        console.error("Online image sync error:", err);
+      } finally {
+        isSyncingImages = false;
+      }
+    };
     const handleOffline = () => setIsOnline(false);
     window.addEventListener('online', handleOnline);
     window.addEventListener('offline', handleOffline);
@@ -23,34 +36,34 @@ const SyncStatus = () => {
     };
   }, []);
 
-  // دفع التعديلات إلى الخادم
+  // ШҜЩҒШ№ Ш§Щ„ШӘШ№ШҜЩҠЩ„Ш§ШӘ ШҘЩ„Щү Ш§Щ„Ш®Ш§ШҜЩ…
   const handlePushSync = async () => {
     if (!isOnline || pendingCount === 0) return;
     setIsSyncing(true);
     try {
       const result = await syncWithServer();
-      alert(`تمت المزامنة بنجاح: ${result.processed} عملية ناجحة.`);
+      alert(`ШӘЩ…ШӘ Ш§Щ„Щ…ШІШ§Щ…ЩҶШ© ШЁЩҶШ¬Ш§Шӯ: ${result.processed} Ш№Щ…Щ„ЩҠШ© ЩҶШ§Ш¬ШӯШ©.`);
     } catch (error) {
-      alert(`خطأ في المزامنة: ${error.message}`);
+      alert(`Ш®Ш·ШЈ ЩҒЩҠ Ш§Щ„Щ…ШІШ§Щ…ЩҶШ©: ${error.message}`);
     } finally {
       setIsSyncing(false);
     }
   };
 
-  // سحب أحدث البيانات من الخادم (تحميل)
+  // ШіШӯШЁ ШЈШӯШҜШ« Ш§Щ„ШЁЩҠШ§ЩҶШ§ШӘ Щ…ЩҶ Ш§Щ„Ш®Ш§ШҜЩ… (ШӘШӯЩ…ЩҠЩ„)
   const handleDownloadData = async () => {
     if (!isOnline) {
-      alert("يجب أن تكون متصلاً بالإنترنت لتحميل البيانات.");
+      alert("ЩҠШ¬ШЁ ШЈЩҶ ШӘЩғЩҲЩҶ Щ…ШӘШөЩ„Ш§ЩӢ ШЁШ§Щ„ШҘЩҶШӘШұЩҶШӘ Щ„ШӘШӯЩ…ЩҠЩ„ Ш§Щ„ШЁЩҠШ§ЩҶШ§ШӘ.");
       return;
     }
     if (pendingCount > 0) {
-      alert("لديك تعديلات محلية لم يتم إرسالها. يرجى مزامنة بياناتك أولاً.");
+      alert("Щ„ШҜЩҠЩғ ШӘШ№ШҜЩҠЩ„Ш§ШӘ Щ…ШӯЩ„ЩҠШ© Щ„Щ… ЩҠШӘЩ… ШҘШұШіШ§Щ„ЩҮШ§. ЩҠШұШ¬Щү Щ…ШІШ§Щ…ЩҶШ© ШЁЩҠШ§ЩҶШ§ШӘЩғ ШЈЩҲЩ„Ш§ЩӢ.");
       return;
     }
 
     setIsDownloading(true);
     try {
-      // ✅ التغيير الوحيد: استبدال fetch بـ apiFetch
+      // вң… Ш§Щ„ШӘШәЩҠЩҠШұ Ш§Щ„ЩҲШӯЩҠШҜ: Ш§ШіШӘШЁШҜШ§Щ„ fetch ШЁЩҖ apiFetch
       const [latrinesRes, boqRes, remarksRes, templatesRes] = await Promise.all([
         apiFetch('/latrines?limit=200'),
         apiFetch('/boq-items'),
@@ -58,7 +71,7 @@ const SyncStatus = () => {
         apiFetch('/remark-templates')
       ]);
 
-      if (!latrinesRes.ok || !boqRes.ok) throw new Error("فشل الاتصال بالخادم");
+      if (!latrinesRes.ok || !boqRes.ok) throw new Error("ЩҒШҙЩ„ Ш§Щ„Ш§ШӘШөШ§Щ„ ШЁШ§Щ„Ш®Ш§ШҜЩ…");
 
       const latrines = await latrinesRes.json();
       const boqItems = await boqRes.json();
@@ -78,10 +91,10 @@ const SyncStatus = () => {
           await db.remarks.bulkAdd(remarksWithSync);
         }
       });
-      alert("تم تحميل أحدث البيانات (بما فيها مكتبة الملاحظات) بنجاح!");
+      alert("ШӘЩ… ШӘШӯЩ…ЩҠЩ„ ШЈШӯШҜШ« Ш§Щ„ШЁЩҠШ§ЩҶШ§ШӘ (ШЁЩ…Ш§ ЩҒЩҠЩҮШ§ Щ…ЩғШӘШЁШ© Ш§Щ„Щ…Щ„Ш§ШӯШёШ§ШӘ) ШЁЩҶШ¬Ш§Шӯ!");
     } catch (error) {
       console.error(error);
-      alert("تعذر تحميل البيانات من الخادم.");
+      alert("ШӘШ№Ш°Шұ ШӘШӯЩ…ЩҠЩ„ Ш§Щ„ШЁЩҠШ§ЩҶШ§ШӘ Щ…ЩҶ Ш§Щ„Ш®Ш§ШҜЩ….");
     } finally {
       setIsDownloading(false);
     }
@@ -102,20 +115,20 @@ const SyncStatus = () => {
       gap: '10px'
     }}>
       <div>
-        <strong>{isOnline ? 'متصل بالإنترنت (Online)' : 'العمل دون اتصال (Offline)'}</strong>
-        {pendingCount > 0 && <span style={{ marginRight: '15px', fontWeight: 'bold' }}>- عمليات تنتظر الإرسال: {pendingCount}</span>}
+        <strong>{isOnline ? 'Щ…ШӘШөЩ„ ШЁШ§Щ„ШҘЩҶШӘШұЩҶШӘ (Online)' : 'Ш§Щ„Ш№Щ…Щ„ ШҜЩҲЩҶ Ш§ШӘШөШ§Щ„ (Offline)'}</strong>
+        {pendingCount > 0 && <span style={{ marginRight: '15px', fontWeight: 'bold' }}>- Ш№Щ…Щ„ЩҠШ§ШӘ ШӘЩҶШӘШёШұ Ш§Щ„ШҘШұШіШ§Щ„: {pendingCount}</span>}
       </div>
       <div style={{ display: 'flex', gap: '10px' }}>
         {pendingCount > 0 && (
           <button onClick={handlePushSync} disabled={!isOnline || isSyncing}
             style={{ padding: '6px 12px', backgroundColor: 'white', color: '#f39c12', border: 'none', borderRadius: '4px', fontWeight: 'bold', cursor: (!isOnline || isSyncing) ? 'not-allowed' : 'pointer' }}>
-            {isSyncing ? 'جاري الإرسال...' : 'إرسال التعديلات للخادم'}
+            {isSyncing ? 'Ш¬Ш§ШұЩҠ Ш§Щ„ШҘШұШіШ§Щ„...' : 'ШҘШұШіШ§Щ„ Ш§Щ„ШӘШ№ШҜЩҠЩ„Ш§ШӘ Щ„Щ„Ш®Ш§ШҜЩ…'}
           </button>
         )}
         <button onClick={handleDownloadData} disabled={!isOnline || isDownloading || pendingCount > 0}
           style={{ padding: '6px 12px', backgroundColor: 'rgba(255,255,255,0.2)', color: 'white', border: '1px solid white', borderRadius: '4px', fontWeight: 'bold', cursor: (!isOnline || isDownloading || pendingCount > 0) ? 'not-allowed' : 'pointer' }}
-          title={pendingCount > 0 ? "قم بإرسال تعديلاتك أولاً" : "سحب أحدث البيانات من الخادم"}>
-          {isDownloading ? 'جاري التحميل...' : 'تحميل أحدث البيانات من الخادم ↓'}
+          title={pendingCount > 0 ? "ЩӮЩ… ШЁШҘШұШіШ§Щ„ ШӘШ№ШҜЩҠЩ„Ш§ШӘЩғ ШЈЩҲЩ„Ш§ЩӢ" : "ШіШӯШЁ ШЈШӯШҜШ« Ш§Щ„ШЁЩҠШ§ЩҶШ§ШӘ Щ…ЩҶ Ш§Щ„Ш®Ш§ШҜЩ…"}>
+          {isDownloading ? 'Ш¬Ш§ШұЩҠ Ш§Щ„ШӘШӯЩ…ЩҠЩ„...' : 'ШӘШӯЩ…ЩҠЩ„ ШЈШӯШҜШ« Ш§Щ„ШЁЩҠШ§ЩҶШ§ШӘ Щ…ЩҶ Ш§Щ„Ш®Ш§ШҜЩ… вҶ“'}
         </button>
       </div>
     </div>
