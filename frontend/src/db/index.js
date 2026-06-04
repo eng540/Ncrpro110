@@ -1,31 +1,31 @@
 /**
  * db/index.js
- * IndexedDB schema вҖ” Hybrid E2EE Support + Full Operational Tables + Smart Observation Engine (v3)
+ * IndexedDB schema — Hybrid E2EE Support + Full Operational Tables + Smart Observation Engine (v3)
  */
 
 import Dexie from 'dexie';
 
-export const db = new Dexie('NRCLatrineTracker_v4'); // рҹҢҹ ЩӮШ§Ш№ШҜШ© Ш¬ШҜЩҠШҜШ© ШӘЩ…Ш§Щ…Ш§ЩӢ
+export const db = new Dexie('NRCLatrineTracker_v4'); // 🌟 قاعدة جديدة تماماً
 
 // Schema v3: Smart Observation Engine Support
 db.version(3).stores({
-  // Technical tables вҖ” cleartext (no encryption needed)
+  // Technical tables — cleartext (no encryption needed)
   boq_items: 'id, latrine_id, boq_code, category, status, quality_pass',
   boq_dictionary: 'id, boq_code, category, is_active',
 
-  // рҹҢҹ Ш¬ШҜЩҠШҜ: Щ…ЩғШӘШЁШ© Ш§Щ„ЩӮЩҲШ§Щ„ШЁ (ШӘЩ… Ш§Щ„ШӘШөШӯЩҠШӯ ШҘЩ„Щү ++id)
+  // 🌟 جديد: مكتبة القوالب (تم التصحيح إلى ++id)
   remark_templates: '++id, template_code, title, is_active',
 
-  // Sensitive tables вҖ” encrypted envelopes (_env)
+  // Sensitive tables — encrypted envelopes (_env)
   latrines: 'id, latrine_id, block_no, status, overall_pct, last_update',
 
-  // рҹҢҹ ШӘШӯШҜЩҠШ«: ШҘШ¶Ш§ЩҒШ© template_id Щ„Щ„ЩҒЩҮШ§ШұШі
+  // 🌟 تحديث: إضافة template_id للفهارس
   remarks: '++id, local_uuid, latrine_id, boq_code, status, severity, sync_status, date_logged, template_id',
 
   // Daily logs
   daily_logs: '++id, date, engineer',
 
-  // Sync queue вҖ” encrypted payloads
+  // Sync queue — encrypted payloads
   sync_queue: '++id, type, timestamp, sync_status, retry_count, local_uuid',
 
   // Audit trail & Security
@@ -34,7 +34,7 @@ db.version(3).stores({
   chain_state: '++id, entity, last_hash, updated_at',
 });
 
-// Schema v4 – ШҘШ¶Ш§ЩҒШ© ШҜШ№Щ… Ш§Щ„ШөЩҲШұ
+// Schema v4 – إضافة دعم الصور
 db.version(4).stores({
   boq_items: 'id, latrine_id, boq_code, category, status, quality_pass',
   boq_dictionary: 'id, boq_code, category, is_active',
