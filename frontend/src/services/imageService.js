@@ -63,7 +63,8 @@ class ImageService {
                     await pushToSyncQueue('UPDATE_REMARK', {
                         id: remark.id,
                         local_uuid: p.remark_local_uuid,
-                        [field]: key
+                        [field]: key,
+                        last_update: new Date().toISOString()
                     });
                 }
                 await db.pending_images.delete(p.id);
