@@ -1,10 +1,9 @@
-// AUTH-PATCH 2026-06-02: استخدام apiFetch بدلاً من fetch المباشر (مع الاحتفاظ بكل الوظائف)
-
 import React, { useState, useEffect } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '../db/index.js';
 import { syncWithServer } from '../syncEngine';
 import { apiFetch } from '../api';
+import { imageService } from '../services/imageService';
 
 const SyncStatus = () => {
   const [isOnline, setIsOnline] = useState(navigator.onLine);
@@ -13,8 +12,24 @@ const SyncStatus = () => {
   const pendingCount = useLiveQuery(() => db.sync_queue.count(), []);
 
   useEffect(() => {
-    const handleOnline = () => setIsOnline(true);
+    let isSyncingImages = false;
+    
+    const handleOnline = async () => {
+      setIsOnline(true);
+      if (isSyncingImages) return;
+      isSyncingImages = true;
+      try {
+        // فحص ورفع الصور المعلقة خلف الكواليس تلقائياً عند التقاط إشارة الشبكة
+        await imageService.syncPendingImages();
+      } catch (err) {
+        console.error("Online image sync automated trigger error:", err);
+      } finally {
+        isSyncingImages = false;
+      }
+    };
+    
     const handleOffline = () => setIsOnline(false);
+
     window.addEventListener('online', handleOnline);
     window.addEventListener('offline', handleOffline);
     return () => {
@@ -23,34 +38,33 @@ const SyncStatus = () => {
     };
   }, []);
 
-  // دفع التعديلات إلى الخادم
+  // دفع البيانات النصية والـ BOQs المعدلة يدوياً
   const handlePushSync = async () => {
     if (!isOnline || pendingCount === 0) return;
     setIsSyncing(true);
     try {
       const result = await syncWithServer();
-      alert(`تمت المزامنة بنجاح: ${result.processed} عملية ناجحة.`);
+      alert(`تمت مزامنة السجلات بنجاح: تم معالجة ${result.processed} عملية مسبقة.`);
     } catch (error) {
-      alert(`خطأ في المزامنة: ${error.message}`);
+      alert(`خطأ في محرك المزامنة الرئيسي: ${error.message}`);
     } finally {
       setIsSyncing(false);
     }
   };
 
-  // سحب أحدث البيانات من الخادم (تحميل)
+  // سحب البيانات الشاملة وتحديث الـ Cache
   const handleDownloadData = async () => {
     if (!isOnline) {
-      alert("يجب أن تكون متصلاً بالإنترنت لتحميل البيانات.");
+      alert("يجب أن تكون متصلاً بالإنترنت لسحب وتحديث البيانات القياسية.");
       return;
     }
     if (pendingCount > 0) {
-      alert("لديك تعديلات محلية لم يتم إرسالها. يرجى مزامنة بياناتك أولاً.");
+      alert("تحذير: لديك سجلات وتعديلات معلقة محلياً، يرجى إرسال التعديلات أولاً لمنع الكتابة الفوقية.");
       return;
     }
 
     setIsDownloading(true);
     try {
-      // ✅ التغيير الوحيد: استبدال fetch بـ apiFetch
       const [latrinesRes, boqRes, remarksRes, templatesRes] = await Promise.all([
         apiFetch('/latrines?limit=200'),
         apiFetch('/boq-items'),
@@ -58,7 +72,7 @@ const SyncStatus = () => {
         apiFetch('/remark-templates')
       ]);
 
-      if (!latrinesRes.ok || !boqRes.ok) throw new Error("فشل الاتصال بالخادم");
+      if (!latrinesRes.ok || !boqRes.ok) throw new Error("تعذر الاتصال ببوابة الخادم الحية.");
 
       const latrines = await latrinesRes.json();
       const boqItems = await boqRes.json();
@@ -70,6 +84,7 @@ const SyncStatus = () => {
         await db.boq_items.clear();
         await db.remarks.clear();
         await db.remark_templates.clear();
+        
         if (latrines?.length) await db.latrines.bulkAdd(latrines);
         if (boqItems?.length) await db.boq_items.bulkAdd(boqItems);
         if (templates?.length) await db.remark_templates.bulkAdd(templates);
@@ -78,10 +93,10 @@ const SyncStatus = () => {
           await db.remarks.bulkAdd(remarksWithSync);
         }
       });
-      alert("تم تحميل أحدث البيانات (بما فيها مكتبة الملاحظات) بنجاح!");
+      alert("تمت مزامنة وتحديث قاعدة البيانات الميدانية بالكامل!");
     } catch (error) {
       console.error(error);
-      alert("تعذر تحميل البيانات من الخادم.");
+      alert("فشل تحديث البيانات المحلية من السيرفر الرئيسي.");
     } finally {
       setIsDownloading(false);
     }
@@ -99,23 +114,25 @@ const SyncStatus = () => {
       top: 0,
       zIndex: 1000,
       flexWrap: 'wrap',
-      gap: '10px'
+      gap: '10px',
+      direction: 'rtl',
+      fontFamily: 'sans-serif'
     }}>
       <div>
-        <strong>{isOnline ? 'متصل بالإنترنت (Online)' : 'العمل دون اتصال (Offline)'}</strong>
-        {pendingCount > 0 && <span style={{ marginRight: '15px', fontWeight: 'bold' }}>- عمليات تنتظر الإرسال: {pendingCount}</span>}
+        <strong>{isOnline ? '🟢 حالة الاتصال: متصل بالإنترنت (Online)' : '🔴 حالة الاتصال: دون اتصال (Offline)'}</strong>
+        {pendingCount > 0 && <span style={{ marginRight: '15px', fontWeight: 'bold' }}>- تعديلات قيد الانتظار: {pendingCount}</span>}
       </div>
       <div style={{ display: 'flex', gap: '10px' }}>
         {pendingCount > 0 && (
           <button onClick={handlePushSync} disabled={!isOnline || isSyncing}
             style={{ padding: '6px 12px', backgroundColor: 'white', color: '#f39c12', border: 'none', borderRadius: '4px', fontWeight: 'bold', cursor: (!isOnline || isSyncing) ? 'not-allowed' : 'pointer' }}>
-            {isSyncing ? 'جاري الإرسال...' : 'إرسال التعديلات للخادم'}
+            {isSyncing ? 'جاري إرسال السجلات...' : 'إرسال السجلات المعلقة الآن'}
           </button>
         )}
         <button onClick={handleDownloadData} disabled={!isOnline || isDownloading || pendingCount > 0}
           style={{ padding: '6px 12px', backgroundColor: 'rgba(255,255,255,0.2)', color: 'white', border: '1px solid white', borderRadius: '4px', fontWeight: 'bold', cursor: (!isOnline || isDownloading || pendingCount > 0) ? 'not-allowed' : 'pointer' }}
-          title={pendingCount > 0 ? "قم بإرسال تعديلاتك أولاً" : "سحب أحدث البيانات من الخادم"}>
-          {isDownloading ? 'جاري التحميل...' : 'تحميل أحدث البيانات من الخادم ↓'}
+          title={pendingCount > 0 ? "قم بمزامنة التعديلات الميدانية الحالية أولاً" : "تحديث البيانات الشاملة من السيرفر"}>
+          {isDownloading ? 'جاري تحديث النظام...' : 'تحديث النظام وسحب البيانات ↓'}
         </button>
       </div>
     </div>

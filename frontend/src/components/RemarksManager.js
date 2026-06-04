@@ -3,6 +3,7 @@ import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '../db/index.js';
 import { pushToSyncQueue, retryFailedSync } from '../syncEngine';
 import { v4 as uuidv4 } from 'uuid';
+import { imageService } from '../services/imageService';
 
 // ==========================================
 // 1. Constants & Utilities
@@ -56,7 +57,7 @@ const ErrorBanner = ({ error, onDismiss }) => {
   const color = error.type === 'success' ? '#155724' : error.type === 'warning' ? '#856404' : '#721c24';
   const icon = error.type === 'success' ? '✅' : error.type === 'warning' ? '⚠️' : '❌';
   return (
-    <div style={{ background: bg, color, padding: '12px 16px', borderRadius: '6px', marginBottom: '15px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontWeight: 'bold' }}>
+    <div style={{ background: bg, color: color, padding: '12px 16px', borderRadius: '6px', marginBottom: '15px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontWeight: 'bold' }}>
       <span>{icon} {error.message}</span>
       <button onClick={onDismiss} style={{ background: 'transparent', border: 'none', fontSize: '16px', cursor: 'pointer', color: 'inherit' }}>✖</button>
     </div>
@@ -116,17 +117,14 @@ const SmartRemarkForm = ({ initialData, boqCode, isSaving, onSubmit, onCancel, t
     setShowSuggestions(true);
   };
 
-  // ✅ الإصلاح الجوهري: تضمين id و latrine_id و boq_code الأصلية عند التعديل
   const handleSubmit = (e) => {
     e.preventDefault();
     if (!desc.trim()) return;
 
     const payload = { 
-      // ✅ الحفاظ على البيانات الأساسية للملاحظة الأصلية
       id: initialData?.id || null,
       latrine_id: initialData?.latrine_id || null,
       boq_code: initialData?.boq_code || boqCode || null,
-
       template_id: selectedTemplate ? selectedTemplate.id : null,
       template_code: selectedTemplate ? selectedTemplate.template_code : null,
       description: selectedTemplate ? null : desc.trim(),
@@ -319,7 +317,7 @@ const AnalyticsPanel = ({ filteredRemarks, onFilterByBoq, onFilterByIssue }) => 
   return (
     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(350px, 1fr))', gap: '20px' }}>
       <div style={{ background: 'white', borderRadius: '8px', padding: '20px' }}>
-        <h3 style={{ color: '#1A3A5C', marginBottom: '15px' }}>🔴 الأكثر تعثراً (حسب البند)</h3>
+        <h3 style={{ color: '#1A3A5C', marginBottom: '15px' }}>🔴 الأكثر تضرراً (حسب البند)</h3>
         {topBoqs.map(([boq, count]) => (
           <div key={boq} onClick={() => onFilterByBoq(boq)} title="اضغط للانتقال إلى تعليمات المقاول"
                style={{ display: 'flex', justifyContent: 'space-between', padding: '10px 0', borderBottom: '1px solid #f0f0f0', cursor: 'pointer', transition: 'background 0.2s' }}
@@ -356,7 +354,7 @@ const AnalyticsPanel = ({ filteredRemarks, onFilterByBoq, onFilterByIssue }) => 
   );
 };
 
-// --- QuickAddRemark (مع template_code) ---
+// --- QuickAddRemark (مع template_code وإصلاح action_required) ---
 const QuickAddRemark = ({ allLatrines, templates, onAdd }) => {
   const [selectedLatrine, setSelectedLatrine] = useState('');
   const [desc, setDesc] = useState('');
@@ -500,7 +498,8 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
       const failedCount = await db.remarks.where('sync_status').equals('failed').count();
       if (failedCount > 0) {
         setError({ type: 'warning', message: 'عاد الاتصال. جاري المزامنة...' });
-        handleRetrySync();
+        await imageService.syncPendingImages();
+        await retryFailedSync();
       }
     };
     window.addEventListener('online', handleOnline);
@@ -589,18 +588,15 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
     });
   }, [filteredRemarks, viewMode]);
 
-  // ✅ إصلاح جوهري: إنشاء وربط القالب مع التحقق من البند
   const createAndLinkTemplate = async (templateData, remarkId, localUuid) => {
     const trimmedTitle = templateData.description?.trim() || '';
     if (!trimmedTitle) throw new Error('عنوان القالب فارغ');
 
-    // ✅ البحث عن قالب موجود بنفس العنوان وينطبق على نفس البند
     let existing = await db.remark_templates
       .where('title')
       .equals(trimmedTitle)
       .first();
 
-    // ✅ التحقق من أن القالب ينطبق على نفس البند (أو عام)
     if (existing && templateData.boq_code) {
       const isRelevant = !existing.boq_tags || 
         existing.boq_tags.length === 0 || 
@@ -688,24 +684,20 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
     return templateId;
   };
 
-  // ✅ إصلاح جوهري: handleAddOrEditRemark مع حماية كاملة للبيانات
   const handleAddOrEditRemark = async (formData) => {
     setIsSaving(true);
     setError(null);
     try {
       if (formData.id) {
-        // ====== تعديل ملاحظة موجودة ======
         const original = await db.remarks.get(formData.id);
         if (!original) throw new Error('الملاحظة غير موجودة');
 
-        // ✅ تأكد من وجود local_uuid (إنشاء واحد جديد إذا لم يكن موجوداً)
         let localUuid = original.local_uuid || original.remark_id;
         if (!localUuid) {
           localUuid = uuidv4();
           await db.remarks.update(formData.id, { local_uuid: localUuid });
         }
 
-        // ✅ الحفاظ على البيانات الأساسية وعدم فقدانها أبداً
         const updatedFields = {
           template_id: formData.template_id !== undefined ? formData.template_id : original.template_id,
           template_code: formData.template_code !== undefined ? formData.template_code : original.template_code,
@@ -715,16 +707,13 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
           action_required: formData.action_required || original.action_required || null,
           deadline: formData.deadline ? new Date(formData.deadline).toISOString() : original.deadline,
           sync_status: 'local',
-          // ✅ لا تفقد البند أبداً - استخدم القيم الأصلية أولاً
           boq_code: original.boq_code || formData.boq_code || boqCode || null,
-          // ✅ لا تفقد latrine_id أبداً
           latrine_id: original.latrine_id || formData.latrine_id || latrineId || null,
           last_update: new Date().toISOString()
         };
 
         await db.remarks.update(formData.id, updatedFields);
 
-        // ✅ إرسال UPDATE_REMARK مع كل البيانات الضرورية للخادم
         const syncPayload = {
           id: formData.id,
           local_uuid: localUuid,
@@ -747,7 +736,6 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
         setEditingRemark(null);
         setError({ type: 'success', message: 'تم التحديث بنجاح.' });
       } else {
-        // ====== إضافة ملاحظة جديدة ======
         const localUuid = uuidv4();
         const newRemark = {
           local_uuid: localUuid,
@@ -802,7 +790,6 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
   const handleSaveAsTemplateFromCard = async (remark) => {
     setProcessingIds(prev => new Set(prev).add(remark.id));
     try {
-      // ✅ تأكد من وجود local_uuid
       let localUuid = remark.local_uuid || remark.remark_id;
       if (!localUuid) {
         localUuid = uuidv4();
@@ -832,7 +819,17 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
     }
   };
 
-  // ✅ إصلاح: حماية local_uuid وإرسال boq_code/latrine_id عند الإغلاق
+  const handleAddImage = async (localUuid, type) => {
+    const key = await imageService.addImageToRemark(localUuid, type);
+    if (key) {
+      const remark = await db.remarks.where('local_uuid').equals(localUuid).first();
+      if (remark) {
+        const field = type === 'before' ? 'before_photo_ref' : 'after_photo_ref';
+        await db.remarks.update(remark.id, { [field]: key });
+      }
+    }
+  };
+
   const handleBulkClose = async (remarksToClose) => {
     if (!confirmClose) {
       setConfirmClose(remarksToClose);
@@ -846,7 +843,6 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
 
       await db.transaction('rw', db.remarks, async () => {
         for (const remark of remarksToClose) {
-          // ✅ تأكد من وجود local_uuid قبل المزامنة
           let localUuid = remark.local_uuid || remark.remark_id;
           if (!localUuid) {
             localUuid = uuidv4();
@@ -936,6 +932,8 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
   const handleQuickAdd = async (data) => {
     setIsSaving(true);
     try {
+      // إصلاح: سحب default_action من القالب المختار
+      const selectedTemplateData = allTemplates?.find(t => t.id === data.template_id);
       const localUuid = uuidv4();
       const newRemark = {
         local_uuid: localUuid,
@@ -945,7 +943,7 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
         template_code: data.template_code || null,
         description: data.description || null,
         severity: data.severity,
-        action_required: null,
+        action_required: selectedTemplateData?.default_action || null,
         status: 'open',
         sync_status: 'local',
         date_logged: new Date().toISOString(),
@@ -1082,6 +1080,26 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
                       <span style={{ background: UI_COLORS.sync[r.sync_status || 'local'], color: 'white', padding: '1px 6px', borderRadius: '4px', fontSize: '10px' }}>{UI_LABELS.sync[r.sync_status || 'local']}</span>
                     </div>
                     <div>{r.template ? `📋 ${r.template.title}` : r.description}</div>
+                    <div style={{ display: 'flex', gap: '8px', marginTop: '8px', alignItems: 'center' }}>
+                      {r.before_photo_ref && !r.before_photo_ref.startsWith('pending:') && (
+                        <img 
+                          src={`/api/evidence/view?key=${encodeURIComponent(r.before_photo_ref)}`}
+                          alt="Before"
+                          style={{ width: '40px', height: '40px', cursor: 'pointer', objectFit: 'cover', borderRadius: '4px' }}
+                          onClick={() => window.open(`/api/evidence/view?key=${encodeURIComponent(r.before_photo_ref)}`, '_blank')}
+                        />
+                      )}
+                      <button onClick={() => handleAddImage(r.local_uuid || r.remark_id || r.id, 'before')}>📷 قبل</button>
+                      {r.after_photo_ref && !r.after_photo_ref.startsWith('pending:') && (
+                        <img 
+                          src={`/api/evidence/view?key=${encodeURIComponent(r.after_photo_ref)}`}
+                          alt="After"
+                          style={{ width: '40px', height: '40px', cursor: 'pointer', objectFit: 'cover', borderRadius: '4px' }}
+                          onClick={() => window.open(`/api/evidence/view?key=${encodeURIComponent(r.after_photo_ref)}`, '_blank')}
+                        />
+                      )}
+                      <button onClick={() => handleAddImage(r.local_uuid || r.remark_id || r.id, 'after')}>📷 بعد</button>
+                    </div>
                   </div>
                   {r.status === 'open' && (
                     <div style={{ display: 'flex', gap: '4px' }}>
@@ -1114,6 +1132,26 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
                             <span style={{ background: UI_COLORS.sync[r.sync_status || 'local'], color: 'white', padding: '1px 6px', borderRadius: '4px', fontSize: '10px' }}>{UI_LABELS.sync[r.sync_status || 'local']}</span>
                           </div>
                           <div>{r.template ? `📋 ${r.template.title}` : r.description}</div>
+                          <div style={{ display: 'flex', gap: '8px', marginTop: '8px', alignItems: 'center' }}>
+                            {r.before_photo_ref && !r.before_photo_ref.startsWith('pending:') && (
+                              <img 
+                                src={`/api/evidence/view?key=${encodeURIComponent(r.before_photo_ref)}`}
+                                alt="Before"
+                                style={{ width: '40px', height: '40px', cursor: 'pointer', objectFit: 'cover', borderRadius: '4px' }}
+                                onClick={() => window.open(`/api/evidence/view?key=${encodeURIComponent(r.before_photo_ref)}`, '_blank')}
+                              />
+                            )}
+                            <button onClick={() => handleAddImage(r.local_uuid || r.remark_id || r.id, 'before')}>📷 قبل</button>
+                            {r.after_photo_ref && !r.after_photo_ref.startsWith('pending:') && (
+                              <img 
+                                src={`/api/evidence/view?key=${encodeURIComponent(r.after_photo_ref)}`}
+                                alt="After"
+                                style={{ width: '40px', height: '40px', cursor: 'pointer', objectFit: 'cover', borderRadius: '4px' }}
+                                onClick={() => window.open(`/api/evidence/view?key=${encodeURIComponent(r.after_photo_ref)}`, '_blank')}
+                              />
+                            )}
+                            <button onClick={() => handleAddImage(r.local_uuid || r.remark_id || r.id, 'after')}>📷 بعد</button>
+                          </div>
                         </div>
                         {r.status === 'open' && (
                           <div style={{ display: 'flex', gap: '4px', marginTop: '8px' }}>

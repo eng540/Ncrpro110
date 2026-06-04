@@ -34,6 +34,23 @@ db.version(3).stores({
   chain_state: '++id, entity, last_hash, updated_at',
 });
 
+// Schema v4 – إضافة دعم الصور
+db.version(4).stores({
+  boq_items: 'id, latrine_id, boq_code, category, status, quality_pass',
+  boq_dictionary: 'id, boq_code, category, is_active',
+  remark_templates: '++id, template_code, title, is_active',
+  latrines: 'id, latrine_id, block_no, status, overall_pct, last_update',
+  remarks: '++id, local_uuid, latrine_id, boq_code, status, severity, sync_status, date_logged, template_id, before_photo_ref, after_photo_ref',
+  daily_logs: '++id, date, engineer',
+  sync_queue: '++id, type, timestamp, sync_status, retry_count, local_uuid',
+  audit_log: '++id, timestamp, action, entity_type',
+  settings: 'key',
+  chain_state: '++id, entity, last_hash, updated_at',
+  pending_images: '++id, remark_local_uuid, type, sync_status, created_at'
+}).upgrade(async tx => {
+  console.log("Upgrading to v4: adding image support");
+});
+
 // ========== SETTINGS HELPERS ==========
 export async function getSetting(key) {
   const rec = await db.settings.get(key);

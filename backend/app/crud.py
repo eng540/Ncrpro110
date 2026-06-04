@@ -607,6 +607,8 @@ def process_sync_queue(db: Session, sync_req: schemas.SyncRequest) -> schemas.Sy
                     remark = db.query(models.Remark).filter(
                         models.Remark.remark_id == str(local_uuid)[:36]
                     ).first()
+                    if not remark:
+                        print(f"⚠️ Remark not found by remark_id={local_uuid}. Check if remark_id stores local_uuid.")
 
                 op_id = op_data.get("id")
                 if not remark and op_id is not None:
@@ -831,7 +833,7 @@ def seed_default_admin(db: Session):
     # البحث عن مستخدم موجود بنفس البريد الإلكتروني أو اسم المستخدم
     existing_by_email = db.query(models.User).filter(models.User.email == "admin@nrc.org").first()
     existing_by_username = db.query(models.User).filter(models.User.username == admin_username).first()
-    
+
     admin_role = db.query(models.Role).filter(models.Role.name == "admin").first()
     if not admin_role:
         return

@@ -1,10 +1,9 @@
-# AUTH-PATCH 2026-06-02: إضافة OAuth2, RBAC, Audit Log, Rate Limiting, CORS مقيد (مصلح)
-# 2026-06-03: إضافة endpoint /api/admin/roles
-# 2026-06-03: إصلاح أمني – إضافة require_write_permission إلى /api/sync
+# AUTH-PATCH 2026-06-02: ШҘШ¶Ш§ЩҒШ© OAuth2, RBAC, Audit Log, Rate Limiting, CORS Щ…ЩӮЩҠШҜ (Щ…ШөЩ„Шӯ)
+# 2026-06-03: ШҘШ¶Ш§ЩҒШ© endpoint /api/evidence/presigned-url ЩҲ /api/evidence/view Щ„ШҜШ№Щ… Ш§Щ„ШөЩҲШұ
 
 from fastapi import FastAPI, Depends, HTTPException, Query, UploadFile, File, Request, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse, RedirectResponse
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 from typing import List, Optional
@@ -13,7 +12,10 @@ import os
 from io import BytesIO
 import openpyxl
 from contextlib import asynccontextmanager
-import logging
+import boto3
+from botocore.config import Config
+from botocore.exceptions import ClientError
+import uuid
 
 from app import models, schemas, crud, security
 from app.database import engine, get_db, SessionLocal, Base
@@ -28,10 +30,8 @@ from slowapi.errors import RateLimitExceeded
 
 limiter = Limiter(key_func=get_remote_address, default_limits=["100/minute"])
 
-logger = logging.getLogger(__name__)
-
 # ==========================================
-# Lifespan with seeding (مصلح: يضمن وجود yield)
+# Lifespan with seeding (Щ…ШөЩ„Шӯ: ЩҠШ¶Щ…ЩҶ ЩҲШ¬ЩҲШҜ yield)
 # ==========================================
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -41,10 +41,10 @@ async def lifespan(app: FastAPI):
         crud.seed_default_remark_templates(db)
         crud.seed_default_admin(db)          # AUTH-PATCH
         print("Default policies, remark templates, and admin user seeded successfully.")
-        yield   # هذا السطر ضروري جداً - بدونه لن يعمل التطبيق
+        yield   # рҹ”ҙ ЩҮШ°Ш§ Ш§Щ„ШіШ·Шұ Ш¶ШұЩҲШұЩҠ Ш¬ШҜШ§ЩӢ - ШЁШҜЩҲЩҶЩҮ Щ„ЩҶ ЩҠШ№Щ…Щ„ Ш§Щ„ШӘШ·ШЁЩҠЩӮ
     except Exception as e:
         print(f"Failed to seed defaults: {e}")
-        # لا نعيد رفع الاستثناء لمنع فشل بدء التشغيل
+        # Щ„Ш§ ЩҶШ№ЩҠШҜ ШұЩҒШ№ Ш§Щ„Ш§ШіШӘШ«ЩҶШ§ШЎ Щ„Щ…ЩҶШ№ ЩҒШҙЩ„ ШЁШҜШЎ Ш§Щ„ШӘШҙШәЩҠЩ„
     finally:
         db.close()
 
@@ -78,6 +78,24 @@ app.add_middleware(
     allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type", "Accept"],
 )
+
+# ==========================================
+# CLOUDFLARE R2 (IMAGE STORAGE)
+# ==========================================
+R2_ACCESS_KEY = os.getenv("R2_ACCESS_KEY_ID")
+R2_SECRET_KEY = os.getenv("R2_SECRET_ACCESS_KEY")
+R2_BUCKET = os.getenv("R2_BUCKET_NAME", "nrc-latrine-evidence")
+R2_ENDPOINT = os.getenv("R2_ENDPOINT_URL")
+MAX_IMAGE_SIZE = int(os.getenv("MAX_IMAGE_SIZE_MB", 2)) * 1024 * 1024
+ALLOWED_MIME_TYPES = ["image/jpeg", "image/png", "image/webp"]
+EXT_MAP = {"image/jpeg": "jpg", "image/png": "png", "image/webp": "webp"}
+
+if R2_ACCESS_KEY and R2_SECRET_KEY and R2_ENDPOINT:
+    s3_client = boto3.client('s3', endpoint_url=R2_ENDPOINT,
+        aws_access_key_id=R2_ACCESS_KEY, aws_secret_access_key=R2_SECRET_KEY,
+        config=Config(signature_version='s3v4'), region_name='auto')
+else:
+    s3_client = None
 
 # ==========================================
 # AUTHENTICATION ENDPOINTS (AUTH-PATCH)
@@ -172,14 +190,14 @@ async def get_audit_logs(
     return crud.get_audit_logs(db, skip=skip, limit=limit, user_id=user_id, action=action)
 
 # ==========================================
-# ROLES ENDPOINT (لإدارة المستخدمين)
+# ROLES ENDPOINT (Щ„ШҘШҜШ§ШұШ© Ш§Щ„Щ…ШіШӘШ®ШҜЩ…ЩҠЩҶ)
 # ==========================================
 @app.get("/api/admin/roles", response_model=List[schemas.RoleOut])
 def list_roles(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(security.require_admin)
 ):
-    """إرجاع قائمة جميع الأدوار (للاستخدام في لوحة الإدارة)"""
+    """ШҘШұШ¬Ш§Ш№ ЩӮШ§ШҰЩ…Ш© Ш¬Щ…ЩҠШ№ Ш§Щ„ШЈШҜЩҲШ§Шұ (Щ„Щ„Ш§ШіШӘШ®ШҜШ§Щ… ЩҒЩҠ Щ„ЩҲШӯШ© Ш§Щ„ШҘШҜШ§ШұШ©)"""
     return db.query(models.Role).all()
 
 # ==========================================
@@ -190,7 +208,7 @@ def health_check():
     return {"status": "healthy", "service": "running", "version": "3.0.0", "mode": "dynamic_saas"}
 
 # ==========================================
-# LATRINES (محمية)
+# LATRINES (Щ…ШӯЩ…ЩҠШ©)
 # ==========================================
 @app.get("/api/latrines", response_model=List[schemas.LatrineOut])
 def list_latrines(
@@ -522,49 +540,17 @@ def download_matrix_report(
         raise HTTPException(status_code=500, detail=f"Failed to generate report: {str(e)}")
 
 # ==========================================
-# SYNC ENGINE (مع تطبيق الصلاحيات)
+# SYNC ENGINE
 # ==========================================
 @app.post("/api/sync", response_model=schemas.SyncResponse)
 def sync_offline_data(
     request: schemas.SyncRequest,
     db: Session = Depends(get_db),
-    # 🔒 أفضل ممارسة: استخدام require_write_permission بدلاً من get_current_active_user
-    # يضمن أن المستخدم لديه صلاحية كتابة على الأقل على كيان واحد
-    current_user: models.User = Depends(security.require_write_permission()),
-    req: Request = None
+    current_user: models.User = Depends(security.get_current_active_user)
 ):
-    """
-    مزامنة البيانات غير المتصلة (Offline Sync)
-    🔒 تتطلب صلاحية كتابة (أي دور له :write أو admin)
-    """
     try:
-        # تسجيل عملية المزامنة في سجل التدقيق (Audit Log) اختياري
-        security.log_audit(
-            db, 
-            current_user.id, 
-            "SYNC_REQUEST", 
-            "batch", 
-            None, 
-            new_values={"operation_count": len(request.operations)},
-            request=req
-        )
-        
-        result = crud.process_sync_queue(db, request)
-        
-        # تسجيل النتيجة
-        security.log_audit(
-            db,
-            current_user.id,
-            "SYNC_COMPLETE",
-            "batch",
-            None,
-            new_values={"processed": len(result.processed_ids), "failed": len(result.failed_ids)},
-            request=req
-        )
-        
-        return result
+        return crud.process_sync_queue(db, request)
     except Exception as e:
-        logger.error(f"Sync failed for user {current_user.username}: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Critical Sync Failure: {str(e)}")
 
 # ==========================================
@@ -619,7 +605,7 @@ async def import_beneficiaries(
     request: Request = None
 ):
     if not file.filename.endswith(('.xlsx', '.xls')):
-        raise HTTPException(status_code=400, detail="يجب رفع ملف Excel (.xlsx أو .xls)")
+        raise HTTPException(status_code=400, detail="ЩҠШ¬ШЁ ШұЩҒШ№ Щ…Щ„ЩҒ Excel (.xlsx ШЈЩҲ .xls)")
     try:
         contents = await file.read()
         wb = openpyxl.load_workbook(filename=BytesIO(contents), data_only=True)
@@ -660,12 +646,12 @@ async def import_beneficiaries(
                     crud.seed_boq_items(db, db_latrine.id)
                     created_count += 1
             except Exception as row_error:
-                errors.append(f"خطأ في الصف {idx}: {str(row_error)}")
+                errors.append(f"Ш®Ш·ШЈ ЩҒЩҠ Ш§Щ„ШөЩҒ {idx}: {str(row_error)}")
                 continue
         db.commit()
         security.log_audit(db, current_user.id, "IMPORT_BENEFICIARIES", "batch", None, new_values={"created": created_count, "updated": updated_count}, request=request)
         return {
-            "message": "تم الاستيراد بنجاح",
+            "message": "ШӘЩ… Ш§Щ„Ш§ШіШӘЩҠШұШ§ШҜ ШЁЩҶШ¬Ш§Шӯ",
             "updated": updated_count,
             "created": created_count,
             "errors": errors if errors else None,
@@ -673,7 +659,7 @@ async def import_beneficiaries(
         }
     except Exception as e:
         db.rollback()
-        raise HTTPException(status_code=500, detail=f"خطأ أثناء معالجة الملف: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Ш®Ш·ШЈ ШЈШ«ЩҶШ§ШЎ Щ…Ш№Ш§Щ„Ш¬Ш© Ш§Щ„Щ…Щ„ЩҒ: {str(e)}")
 
 @app.post("/api/admin/import-boq-dictionary")
 async def import_boq_dictionary(
@@ -683,7 +669,7 @@ async def import_boq_dictionary(
     request: Request = None
 ):
     if not file.filename.endswith(('.xlsx', '.xls')):
-        raise HTTPException(status_code=400, detail="يجب رفع ملف Excel (.xlsx أو .xls)")
+        raise HTTPException(status_code=400, detail="ЩҠШ¬ШЁ ШұЩҒШ№ Щ…Щ„ЩҒ Excel (.xlsx ШЈЩҲ .xls)")
     try:
         contents = await file.read()
         wb = openpyxl.load_workbook(filename=BytesIO(contents), data_only=True)
@@ -728,19 +714,19 @@ async def import_boq_dictionary(
                     crud.create_boq_dictionary_item(db, new_item)
                     imported_count += 1
             except Exception as row_error:
-                errors.append(f"خطأ في الصف {idx}: {str(row_error)}")
+                errors.append(f"Ш®Ш·ШЈ ЩҒЩҠ Ш§Щ„ШөЩҒ {idx}: {str(row_error)}")
                 continue
         db.commit()
         security.log_audit(db, current_user.id, "IMPORT_BOQ_DICTIONARY", "batch", None, new_values={"imported": imported_count, "updated": updated_count}, request=request)
         return {
-            "message": "تم استيراد القاموس بنجاح",
+            "message": "ШӘЩ… Ш§ШіШӘЩҠШұШ§ШҜ Ш§Щ„ЩӮШ§Щ…ЩҲШі ШЁЩҶШ¬Ш§Шӯ",
             "imported": imported_count,
             "updated": updated_count,
             "errors": errors if errors else None
         }
     except Exception as e:
         db.rollback()
-        raise HTTPException(status_code=500, detail=f"خطأ أثناء معالجة الملف: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Ш®Ш·ШЈ ШЈШ«ЩҶШ§ШЎ Щ…Ш№Ш§Щ„Ш¬Ш© Ш§Щ„Щ…Щ„ЩҒ: {str(e)}")
 
 # ==========================================
 # GOVERNANCE ENDPOINTS
@@ -853,6 +839,56 @@ def seed_latrines(
         crud.seed_boq_items(db, db_latrine.id)
         created.append(code)
     return {"created": len(created), "codes": created[:5]}
+
+# ==========================================
+# IMAGE ENDPOINTS (CLOUDFLARE R2)
+# ==========================================
+@app.post("/api/evidence/presigned-url")
+async def get_presigned_url(
+    content_type: str = Query(...),
+    current_user: models.User = Depends(security.require_role(["remarks:write", "*"]))
+):
+    if not s3_client:
+        raise HTTPException(503, "Storage not configured")
+    if content_type not in ALLOWED_MIME_TYPES:
+        raise HTTPException(400, "Unsupported type")
+    ext = EXT_MAP.get(content_type, "jpg")
+    file_id = str(uuid.uuid4())
+    key = f"evidence/user_{current_user.id}/{file_id}.{ext}"
+    try:
+        presigned = s3_client.generate_presigned_post(
+            Bucket=R2_BUCKET, Key=key,
+            Fields={},
+            Conditions=[
+                ["content-length-range", 1, MAX_IMAGE_SIZE],
+                ["eq", "$Content-Type", content_type]
+            ],
+            ExpiresIn=3600
+        )
+        return {"presigned_data": presigned, "key": key}
+    except ClientError as e:
+        raise HTTPException(500, str(e))
+
+@app.get("/api/evidence/view")
+async def view_evidence(
+    key: str = Query(...),
+    db: Session = Depends(get_db),
+    _: models.User = Depends(security.require_role(["remarks:read", "*"]))
+):
+    remark = db.query(models.Remark).filter(
+        (models.Remark.before_photo_ref == key) | (models.Remark.after_photo_ref == key)
+    ).first()
+    if not remark:
+        raise HTTPException(404, "Image not found")
+    try:
+        url = s3_client.generate_presigned_url(
+            'get_object',
+            Params={'Bucket': R2_BUCKET, 'Key': key},
+            ExpiresIn=900
+        )
+        return RedirectResponse(url)
+    except ClientError:
+        raise HTTPException(404, "File missing")
 
 # ==========================================
 # REACT FRONTEND (serve static files)
