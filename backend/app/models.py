@@ -1,4 +1,5 @@
-# AUTH-PATCH 2026-06-02: ШҘШ¶Ш§ЩҒШ© ЩҶЩ…Ш§Ш°Ш¬ User, Role, AuditLog ЩҲШұШЁШ· Ш§Щ„Щ…ЩҮЩҶШҜШі ШЁШ§Щ„ШӯЩ…Ш§Щ…Ш§ШӘ
+# AUTH-PATCH 2026-06-02: إضافة نماذج User, Role, AuditLog وربط المهندس بالحمامات
+# 2026-06-03: إضافة before_photo_ref و after_photo_ref في Remark
 
 from sqlalchemy import Column, Integer, String, Float, DateTime, Text, ForeignKey, Enum, Boolean, CheckConstraint, Index
 from sqlalchemy.dialects.postgresql import JSONB
