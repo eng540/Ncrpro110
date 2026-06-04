@@ -1,4 +1,4 @@
-# AUTH-PATCH 2026-06-02: إضافة schemas المستخدمين والأدوار والـ Token و Audit Log
+# AUTH-PATCH 2026-06-02: ШҘШ¶Ш§ЩҒШ© schemas Ш§Щ„Щ…ШіШӘШ®ШҜЩ…ЩҠЩҶ ЩҲШ§Щ„ШЈШҜЩҲШ§Шұ ЩҲШ§Щ„ЩҖ Token ЩҲ Audit Log
 
 from pydantic import BaseModel, Field, EmailStr
 from typing import Optional, List, Dict, Any
@@ -134,6 +134,8 @@ class RemarkBase(BaseModel):
     status: Optional[str] = "open"
     photo_ref: Optional[str] = None
     evidence_photo_ref: Optional[str] = None
+    before_photo_ref: Optional[str] = None
+    after_photo_ref: Optional[str] = None
 
 class RemarkCreate(RemarkBase):
     latrine_id: int
@@ -144,6 +146,8 @@ class RemarkUpdate(BaseModel):
     suffix_note: Optional[str] = None
     action_required: Optional[str] = None
     severity: Optional[str] = None
+    before_photo_ref: Optional[str] = None
+    after_photo_ref: Optional[str] = None
 
 class RemarkOut(RemarkBase):
     id: int
