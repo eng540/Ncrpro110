@@ -1,4 +1,4 @@
-# AUTH-PATCH 2026-06-02: إضافة نماذج User, Role, AuditLog وربط المهندس بالحمامات
+# AUTH-PATCH 2026-06-02: ШҘШ¶Ш§ЩҒШ© ЩҶЩ…Ш§Ш°Ш¬ User, Role, AuditLog ЩҲШұШЁШ· Ш§Щ„Щ…ЩҮЩҶШҜШі ШЁШ§Щ„ШӯЩ…Ш§Щ…Ш§ШӘ
 
 from sqlalchemy import Column, Integer, String, Float, DateTime, Text, ForeignKey, Enum, Boolean, CheckConstraint, Index
 from sqlalchemy.dialects.postgresql import JSONB
@@ -146,6 +146,8 @@ class Remark(Base):
     status = Column(String(20), default=RemarkStatus.OPEN.value)
     closed_date = Column(DateTime, nullable=True)
     evidence_photo_ref = Column(String(100), nullable=True)
+    before_photo_ref = Column(String(200), nullable=True)
+    after_photo_ref = Column(String(200), nullable=True)
     last_update = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     latrine = relationship("Latrine", back_populates="remarks")
