@@ -1,4 +1,4 @@
-# AUTH-PATCH 2026-06-02: ШҘШ¶Ш§ЩҒШ© ШҜЩҲШ§Щ„ Ш§Щ„Щ…ШіШӘШ®ШҜЩ…ЩҠЩҶ ЩҲШіШ¬Щ„ Ш§Щ„ШӘШҜЩӮЩҠЩӮ ЩҲ seed admin (Щ…ШөЩ„Шӯ)
+# AUTH-PATCH 2026-06-02: إضافة دوال المستخدمين وسجل التدقيق و seed admin (مصلح)
 import json
 from sqlalchemy.orm import Session
 from sqlalchemy import func
@@ -241,19 +241,19 @@ def seed_boq_items(db: Session, latrine_id: int):
 
     if not dictionary:
         items = [
-            {'boq_code': 'A1', 'category': 'A-Building & Concrete', 'description_ar': 'ШӯЩҒШұ ЩҲШӘШіЩҲЩҠШ© + ШЈШіШ§Ші ШӯШ¬Шұ', 'description_en': 'Excavation & Stone Foundation', 'unit': 'm3', 'planned_qty': 1.00},
-            {'boq_code': 'A2', 'category': 'A-Building & Concrete', 'description_ar': 'Ш¬ШҜШұШ§ЩҶ ШЁЩ„Щғ Щ…ЩҒШұШә 15ШіЩ…', 'description_en': 'Hollow Block Wall', 'unit': 'm2', 'planned_qty': 9.32},
-            {'boq_code': 'A3', 'category': 'A-Building & Concrete', 'description_ar': 'Щ„ЩҠШ§ШіШ© ШҜШ§Ш®Щ„ЩҠШ© ЩҲШ®Ш§ШұШ¬ЩҠШ©', 'description_en': 'Plaster', 'unit': 'm2', 'planned_qty': 3.20},
-            {'boq_code': 'A4', 'category': 'A-Building & Concrete', 'description_ar': 'ШіЩӮЩҒ Ш®ШұШіШ§ЩҶШ© Щ…ШіЩ„ШӯШ©', 'description_en': 'RC Roof', 'unit': 'Lum', 'planned_qty': 1.00},
-            {'boq_code': 'A5', 'category': 'A-Building & Concrete', 'description_ar': 'ЩғШұШіЩҠ Ш№ШұШЁЩҠ + ЩғЩҲШ№ ШұЩҠШӯШ©', 'description_en': 'Pan + UPVC', 'unit': 'No', 'planned_qty': 1.00},
-            {'boq_code': 'A6', 'category': 'A-Building & Concrete', 'description_ar': 'ШЁЩ„Ш§Ш· Щ…ЩҲШІШ§ЩҠЩғЩҲ', 'description_en': 'Mosaic Tiles', 'unit': 'm2', 'planned_qty': 1.32},
-            {'boq_code': 'B1', 'category': 'B-Septic & Pipes', 'description_ar': 'ШӯЩҒШұ ШЁЩҠШ§ШұШ© ЩӮШ·Шұ 1Щ…', 'description_en': 'Septic Excavation', 'unit': 'm3', 'planned_qty': 2.00},
-            {'boq_code': 'B2', 'category': 'B-Septic & Pipes', 'description_ar': 'ШӘЩ…ШҜЩҠШҜ UPVC 4 Ш§ЩҶШҙ + ШӘЩҮЩҲЩҠШ©', 'description_en': 'UPVC Drainage', 'unit': 'LM', 'planned_qty': 12.00},
-            {'boq_code': 'B3', 'category': 'B-Septic & Pipes', 'description_ar': 'ШәШ·Ш§ШЎ ШЁЩҠШ§ШұШ© Ш®ШұШіШ§ЩҶЩҠ', 'description_en': 'Septic Cover', 'unit': 'No', 'planned_qty': 1.00},
-            {'boq_code': 'C1', 'category': 'C-Doors & Windows', 'description_ar': 'ШЁШ§ШЁ ШӯШҜЩҠШҜ ШөШ§Ш¬', 'description_en': 'Steel Door', 'unit': 'No', 'planned_qty': 1.00},
-            {'boq_code': 'C2', 'category': 'C-Doors & Windows', 'description_ar': 'ЩҶШ§ЩҒШ°Ш© ШЈЩ„Щ…ЩҶЩҠЩҲЩ…', 'description_en': 'Aluminum Window', 'unit': 'No', 'planned_qty': 1.00},
-            {'boq_code': 'C3', 'category': 'C-Doors & Windows', 'description_ar': 'ШҘШ¶Ш§ШЎШ© ШҙЩ…ШіЩҠШ© 10ЩҲШ§Ш·', 'description_en': 'Solar Light', 'unit': 'No', 'planned_qty': 1.00},
-            {'boq_code': 'C4', 'category': 'C-Doors & Windows', 'description_ar': 'Щ„ЩҲШӯШ© Щ…Ш№ШҜЩҶЩҠШ© + ШҙШ№Ш§Шұ', 'description_en': 'Logo Plate', 'unit': 'No', 'planned_qty': 1.00},
+            {'boq_code': 'A1', 'category': 'A-Building & Concrete', 'description_ar': 'حفر وتسوية + أساس حجر', 'description_en': 'Excavation & Stone Foundation', 'unit': 'm3', 'planned_qty': 1.00},
+            {'boq_code': 'A2', 'category': 'A-Building & Concrete', 'description_ar': 'جدران بلك مفرغ 15سم', 'description_en': 'Hollow Block Wall', 'unit': 'm2', 'planned_qty': 9.32},
+            {'boq_code': 'A3', 'category': 'A-Building & Concrete', 'description_ar': 'لياسة داخلية وخارجية', 'description_en': 'Plaster', 'unit': 'm2', 'planned_qty': 3.20},
+            {'boq_code': 'A4', 'category': 'A-Building & Concrete', 'description_ar': 'سقف خرسانة مسلحة', 'description_en': 'RC Roof', 'unit': 'Lum', 'planned_qty': 1.00},
+            {'boq_code': 'A5', 'category': 'A-Building & Concrete', 'description_ar': 'كرسي عربي + كوع ريحة', 'description_en': 'Pan + UPVC', 'unit': 'No', 'planned_qty': 1.00},
+            {'boq_code': 'A6', 'category': 'A-Building & Concrete', 'description_ar': 'بلاط موزاييكو', 'description_en': 'Mosaic Tiles', 'unit': 'm2', 'planned_qty': 1.32},
+            {'boq_code': 'B1', 'category': 'B-Septic & Pipes', 'description_ar': 'حفر بيارة قطر 1م', 'description_en': 'Septic Excavation', 'unit': 'm3', 'planned_qty': 2.00},
+            {'boq_code': 'B2', 'category': 'B-Septic & Pipes', 'description_ar': 'تمديد UPVC 4 انش + تهوية', 'description_en': 'UPVC Drainage', 'unit': 'LM', 'planned_qty': 12.00},
+            {'boq_code': 'B3', 'category': 'B-Septic & Pipes', 'description_ar': 'غطاء بيارة خرساني', 'description_en': 'Septic Cover', 'unit': 'No', 'planned_qty': 1.00},
+            {'boq_code': 'C1', 'category': 'C-Doors & Windows', 'description_ar': 'باب حديد صاج', 'description_en': 'Steel Door', 'unit': 'No', 'planned_qty': 1.00},
+            {'boq_code': 'C2', 'category': 'C-Doors & Windows', 'description_ar': 'نافذة ألمنيوم', 'description_en': 'Aluminum Window', 'unit': 'No', 'planned_qty': 1.00},
+            {'boq_code': 'C3', 'category': 'C-Doors & Windows', 'description_ar': 'إضاءة شمسية 10واط', 'description_en': 'Solar Light', 'unit': 'No', 'planned_qty': 1.00},
+            {'boq_code': 'C4', 'category': 'C-Doors & Windows', 'description_ar': 'لوحة معدنية + شعار', 'description_en': 'Logo Plate', 'unit': 'No', 'planned_qty': 1.00},
         ]
     else:
         items = [
@@ -447,7 +447,7 @@ def override_item_decision(db: Session, decision_id: int, override_data: schemas
     return decision
 
 # ==========================================
-#  SMART OBSERVATION ENGINE (ЩӮЩҲШ§Щ„ШЁ Ш§Щ„Щ…Щ„Ш§ШӯШёШ§ШӘ)
+#  SMART OBSERVATION ENGINE (قوالب الملاحظات)
 # ==========================================
 def get_remark_templates(db: Session):
     return db.query(models.RemarkTemplate).filter(models.RemarkTemplate.is_active == True).all()
@@ -485,12 +485,12 @@ def delete_remark_template(db: Session, template_code: str):
 
 def seed_default_remark_templates(db: Session):
     default_templates = [
-        {"template_code": "TPL-001", "title": "ШӘШ·ШЁЩҠЩ„ ЩҒЩҠ Ш§Щ„ШЁЩ„Ш§Ш·", "description": "ЩҲШ¬ЩҲШҜ ЩҒШұШ§ШәШ§ШӘ ШӘШӯШӘ Ш§Щ„ШЁЩ„Ш§Ш· ШӘШіШЁШЁ ШөЩҲШӘШ§ЩӢ ШЈШ¬ЩҲЩҒШ§ЩӢ Ш№ЩҶШҜ Ш§Щ„Ш·ШұЩӮ.", "default_action": "ШҘШІШ§Щ„Ш© Ш§Щ„ШЁЩ„Ш§Ш· Ш§Щ„Щ…Ш·ШЁЩ„ ЩҲШҘШ№Ш§ШҜШ© ШӘШұЩғЩҠШЁЩҮ ШЁЩ…ЩҲЩҶШ© ЩғШ§ЩҒЩҠШ©.", "default_severity": "major", "boq_tags": ["A6"]},
-        {"template_code": "TPL-002", "title": "ШӘШіШұЩҠШЁ Щ…ЩҠШ§ЩҮ Щ…ЩҶ Ш§Щ„ШӘЩҲШөЩҠЩ„Ш§ШӘ", "description": "ЩҲШ¬ЩҲШҜ ШӘШіШұЩҠШЁ Щ…ЩҠШ§ЩҮ ЩҲШ§Ш¶Шӯ Щ…ЩҶ ЩҶЩӮШ§Ш· Щ„ШӯШ§Щ… Ш§Щ„Щ…ЩҲШ§ШіЩҠШұ ШЈЩҲ Ш§Щ„Щ…ШӯШ§ШЁШі.", "default_action": "ЩҒЩғ Ш§Щ„ЩҲШөЩ„Ш©ШҢ ЩҲШ¶Ш№ Ш§Щ„ШӘЩҠЩҒЩ„ЩҲЩҶ/Ш§Щ„ШәШұШ§ШЎ ШЁШҙЩғЩ„ ШөШӯЩҠШӯ ЩҲШҘШ№Ш§ШҜШ© Ш§Щ„ШұШЁШ·.", "default_severity": "critical", "boq_tags": ["B2", "E10"]},
-        {"template_code": "TPL-003", "title": "Ш№ШҜЩ… Ш§ШіШӘЩҲШ§ШЎ Ш§Щ„Щ„ЩҠШ§ШіШ©", "description": "ШіШ·Шӯ Ш§Щ„Щ„ЩҠШ§ШіШ© ШәЩҠШұ Щ…ШіШӘЩҲЩҚ ЩҲЩҠШёЩҮШұ ШӘЩ…ЩҲШ¬Ш§ШӘ Ш№ЩҶШҜ Ш§Щ„ЩҒШӯШө ШЁШ§Щ„ЩӮШҜЩҮ.", "default_action": "ШөЩҶЩҒШұШ© Ш§Щ„Щ…ЩҶШ§Ш·ЩӮ Ш§Щ„ШЁШ§ШұШІШ© ШЈЩҲ ШҘШ№Ш§ШҜШ© Ш§Щ„ШӘЩ„ШЁЩҠШі Щ„Щ„Щ…ЩҶШ§Ш·ЩӮ Ш§Щ„Щ…Ш№ЩҠШЁШ©.", "default_severity": "minor", "boq_tags": ["A3"]},
-        {"template_code": "TPL-004", "title": "Щ…ЩҠЩ„ ШәЩҠШұ ЩғШ§ЩҒЩҚ ЩҒЩҠ Ш§Щ„ШЈШұШ¶ЩҠШ©", "description": "ШӘШ¬Щ…Ш№ Щ…ЩҠШ§ЩҮ ЩҒЩҠ ШЈШұШ¶ЩҠШ© Ш§Щ„ШӯЩ…Ш§Щ… ШЁШіШЁШЁ Ш№ШҜЩ… ШӘЩҲШ¬ЩҠЩҮ Ш§Щ„Щ…ЩҠЩҲЩ„ ЩҶШӯЩҲ Ш§Щ„ШөЩҒШ§ЩҠШ©.", "default_action": "ШҘШ№Ш§ШҜШ© ШӘШЁЩ„Ш· Ш§Щ„ШЈШұШ¶ЩҠШ© Щ…Ш№ Ш¶ШЁШ· Ш§Щ„Щ…ЩҠЩҲЩ„ ШЁШҙЩғЩ„ ШөШӯЩҠШӯ.", "default_severity": "major", "boq_tags": ["A6"]},
-        {"template_code": "GEN-001", "title": "Щ…Ш®Щ„ЩҒШ§ШӘ ШЁЩҶШ§ШЎ ЩҒЩҠ Ш§Щ„Щ…ЩҲЩӮШ№", "description": "ШӘШұЩғ Ш§Щ„Щ…ЩӮШ§ЩҲЩ„ Щ„Щ…Ш®Щ„ЩҒШ§ШӘ Ш§Щ„ШЁЩҶШ§ШЎ ЩҲШ§Щ„ШЈЩҶЩӮШ§Ш¶ ШҜШ§Ш®Щ„ ШЈЩҲ ШӯЩҲЩ„ Ш§Щ„ШӯЩ…Ш§Щ….", "default_action": "ШӘЩҶШёЩҠЩҒ Ш§Щ„Щ…ЩҲЩӮШ№ ШЁШ§Щ„ЩғШ§Щ…Щ„ ЩҲШӘШұШӯЩҠЩ„ Ш§Щ„Щ…Ш®Щ„ЩҒШ§ШӘ Щ„Щ„Щ…ЩӮШ§Щ„ШЁ Ш§Щ„Щ…Ш№ШӘЩ…ШҜШ©.", "default_severity": "minor", "boq_tags": ["ALL"]},
-        {"template_code": "GEN-002", "title": "Ш№ШҜЩ… Ш§Щ„Ш§Щ„ШӘШІШ§Щ… ШЁЩ…Ш№ШҜШ§ШӘ Ш§Щ„ШіЩ„Ш§Щ…Ш©", "description": "Ш§Щ„Ш№Щ…Ш§Щ„ Щ„Ш§ ЩҠШұШӘШҜЩҲЩҶ Щ…Ш№ШҜШ§ШӘ Ш§Щ„ШіЩ„Ш§Щ…Ш© Ш§Щ„Щ…ЩҮЩҶЩҠШ© (Ш®ЩҲШ°Ш©ШҢ ШӯШ°Ш§ШЎШҢ ЩӮЩҒШ§ШІШ§ШӘ).", "default_action": "ШҘЩҠЩӮШ§ЩҒ Ш§Щ„Ш№Щ…Ш§Щ„ Ш§Щ„Щ…Ш®Ш§Щ„ЩҒЩҠЩҶ ЩҲШӘЩҲЩҒЩҠШұ Щ…Ш№ШҜШ§ШӘ Ш§Щ„ШіЩ„Ш§Щ…Ш© ЩҒЩҲШұШ§ЩӢ.", "default_severity": "major", "boq_tags": ["ALL"]},
+        {"template_code": "TPL-001", "title": "تطبيل في البلاط", "description": "وجود فراغات تحت البلاط تسبب صوتاً أجوفاً عند الطرق.", "default_action": "إزالة البلاط المطبل وإعادة تركيبه بمونة كافية.", "default_severity": "major", "boq_tags": ["A6"]},
+        {"template_code": "TPL-002", "title": "تسريب مياه من التوصيلات", "description": "وجود تسريب مياه واضح من نقاط لحام المواسير أو المحابس.", "default_action": "فك الوصلة، وضع التيفلون/الغراء بشكل صحيح وإعادة الربط.", "default_severity": "critical", "boq_tags": ["B2", "E10"]},
+        {"template_code": "TPL-003", "title": "عدم استواء اللياسة", "description": "سطح اللياسة غير مستوٍ ويظهر تموجات عند الفحص بالقده.", "default_action": "صنفرة المناطق البارزة أو إعادة التلبيس للمناطق المعيبة.", "default_severity": "minor", "boq_tags": ["A3"]},
+        {"template_code": "TPL-004", "title": "ميل غير كافٍ في الأرضية", "description": "تجمع مياه في أرضية الحمام بسبب عدم توجيه الميول نحو الصفاية.", "default_action": "إعادة تبلط الأرضية مع ضبط الميول بشكل صحيح.", "default_severity": "major", "boq_tags": ["A6"]},
+        {"template_code": "GEN-001", "title": "مخلفات بناء في الموقع", "description": "ترك المقاول لمخلفات البناء والأنقاض داخل أو حول الحمام.", "default_action": "تنظيف الموقع بالكامل وترحيل المخلفات للمقالب المعتمدة.", "default_severity": "minor", "boq_tags": ["ALL"]},
+        {"template_code": "GEN-002", "title": "عدم الالتزام بمعدات السلامة", "description": "العمال لا يرتدون معدات السلامة المهنية (خوذة، حذاء، قفازات).", "default_action": "إيقاف العمال المخالفين وتوفير معدات السلامة فوراً.", "default_severity": "major", "boq_tags": ["ALL"]},
     ]
 
     existing_codes = {t.template_code for t in db.query(models.RemarkTemplate.template_code).all()}
@@ -602,26 +602,63 @@ def process_sync_queue(db: Session, sync_req: schemas.SyncRequest) -> schemas.Sy
             elif op.type == "UPDATE_REMARK":
                 local_uuid = op_data.get("local_uuid")
                 remark = None
+
                 if local_uuid:
-                    remark = db.query(models.Remark).filter(models.Remark.remark_id == str(local_uuid)[:36]).first()
+                    remark = db.query(models.Remark).filter(
+                        models.Remark.remark_id == str(local_uuid)[:36]
+                    ).first()
                     if not remark:
                         print(f"⚠️ Remark not found by remark_id={local_uuid}. Check if remark_id stores local_uuid.")
-                if not remark and op_data.get("id"):
-                    remark = db.query(models.Remark).filter(models.Remark.id == op_data["id"]).first()
+
+                op_id = op_data.get("id")
+                if not remark and op_id is not None:
+                    try:
+                        id_val = int(op_id)
+                        if id_val > 0:
+                            remark = db.query(models.Remark).filter(
+                                models.Remark.id == id_val
+                            ).first()
+                    except (TypeError, ValueError):
+                        pass
+
                 if remark:
-                    allowed_fields = [
-                        "status", "closed_date", "suffix_note", "action_required", "severity",
-                        "before_photo_ref", "after_photo_ref"
-                    ]
-                    for key, val in op_data.items():
-                        if key in allowed_fields and val is not None:
-                            setattr(remark, key, val)
+                    template_code = op_data.pop('template_code', None)
+                    if template_code:
+                        template = db.query(models.RemarkTemplate).filter(
+                            models.RemarkTemplate.template_code == template_code
+                        ).first()
+                        if template:
+                            op_data['template_id'] = template.id
+                        else:
+                            op_data['template_id'] = None
+
+                    if 'boq_code' not in op_data or op_data.get('boq_code') is None:
+                        op_data['boq_code'] = remark.boq_code
+                    if 'latrine_id' not in op_data or op_data.get('latrine_id') is None:
+                        op_data['latrine_id'] = remark.latrine_id
+
+                    for key, value in op_data.items():
+                        if hasattr(remark, key) and key not in ["id", "local_uuid", "sync_status", "local_id"]:
+                            if value == "" and key in ['description', 'suffix_note', 'template_id']:
+                                value = None
+                            if key in ['boq_code', 'latrine_id'] and value is None:
+                                continue
+                            setattr(remark, key, value)
                     remark.last_update = datetime.utcnow()
                     db.commit()
+                    db.refresh(remark)
                     processed.append(op.seq)
+
+                    if remark.boq_code:
+                        related_item = db.query(models.BoqItem).filter(
+                            models.BoqItem.latrine_id == remark.latrine_id,
+                            models.BoqItem.boq_code == remark.boq_code
+                        ).first()
+                        if related_item:
+                            items_to_recalc_decision.add(related_item.id)
                 else:
                     failed.append(op.seq)
-                    errors[str(op.seq)] = f"Remark not found (local_uuid={local_uuid})"
+                    errors[str(op.seq)] = "Remark not found on server"
 
             elif op.type == "UPDATE_LATRINE":
                 latrine_id = op_data.get("id")
@@ -700,7 +737,7 @@ def process_sync_queue(db: Session, sync_req: schemas.SyncRequest) -> schemas.Sy
 
 
 # ==========================================
-# AUTH-PATCH 2026-06-02: USER & AUDIT CRUD (Щ…ШөЩ„Шӯ)
+# AUTH-PATCH 2026-06-02: USER & AUDIT CRUD (مصلح)
 # ==========================================
 
 def get_user(db: Session, user_id: int):
@@ -783,20 +820,20 @@ def get_audit_logs(db: Session, skip: int = 0, limit: int = 100, user_id: int = 
     return query.order_by(models.AuditLog.timestamp.desc()).offset(skip).limit(limit).all()
 
 # ==========================================
-# SEED DEFAULT ADMIN (Щ…ШөЩ„Шӯ Щ„Щ…ЩҶШ№ ШӘШ¶Ш§ШұШЁ Ш§Щ„ШЁШұЩҠШҜ Ш§Щ„ШҘЩ„ЩғШӘШұЩҲЩҶЩҠ)
+# SEED DEFAULT ADMIN (مصلح لمنع تضارب البريد الإلكتروني)
 # ==========================================
 def seed_default_admin(db: Session):
     import os
     admin_username = os.getenv("ADMIN_USERNAME", "admin")
     admin_password = os.getenv("ADMIN_PASSWORD")
     if not admin_password:
-        # Щ„Ш§ ЩҶЩҶШҙШҰ admin ШҘШ°Ш§ Щ„Щ… ШӘЩҸШӯШҜШҜ ЩғЩ„Щ…Ш© Ш§Щ„ШіШұ ЩҒЩҠ Ш§Щ„ШЁЩҠШҰШ© (ШўЩ…ЩҶ)
+        # لا ننشئ admin إذا لم تُحدد كلمة السر في البيئة (آمن)
         return
 
-    # Ш§Щ„ШЁШӯШ« Ш№ЩҶ Щ…ШіШӘШ®ШҜЩ… Щ…ЩҲШ¬ЩҲШҜ ШЁЩҶЩҒШі Ш§Щ„ШЁШұЩҠШҜ Ш§Щ„ШҘЩ„ЩғШӘШұЩҲЩҶЩҠ ШЈЩҲ Ш§ШіЩ… Ш§Щ„Щ…ШіШӘШ®ШҜЩ…
+    # البحث عن مستخدم موجود بنفس البريد الإلكتروني أو اسم المستخدم
     existing_by_email = db.query(models.User).filter(models.User.email == "admin@nrc.org").first()
     existing_by_username = db.query(models.User).filter(models.User.username == admin_username).first()
-    
+
     admin_role = db.query(models.Role).filter(models.Role.name == "admin").first()
     if not admin_role:
         return
@@ -805,7 +842,7 @@ def seed_default_admin(db: Session):
     hashed = get_password_hash(admin_password)
 
     if existing_by_email:
-        # ШӘШӯШҜЩҠШ« Ш§Щ„Щ…ШіШӘШ®ШҜЩ… Ш§Щ„Щ…ЩҲШ¬ЩҲШҜ ШЁЩҶЩҒШі Ш§Щ„ШЁШұЩҠШҜ
+        # تحديث المستخدم الموجود بنفس البريد
         existing_by_email.username = admin_username
         existing_by_email.hashed_password = hashed
         existing_by_email.is_active = True
@@ -814,7 +851,7 @@ def seed_default_admin(db: Session):
         db.commit()
         return
     elif existing_by_username:
-        # ШӘШӯШҜЩҠШ« Ш§Щ„Щ…ШіШӘШ®ШҜЩ… Ш§Щ„Щ…ЩҲШ¬ЩҲШҜ ШЁЩҶЩҒШі Ш§ШіЩ… Ш§Щ„Щ…ШіШӘШ®ШҜЩ…
+        # تحديث المستخدم الموجود بنفس اسم المستخدم
         existing_by_username.email = os.getenv("ADMIN_EMAIL", f"{admin_username}@nrc.org")
         existing_by_username.hashed_password = hashed
         existing_by_username.is_active = True
@@ -823,7 +860,7 @@ def seed_default_admin(db: Session):
         db.commit()
         return
     else:
-        # ШҘЩҶШҙШ§ШЎ Щ…ШіШӘШ®ШҜЩ… Ш¬ШҜЩҠШҜ
+        # إنشاء مستخدم جديد
         admin_user = models.User(
             username=admin_username,
             email=os.getenv("ADMIN_EMAIL", f"{admin_username}@nrc.org"),
