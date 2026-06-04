@@ -1,5 +1,3 @@
-// AUTH-PATCH 2026-06-02: Ш§ШіШӘШ®ШҜШ§Щ… apiFetch ШЁШҜЩ„Ш§ЩӢ Щ…ЩҶ fetch Ш§Щ„Щ…ШЁШ§ШҙШұ (Щ…Ш№ Ш§Щ„Ш§ШӯШӘЩҒШ§Шё ШЁЩғЩ„ Ш§Щ„ЩҲШёШ§ШҰЩҒ)
-
 import React, { useState, useEffect } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '../db/index.js';
@@ -15,19 +13,23 @@ const SyncStatus = () => {
 
   useEffect(() => {
     let isSyncingImages = false;
+    
     const handleOnline = async () => {
+      setIsOnline(true);
       if (isSyncingImages) return;
       isSyncingImages = true;
-      setIsOnline(true);
       try {
+        // فحص ورفع الصور المعلقة خلف الكواليس تلقائياً عند التقاط إشارة الشبكة
         await imageService.syncPendingImages();
       } catch (err) {
-        console.error("Online image sync error:", err);
+        console.error("Online image sync automated trigger error:", err);
       } finally {
         isSyncingImages = false;
       }
     };
+    
     const handleOffline = () => setIsOnline(false);
+
     window.addEventListener('online', handleOnline);
     window.addEventListener('offline', handleOffline);
     return () => {
@@ -36,34 +38,33 @@ const SyncStatus = () => {
     };
   }, []);
 
-  // ШҜЩҒШ№ Ш§Щ„ШӘШ№ШҜЩҠЩ„Ш§ШӘ ШҘЩ„Щү Ш§Щ„Ш®Ш§ШҜЩ…
+  // دفع البيانات النصية والـ BOQs المعدلة يدوياً
   const handlePushSync = async () => {
     if (!isOnline || pendingCount === 0) return;
     setIsSyncing(true);
     try {
       const result = await syncWithServer();
-      alert(`ШӘЩ…ШӘ Ш§Щ„Щ…ШІШ§Щ…ЩҶШ© ШЁЩҶШ¬Ш§Шӯ: ${result.processed} Ш№Щ…Щ„ЩҠШ© ЩҶШ§Ш¬ШӯШ©.`);
+      alert(`تمت مزامنة السجلات بنجاح: تم معالجة ${result.processed} عملية مسبقة.`);
     } catch (error) {
-      alert(`Ш®Ш·ШЈ ЩҒЩҠ Ш§Щ„Щ…ШІШ§Щ…ЩҶШ©: ${error.message}`);
+      alert(`خطأ في محرك المزامنة الرئيسي: ${error.message}`);
     } finally {
       setIsSyncing(false);
     }
   };
 
-  // ШіШӯШЁ ШЈШӯШҜШ« Ш§Щ„ШЁЩҠШ§ЩҶШ§ШӘ Щ…ЩҶ Ш§Щ„Ш®Ш§ШҜЩ… (ШӘШӯЩ…ЩҠЩ„)
+  // سحب البيانات الشاملة وتحديث الـ Cache
   const handleDownloadData = async () => {
     if (!isOnline) {
-      alert("ЩҠШ¬ШЁ ШЈЩҶ ШӘЩғЩҲЩҶ Щ…ШӘШөЩ„Ш§ЩӢ ШЁШ§Щ„ШҘЩҶШӘШұЩҶШӘ Щ„ШӘШӯЩ…ЩҠЩ„ Ш§Щ„ШЁЩҠШ§ЩҶШ§ШӘ.");
+      alert("يجب أن تكون متصلاً بالإنترنت لسحب وتحديث البيانات القياسية.");
       return;
     }
     if (pendingCount > 0) {
-      alert("Щ„ШҜЩҠЩғ ШӘШ№ШҜЩҠЩ„Ш§ШӘ Щ…ШӯЩ„ЩҠШ© Щ„Щ… ЩҠШӘЩ… ШҘШұШіШ§Щ„ЩҮШ§. ЩҠШұШ¬Щү Щ…ШІШ§Щ…ЩҶШ© ШЁЩҠШ§ЩҶШ§ШӘЩғ ШЈЩҲЩ„Ш§ЩӢ.");
+      alert("تحذير: لديك سجلات وتعديلات معلقة محلياً، يرجى إرسال التعديلات أولاً لمنع الكتابة الفوقية.");
       return;
     }
 
     setIsDownloading(true);
     try {
-      // вң… Ш§Щ„ШӘШәЩҠЩҠШұ Ш§Щ„ЩҲШӯЩҠШҜ: Ш§ШіШӘШЁШҜШ§Щ„ fetch ШЁЩҖ apiFetch
       const [latrinesRes, boqRes, remarksRes, templatesRes] = await Promise.all([
         apiFetch('/latrines?limit=200'),
         apiFetch('/boq-items'),
@@ -71,7 +72,7 @@ const SyncStatus = () => {
         apiFetch('/remark-templates')
       ]);
 
-      if (!latrinesRes.ok || !boqRes.ok) throw new Error("ЩҒШҙЩ„ Ш§Щ„Ш§ШӘШөШ§Щ„ ШЁШ§Щ„Ш®Ш§ШҜЩ…");
+      if (!latrinesRes.ok || !boqRes.ok) throw new Error("تعذر الاتصال ببوابة الخادم الحية.");
 
       const latrines = await latrinesRes.json();
       const boqItems = await boqRes.json();
@@ -83,6 +84,7 @@ const SyncStatus = () => {
         await db.boq_items.clear();
         await db.remarks.clear();
         await db.remark_templates.clear();
+        
         if (latrines?.length) await db.latrines.bulkAdd(latrines);
         if (boqItems?.length) await db.boq_items.bulkAdd(boqItems);
         if (templates?.length) await db.remark_templates.bulkAdd(templates);
@@ -91,10 +93,10 @@ const SyncStatus = () => {
           await db.remarks.bulkAdd(remarksWithSync);
         }
       });
-      alert("ШӘЩ… ШӘШӯЩ…ЩҠЩ„ ШЈШӯШҜШ« Ш§Щ„ШЁЩҠШ§ЩҶШ§ШӘ (ШЁЩ…Ш§ ЩҒЩҠЩҮШ§ Щ…ЩғШӘШЁШ© Ш§Щ„Щ…Щ„Ш§ШӯШёШ§ШӘ) ШЁЩҶШ¬Ш§Шӯ!");
+      alert("تمت مزامنة وتحديث قاعدة البيانات الميدانية بالكامل!");
     } catch (error) {
       console.error(error);
-      alert("ШӘШ№Ш°Шұ ШӘШӯЩ…ЩҠЩ„ Ш§Щ„ШЁЩҠШ§ЩҶШ§ШӘ Щ…ЩҶ Ш§Щ„Ш®Ш§ШҜЩ….");
+      alert("فشل تحديث البيانات المحلية من السيرفر الرئيسي.");
     } finally {
       setIsDownloading(false);
     }
@@ -112,23 +114,25 @@ const SyncStatus = () => {
       top: 0,
       zIndex: 1000,
       flexWrap: 'wrap',
-      gap: '10px'
+      gap: '10px',
+      direction: 'rtl',
+      fontFamily: 'sans-serif'
     }}>
       <div>
-        <strong>{isOnline ? 'Щ…ШӘШөЩ„ ШЁШ§Щ„ШҘЩҶШӘШұЩҶШӘ (Online)' : 'Ш§Щ„Ш№Щ…Щ„ ШҜЩҲЩҶ Ш§ШӘШөШ§Щ„ (Offline)'}</strong>
-        {pendingCount > 0 && <span style={{ marginRight: '15px', fontWeight: 'bold' }}>- Ш№Щ…Щ„ЩҠШ§ШӘ ШӘЩҶШӘШёШұ Ш§Щ„ШҘШұШіШ§Щ„: {pendingCount}</span>}
+        <strong>{isOnline ? '🟢 حالة الاتصال: متصل بالإنترنت (Online)' : '🔴 حالة الاتصال: دون اتصال (Offline)'}</strong>
+        {pendingCount > 0 && <span style={{ marginRight: '15px', fontWeight: 'bold' }}>- تعديلات قيد الانتظار: {pendingCount}</span>}
       </div>
       <div style={{ display: 'flex', gap: '10px' }}>
         {pendingCount > 0 && (
           <button onClick={handlePushSync} disabled={!isOnline || isSyncing}
             style={{ padding: '6px 12px', backgroundColor: 'white', color: '#f39c12', border: 'none', borderRadius: '4px', fontWeight: 'bold', cursor: (!isOnline || isSyncing) ? 'not-allowed' : 'pointer' }}>
-            {isSyncing ? 'Ш¬Ш§ШұЩҠ Ш§Щ„ШҘШұШіШ§Щ„...' : 'ШҘШұШіШ§Щ„ Ш§Щ„ШӘШ№ШҜЩҠЩ„Ш§ШӘ Щ„Щ„Ш®Ш§ШҜЩ…'}
+            {isSyncing ? 'جاري إرسال السجلات...' : 'إرسال السجلات المعلقة الآن'}
           </button>
         )}
         <button onClick={handleDownloadData} disabled={!isOnline || isDownloading || pendingCount > 0}
           style={{ padding: '6px 12px', backgroundColor: 'rgba(255,255,255,0.2)', color: 'white', border: '1px solid white', borderRadius: '4px', fontWeight: 'bold', cursor: (!isOnline || isDownloading || pendingCount > 0) ? 'not-allowed' : 'pointer' }}
-          title={pendingCount > 0 ? "ЩӮЩ… ШЁШҘШұШіШ§Щ„ ШӘШ№ШҜЩҠЩ„Ш§ШӘЩғ ШЈЩҲЩ„Ш§ЩӢ" : "ШіШӯШЁ ШЈШӯШҜШ« Ш§Щ„ШЁЩҠШ§ЩҶШ§ШӘ Щ…ЩҶ Ш§Щ„Ш®Ш§ШҜЩ…"}>
-          {isDownloading ? 'Ш¬Ш§ШұЩҠ Ш§Щ„ШӘШӯЩ…ЩҠЩ„...' : 'ШӘШӯЩ…ЩҠЩ„ ШЈШӯШҜШ« Ш§Щ„ШЁЩҠШ§ЩҶШ§ШӘ Щ…ЩҶ Ш§Щ„Ш®Ш§ШҜЩ… вҶ“'}
+          title={pendingCount > 0 ? "قم بمزامنة التعديلات الميدانية الحالية أولاً" : "تحديث البيانات الشاملة من السيرفر"}>
+          {isDownloading ? 'جاري تحديث النظام...' : 'تحديث النظام وسحب البيانات ↓'}
         </button>
       </div>
     </div>
