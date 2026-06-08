@@ -12,7 +12,6 @@ class ImageService {
         return new Promise((resolve) => {
             const input = document.createElement('input');
             input.type = 'file';
-            // نقبل جميع أنواع الصور المعروفة، بما فيها HEIC
             input.accept = 'image/*';
             input.capture = 'environment';
             input.onchange = (e) => resolve(e.target.files[0] || null);
@@ -20,15 +19,13 @@ class ImageService {
         });
     }
 
-    // دالة جديدة لتحويل HEIC إلى JPEG
     async convertHeicToJpeg(heicFile) {
         try {
             const blob = await heic2any({
                 blob: heicFile,
                 toType: 'image/jpeg',
-                quality: 0.9  // جودة عالية 90%
+                quality: 0.9
             });
-            // heic2any قد يعيد مصفوفة blobs أو blob واحد
             const jpegBlob = Array.isArray(blob) ? blob[0] : blob;
             return new File([jpegBlob], heicFile.name.replace(/\.heic$/i, '.jpg'), { type: 'image/jpeg' });
         } catch (err) {
@@ -39,7 +36,6 @@ class ImageService {
 
     async uploadImage(compressedFile) {
         const ct = compressedFile.type;
-        // ✅ تصحيح: إرسال POST بدلاً من GET (الـ Backend يتوقع POST)
         const res = await apiFetch(`/evidence/presigned-url?content_type=${encodeURIComponent(ct)}`, {
             method: 'POST'
         });
@@ -47,12 +43,23 @@ class ImageService {
             const errText = await res.text();
             throw new Error(`Failed to get presigned URL: ${res.status} ${errText}`);
         }
-        const { presigned_data, key } = await res.json();
-        const form = new FormData();
-        Object.entries(presigned_data.fields).forEach(([k, v]) => form.append(k, v));
-        form.append('file', compressedFile);
-        const uploadResp = await fetch(presigned_data.url, { method: 'POST', body: form });
-        if (!uploadResp.ok && uploadResp.status !== 204) throw new Error('Upload failed');
+        const { upload_url, key } = await res.json();
+        
+        // ✅ PUT مباشر إلى B2 (بدون FormData)
+        const uploadResp = await fetch(upload_url, {
+            method: 'PUT',
+            body: compressedFile,
+            headers: {
+                'Content-Type': ct
+            }
+        });
+        
+        if (!uploadResp.ok) {
+            const errText = await uploadResp.text();
+            console.error('B2 upload error:', uploadResp.status, errText);
+            throw new Error(`Upload failed: ${uploadResp.status} ${errText}`);
+        }
+        
         return key;
     }
 
@@ -61,8 +68,6 @@ class ImageService {
         if (!rawFile) return null;
 
         let fileToProcess = rawFile;
-
-        // التحقق من صيغة HEIC (بغض النظر عن حالة الأحرف)
         const isHeic = rawFile.type === 'image/heic' || 
                        rawFile.name?.toLowerCase().endsWith('.heic');
 
