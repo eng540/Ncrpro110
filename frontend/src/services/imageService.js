@@ -1,6 +1,7 @@
 import { db } from '../db/index.js';
 import { apiFetch } from '../api';
 import imageCompression from 'browser-image-compression';
+import heic2any from 'heic2any';
 
 class ImageService {
     async compressImage(file, maxSizeMB = 0.5) {
@@ -11,11 +12,29 @@ class ImageService {
         return new Promise((resolve) => {
             const input = document.createElement('input');
             input.type = 'file';
-            input.accept = 'image/jpeg,image/png,image/webp';
+            // نقبل جميع أنواع الصور المعروفة، بما فيها HEIC
+            input.accept = 'image/*';
             input.capture = 'environment';
             input.onchange = (e) => resolve(e.target.files[0] || null);
             input.click();
         });
+    }
+
+    // دالة جديدة لتحويل HEIC إلى JPEG
+    async convertHeicToJpeg(heicFile) {
+        try {
+            const blob = await heic2any({
+                blob: heicFile,
+                toType: 'image/jpeg',
+                quality: 0.9  // جودة عالية 90%
+            });
+            // heic2any قد يعيد مصفوفة blobs أو blob واحد
+            const jpegBlob = Array.isArray(blob) ? blob[0] : blob;
+            return new File([jpegBlob], heicFile.name.replace(/\.heic$/i, '.jpg'), { type: 'image/jpeg' });
+        } catch (err) {
+            console.error('HEIC conversion failed:', err);
+            throw new Error('فشل تحويل الصورة من صيغة HEIC إلى JPEG');
+        }
     }
 
     async uploadImage(compressedFile) {
@@ -34,7 +53,25 @@ class ImageService {
     async addImageToRemark(remarkLocalUuid, type) {
         const rawFile = await this.captureImage();
         if (!rawFile) return null;
-        const compressed = await this.compressImage(rawFile);
+
+        let fileToProcess = rawFile;
+
+        // التحقق من صيغة HEIC (بغض النظر عن حالة الأحرف)
+        const isHeic = rawFile.type === 'image/heic' || 
+                       rawFile.name?.toLowerCase().endsWith('.heic');
+
+        if (isHeic) {
+            console.log('HEIC file detected. Converting to JPEG...');
+            try {
+                fileToProcess = await this.convertHeicToJpeg(rawFile);
+            } catch (err) {
+                console.error(err);
+                alert('⚠️ هذه الصورة بصيغة HEIC ولم نتمكن من تحويلها تلقائياً. حاول استخدام صيغة JPEG أو PNG.');
+                return null;
+            }
+        }
+
+        const compressed = await this.compressImage(fileToProcess);
         if (navigator.onLine) {
             return await this.uploadImage(compressed);
         } else {
