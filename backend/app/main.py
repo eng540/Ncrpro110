@@ -553,7 +553,7 @@ def sync_offline_data(
     request: schemas.SyncRequest,
     db: Session = Depends(get_db),
     current_user: models.User = Depends(security.require_write_permission()),
-    req: Request = None
+    req: Request
 ):
     """
     مزامنة البيانات غير المتصلة (Offline Sync)
