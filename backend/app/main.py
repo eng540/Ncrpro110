@@ -551,9 +551,9 @@ def download_matrix_report(
 @app.post("/api/sync", response_model=schemas.SyncResponse)
 def sync_offline_data(
     request: schemas.SyncRequest,
+    req: Request,
     db: Session = Depends(get_db),
     current_user: models.User = Depends(security.require_write_permission()),
-    req: Request
 ):
     """
     مزامنة البيانات غير المتصلة (Offline Sync)
