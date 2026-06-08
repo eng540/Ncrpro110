@@ -39,8 +39,14 @@ class ImageService {
 
     async uploadImage(compressedFile) {
         const ct = compressedFile.type;
-        const res = await apiFetch(`/evidence/presigned-url?content_type=${encodeURIComponent(ct)}`);
-        if (!res.ok) throw new Error('Failed to get presigned URL');
+        // ✅ تصحيح: إرسال POST بدلاً من GET (الـ Backend يتوقع POST)
+        const res = await apiFetch(`/evidence/presigned-url?content_type=${encodeURIComponent(ct)}`, {
+            method: 'POST'
+        });
+        if (!res.ok) {
+            const errText = await res.text();
+            throw new Error(`Failed to get presigned URL: ${res.status} ${errText}`);
+        }
         const { presigned_data, key } = await res.json();
         const form = new FormData();
         Object.entries(presigned_data.fields).forEach(([k, v]) => form.append(k, v));
