@@ -2,6 +2,7 @@
 # 2026-06-03: إضافة endpoint /api/admin/roles
 # 2026-06-03: إصلاح أمني – إضافة require_write_permission إلى /api/sync
 # 2026-06-03: إضافة endpoint /api/evidence/presigned-url و /api/evidence/view لدعم الصور
+# 2026-06-08: تعديل لدعم Cloudflare R2
 
 from fastapi import FastAPI, Depends, HTTPException, Query, UploadFile, File, Request, status
 from fastapi.middleware.cors import CORSMiddleware
@@ -230,7 +231,7 @@ def list_latrines(
         query = query.filter(models.Latrine.status == status)
     return query.offset(skip).limit(limit).all()
 
-@app.get("/api/latrines/{latrine_id}", response_model=schemas.LatrineOut])
+@app.get("/api/latrines/{latrine_id}", response_model=schemas.LatrineOut)
 def get_latrine(
     latrine_id: int,
     db: Session = Depends(get_db),
@@ -244,7 +245,7 @@ def get_latrine(
             raise HTTPException(status_code=403, detail="Not assigned to this latrine")
     return latrine
 
-@app.post("/api/latrines", response_model=schemas.LatrineOut])
+@app.post("/api/latrines", response_model=schemas.LatrineOut)
 def create_latrine(
     latrine: schemas.LatrineCreate,
     db: Session = Depends(get_db),
@@ -259,7 +260,7 @@ def create_latrine(
     crud.seed_boq_items(db, db_latrine.id)
     return db_latrine
 
-@app.patch("/api/latrines/{latrine_id}", response_model=schemas.LatrineOut])
+@app.patch("/api/latrines/{latrine_id}", response_model=schemas.LatrineOut)
 def patch_latrine(
     latrine_id: int,
     updates: schemas.LatrineUpdate,
@@ -299,7 +300,7 @@ def list_boq_items(
                 return []
     return crud.get_boq_items(db, latrine_id=latrine_id)
 
-@app.patch("/api/boq-items/{item_id}", response_model=schemas.BoqItemOut])
+@app.patch("/api/boq-items/{item_id}", response_model=schemas.BoqItemOut)
 def update_boq_item(
     item_id: int,
     updates: schemas.BoqItemUpdate,
@@ -344,7 +345,7 @@ def list_remarks(
             return db.query(models.Remark).filter(models.Remark.latrine_id.in_(assigned_ids)).all()
     return crud.get_remarks(db, latrine_id=latrine_id, status=status)
 
-@app.post("/api/remarks", response_model=schemas.RemarkOut])
+@app.post("/api/remarks", response_model=schemas.RemarkOut)
 def create_remark(
     remark: schemas.RemarkCreate,
     db: Session = Depends(get_db),
@@ -355,7 +356,7 @@ def create_remark(
     security.log_audit(db, current_user.id, "CREATE_REMARK", "remark", db_remark.id, new_values=remark.dict(), request=request)
     return db_remark
 
-@app.patch("/api/remarks/{remark_id}", response_model=schemas.RemarkOut])
+@app.patch("/api/remarks/{remark_id}", response_model=schemas.RemarkOut)
 def patch_remark(
     remark_id: int,
     updates: schemas.RemarkUpdate,
@@ -372,7 +373,7 @@ def patch_remark(
 # ==========================================
 # DAILY LOGS
 # ==========================================
-@app.post("/api/daily-logs", response_model=schemas.DailyLogOut])
+@app.post("/api/daily-logs", response_model=schemas.DailyLogOut)
 def create_daily_log(
     log: schemas.DailyLogCreate,
     db: Session = Depends(get_db),
@@ -551,17 +552,14 @@ def download_matrix_report(
 def sync_offline_data(
     request: schemas.SyncRequest,
     db: Session = Depends(get_db),
-    # 🔒 أفضل ممارسة: استخدام require_write_permission بدلاً من get_current_active_user
-    # يضمن أن المستخدم لديه صلاحية كتابة على الأقل على كيان واحد
     current_user: models.User = Depends(security.require_write_permission()),
     req: Request = None
 ):
     """
     مزامنة البيانات غير المتصلة (Offline Sync)
-    🔒 تتطلب صلاحية كتابة (أي دور له :write أو admin)
+    تتطلب صلاحية كتابة (أي دور له :write أو admin)
     """
     try:
-        # تسجيل عملية المزامنة في سجل التدقيق (Audit Log) اختياري
         security.log_audit(
             db, 
             current_user.id, 
@@ -574,7 +572,6 @@ def sync_offline_data(
 
         result = crud.process_sync_queue(db, request)
 
-        # تسجيل النتيجة
         security.log_audit(
             db,
             current_user.id,
@@ -600,7 +597,7 @@ def list_boq_dictionary(
 ):
     return crud.get_boq_dictionary(db)
 
-@app.post("/api/admin/boq-dictionary", response_model=schemas.BoqDictionaryOut])
+@app.post("/api/admin/boq-dictionary", response_model=schemas.BoqDictionaryOut)
 def create_dictionary_item(
     item: schemas.BoqDictionaryCreate,
     db: Session = Depends(get_db),
@@ -611,7 +608,7 @@ def create_dictionary_item(
         raise HTTPException(status_code=400, detail=f"BoQ code {item.boq_code} already exists")
     return crud.create_boq_dictionary_item(db, item)
 
-@app.patch("/api/admin/boq-dictionary/{boq_code}", response_model=schemas.BoqDictionaryOut])
+@app.patch("/api/admin/boq-dictionary/{boq_code}", response_model=schemas.BoqDictionaryOut)
 def update_dictionary_item(
     boq_code: str,
     updates: schemas.BoqDictionaryUpdate,
@@ -817,7 +814,7 @@ def list_remark_templates(
 ):
     return crud.get_remark_templates(db)
 
-@app.post("/api/admin/remark-templates", response_model=schemas.RemarkTemplateOut])
+@app.post("/api/admin/remark-templates", response_model=schemas.RemarkTemplateOut)
 def create_remark_template(
     template: schemas.RemarkTemplateCreate,
     db: Session = Depends(get_db),
@@ -825,7 +822,7 @@ def create_remark_template(
 ):
     return crud.create_remark_template(db, template)
 
-@app.patch("/api/admin/remark-templates/{template_code}", response_model=schemas.RemarkTemplateOut])
+@app.patch("/api/admin/remark-templates/{template_code}", response_model=schemas.RemarkTemplateOut)
 def update_remark_template(
     template_code: str,
     updates: schemas.RemarkTemplateUpdate,
