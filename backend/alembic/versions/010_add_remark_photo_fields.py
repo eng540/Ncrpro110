@@ -2,15 +2,23 @@
 
 Revision ID: 010
 Revises: 009
-Create Date: 2026-06-03 15:00:00.000000
+Create Date: 2026-06-08 15:00:00.000000
 """
 from alembic import op
 import sqlalchemy as sa
 
-def upgrade():
+# revision identifiers, used by Alembic.
+revision = '010'
+down_revision = '009'
+branch_labels = None
+depends_on = None
+
+
+def upgrade() -> None:
     op.add_column('remarks', sa.Column('before_photo_ref', sa.String(200), nullable=True))
     op.add_column('remarks', sa.Column('after_photo_ref', sa.String(200), nullable=True))
 
-def downgrade():
+
+def downgrade() -> None:
     op.drop_column('remarks', 'after_photo_ref')
     op.drop_column('remarks', 'before_photo_ref')
