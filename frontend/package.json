@@ -23,7 +23,8 @@
     "workbox-routing": "^6.5.4",
     "workbox-strategies": "^6.5.4",
     "workbox-streams": "^6.5.4",
-    "browser-image-compression": "^2.0.2"
+    "browser-image-compression": "^2.0.2",
+    "heic2any": "^0.0.4"
   },
   "scripts": {
     "start": "react-scripts start",
