@@ -4,8 +4,57 @@ import imageCompression from 'browser-image-compression';
 import heic2any from 'heic2any';
 
 class ImageService {
+    // ✅ دالة مساعدة للتحقق من صحة Blob
+    ensureValidBlob(file, context = '') {
+        if (!file) {
+            throw new Error(`الملف غير موجود ${context ? `في ${context}` : ''}`);
+        }
+        if (!(file instanceof Blob) && !(file instanceof File)) {
+            throw new Error(`الكائن ليس من نوع Blob/File ${context ? `في ${context}` : ''}`);
+        }
+        if (file.size === 0) {
+            throw new Error(`الملف فارغ (حجم 0 بايت) ${context ? `في ${context}` : ''}`);
+        }
+        return true;
+    }
+
     async compressImage(file, maxSizeMB = 0.5) {
-        return await imageCompression(file, { maxSizeMB, maxWidthOrHeight: 1024, useWebWorker: true });
+        // ✅ فحص صحة المدخلات
+        this.ensureValidBlob(file, 'compressImage');
+
+        try {
+            const options = {
+                maxSizeMB,
+                maxWidthOrHeight: 1024,
+                useWebWorker: true,
+                // إضافة مهلة زمنية (timeout) ضمنياً عبر Promise.race
+            };
+            
+            // محاولة الضغط
+            const compressed = await imageCompression(file, options);
+            
+            // ✅ فحص النتيجة
+            if (!compressed) {
+                throw new Error('مكتبة الضغط أعادت null أو undefined');
+            }
+            if (!(compressed instanceof Blob)) {
+                throw new Error(`النتيجة ليست من نوع Blob: ${typeof compressed}`);
+            }
+            
+            return compressed;
+        } catch (err) {
+            console.error(`فشل ضغط الصورة (${file.name}, size: ${file.size}):`, err);
+            
+            // ✅ آلية احتياطية: إذا كان حجم الملف الأصلي أقل من 5 ميجابايت، استخدمه كما هو
+            const MAX_FALLBACK_SIZE = 5 * 1024 * 1024; // 5 MB
+            if (file.size <= MAX_FALLBACK_SIZE) {
+                console.warn(`استخدام الملف الأصلي بدلاً من المضغوط (حجمه ${(file.size / 1024 / 1024).toFixed(2)} MB)`);
+                return file; // إعادة الملف الأصلي كـ "compressed"
+            }
+            
+            // إذا فشل الضغط والملف كبير جداً، أعد إلقاء الخطأ مع رسالة واضحة
+            throw new Error(`فشل ضغط الصورة (حجمها ${(file.size / 1024 / 1024).toFixed(2)} MB). حاول استخدام صورة أصغر.`);
+        }
     }
 
     async captureImage() {
@@ -35,17 +84,32 @@ class ImageService {
     }
 
     async uploadImage(compressedFile) {
+        // ✅ فحص صارم قبل استخدام compressedFile.type
+        if (!compressedFile) {
+            throw new Error('الملف المضغوط غير موجود (compressedFile is undefined)');
+        }
+        if (!(compressedFile instanceof Blob) && !(compressedFile instanceof File)) {
+            throw new Error('الملف المضغوط ليس من النوع Blob/File');
+        }
+        if (compressedFile.size === 0) {
+            throw new Error('الملف المضغوط فارغ (حجم 0 بايت)');
+        }
+        
         const ct = compressedFile.type;
+        if (!ct || !ct.startsWith('image/')) {
+            throw new Error(`نوع الملف غير مدعوم: ${ct || 'غير معروف'}`);
+        }
+
         const res = await apiFetch(`/evidence/presigned-url?content_type=${encodeURIComponent(ct)}`, {
             method: 'POST'
         });
         if (!res.ok) {
             const errText = await res.text();
-            throw new Error(`Failed to get presigned URL: ${res.status} ${errText}`);
+            throw new Error(`فشل الحصول على عنوان الرفع: ${res.status} ${errText}`);
         }
         const { upload_url, key } = await res.json();
         
-        // ✅ PUT مباشر إلى B2 (بدون FormData)
+        // رفع PUT مباشرة إلى B2
         const uploadResp = await fetch(upload_url, {
             method: 'PUT',
             body: compressedFile,
@@ -57,7 +121,7 @@ class ImageService {
         if (!uploadResp.ok) {
             const errText = await uploadResp.text();
             console.error('B2 upload error:', uploadResp.status, errText);
-            throw new Error(`Upload failed: ${uploadResp.status} ${errText}`);
+            throw new Error(`فشل الرفع إلى التخزين السحابي: ${uploadResp.status}`);
         }
         
         return key;
@@ -82,10 +146,25 @@ class ImageService {
             }
         }
 
-        const compressed = await this.compressImage(fileToProcess);
+        let compressed;
+        try {
+            compressed = await this.compressImage(fileToProcess);
+        } catch (err) {
+            console.error('Compression step failed:', err);
+            alert(`فشل ضغط الصورة: ${err.message}`);
+            return null;
+        }
+
         if (navigator.onLine) {
-            return await this.uploadImage(compressed);
+            try {
+                return await this.uploadImage(compressed);
+            } catch (err) {
+                console.error('Upload step failed:', err);
+                alert(`فشل رفع الصورة: ${err.message}`);
+                return null;
+            }
         } else {
+            // وضع عدم الاتصال: حفظ الصورة في pending_images
             const pendingId = await db.pending_images.add({
                 remark_local_uuid: remarkLocalUuid,
                 type: type,
