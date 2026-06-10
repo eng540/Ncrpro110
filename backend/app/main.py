@@ -4,6 +4,7 @@
 # 2026-06-03: إضافة endpoint /api/evidence/presigned-url و /api/evidence/view لدعم الصور
 # 2026-06-08: تعديل لدعم Backblaze B2 (PUT presigned URL بدلاً من POST)
 # 2026-06-10: إضافة endpoint /api/evidence/upload (Proxy Upload)
+# 2026-06-10: إزالة المصادقة من /api/evidence/view لدعم عرض الصور المباشر
 
 from fastapi import FastAPI, Depends, HTTPException, Query, UploadFile, File, Request, status
 from fastapi.middleware.cors import CORSMiddleware
@@ -906,27 +907,6 @@ async def get_presigned_url(
     except ClientError as e:
         raise HTTPException(500, str(e))
 
-@app.get("/api/evidence/view")
-async def view_evidence(
-    key: str = Query(...),
-    db: Session = Depends(get_db),
-    _: models.User = Depends(security.require_role(["remarks:read", "*"]))
-):
-    remark = db.query(models.Remark).filter(
-        (models.Remark.before_photo_ref == key) | (models.Remark.after_photo_ref == key)
-    ).first()
-    if not remark:
-        raise HTTPException(404, "Image not found")
-    try:
-        url = s3_client.generate_presigned_url(
-            'get_object',
-            Params={'Bucket': B2_BUCKET, 'Key': key},
-            ExpiresIn=900
-        )
-        return RedirectResponse(url)
-    except ClientError:
-        raise HTTPException(404, "File missing")
-
 # ==========================================
 # IMAGE ENDPOINTS (Backblaze B2) - PROXY UPLOAD (NEW)
 # ==========================================
@@ -968,6 +948,40 @@ async def upload_evidence(
     except ClientError as e:
         logger.error(f"B2 upload failed: {e}")
         raise HTTPException(500, f"Upload failed: {str(e)}")
+
+# ==========================================
+# IMAGE VIEW (Backblaze B2) - PUBLIC PRESIGNED URL
+# ==========================================
+@app.get("/api/evidence/view")
+async def view_evidence(
+    key: str = Query(...),
+    db: Session = Depends(get_db)
+    # ✅ تمت إزالة المصادقة: لا يمكن إرسال Authorization header من <img> أو window.open
+):
+    """
+    إرجاع رابط مؤقت (presigned URL) لعرض الصورة.
+    لا يتطلب مصادقة لأن المتصفح لا يُرسل التوكن في طلبات الصور المباشرة.
+    الأمان يعتمد على سرية المفتاح (UUID عشوائي).
+    """
+    # التحقق من أن المفتاح مرتبط بـ remark موجود (لمنع الوصول العشوائي)
+    remark = db.query(models.Remark).filter(
+        (models.Remark.before_photo_ref == key) | (models.Remark.after_photo_ref == key)
+    ).first()
+    if not remark:
+        raise HTTPException(404, "Image not found")
+    
+    if not s3_client:
+        raise HTTPException(503, "Storage not configured")
+    
+    try:
+        url = s3_client.generate_presigned_url(
+            'get_object',
+            Params={'Bucket': B2_BUCKET, 'Key': key},
+            ExpiresIn=900
+        )
+        return RedirectResponse(url)
+    except ClientError:
+        raise HTTPException(404, "File missing")
 
 # ==========================================
 # REACT FRONTEND (serve static files)
