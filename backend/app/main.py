@@ -5,6 +5,7 @@
 # 2026-06-08: تعديل لدعم Backblaze B2 (PUT presigned URL بدلاً من POST)
 # 2026-06-10: إضافة endpoint /api/evidence/upload (Proxy Upload)
 # 2026-06-10: إزالة المصادقة من /api/evidence/view لدعم عرض الصور المباشر
+# 2026-06-10: تعديل view_evidence لإرجاع StreamingResponse بدلاً من Redirect
 
 from fastapi import FastAPI, Depends, HTTPException, Query, UploadFile, File, Request, status
 from fastapi.middleware.cors import CORSMiddleware
@@ -22,6 +23,7 @@ import boto3
 from botocore.config import Config
 from botocore.exceptions import ClientError
 import uuid
+import requests
 
 from app import models, schemas, crud, security
 from app.database import engine, get_db, SessionLocal, Base
@@ -47,12 +49,11 @@ async def lifespan(app: FastAPI):
     try:
         crud.seed_default_policies(db)
         crud.seed_default_remark_templates(db)
-        crud.seed_default_admin(db)          # AUTH-PATCH
+        crud.seed_default_admin(db)
         print("Default policies, remark templates, and admin user seeded successfully.")
-        yield   # هذا السطر ضروري جداً - بدونه لن يعمل التطبيق
+        yield
     except Exception as e:
         print(f"Failed to seed defaults: {e}")
-        # لا نعيد رفع الاستثناء لمنع فشل بدء التشغيل
     finally:
         db.close()
 
@@ -106,6 +107,11 @@ if B2_ACCESS_KEY and B2_SECRET_KEY and B2_ENDPOINT:
 else:
     s3_client = None
     logger.warning("WARNING: Backblaze B2 not configured. Image uploads will fail.")
+
+# ==========================================
+# IMAGE CACHE (لتقليل طلبات B2)
+# ==========================================
+_image_cache = {}
 
 # ==========================================
 # AUTHENTICATION ENDPOINTS (AUTH-PATCH)
@@ -200,14 +206,13 @@ async def get_audit_logs(
     return crud.get_audit_logs(db, skip=skip, limit=limit, user_id=user_id, action=action)
 
 # ==========================================
-# ROLES ENDPOINT (لإدارة المستخدمين)
+# ROLES ENDPOINT
 # ==========================================
 @app.get("/api/admin/roles", response_model=List[schemas.RoleOut])
 def list_roles(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(security.require_admin)
 ):
-    """إرجاع قائمة جميع الأدوار (للاستخدام في لوحة الإدارة)"""
     return db.query(models.Role).all()
 
 # ==========================================
@@ -218,7 +223,7 @@ def health_check():
     return {"status": "healthy", "service": "running", "version": "3.0.0", "mode": "dynamic_saas"}
 
 # ==========================================
-# LATRINES (محمية)
+# LATRINES
 # ==========================================
 @app.get("/api/latrines", response_model=List[schemas.LatrineOut])
 def list_latrines(
@@ -550,7 +555,7 @@ def download_matrix_report(
         raise HTTPException(status_code=500, detail=f"Failed to generate report: {str(e)}")
 
 # ==========================================
-# SYNC ENGINE (مع تطبيق الصلاحيات)
+# SYNC ENGINE
 # ==========================================
 @app.post("/api/sync", response_model=schemas.SyncResponse)
 def sync_offline_data(
@@ -559,10 +564,6 @@ def sync_offline_data(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(security.require_write_permission()),
 ):
-    """
-    مزامنة البيانات غير المتصلة (Offline Sync)
-    تتطلب صلاحية كتابة (أي دور له :write أو admin)
-    """
     try:
         security.log_audit(
             db, 
@@ -923,20 +924,16 @@ async def upload_evidence(
     if not file.content_type or file.content_type not in ALLOWED_MIME_TYPES:
         raise HTTPException(400, f"Unsupported type. Allowed: {', '.join(ALLOWED_MIME_TYPES)}")
     
-    # قراءة الملف بالكامل
     contents = await file.read()
     
-    # التحقق من الحجم الأقصى
     if len(contents) > MAX_IMAGE_SIZE:
         raise HTTPException(413, f"File too large. Max: {MAX_IMAGE_SIZE // (1024*1024)} MB")
     
-    # تحديد الامتداد والمسار
     ext = EXT_MAP.get(file.content_type, "jpg")
     file_id = str(uuid.uuid4())
     key = f"evidence/user_{current_user.id}/{file_id}.{ext}"
     
     try:
-        # رفع الملف مباشرة من الذاكرة إلى B2
         s3_client.upload_fileobj(
             BytesIO(contents),
             B2_BUCKET,
@@ -950,18 +947,17 @@ async def upload_evidence(
         raise HTTPException(500, f"Upload failed: {str(e)}")
 
 # ==========================================
-# IMAGE VIEW (Backblaze B2) - PUBLIC PRESIGNED URL
+# IMAGE VIEW (Backblaze B2) - PROXY STREAM (NO REDIRECT)
 # ==========================================
 @app.get("/api/evidence/view")
 async def view_evidence(
     key: str = Query(...),
     db: Session = Depends(get_db)
-    # ✅ تمت إزالة المصادقة: لا يمكن إرسال Authorization header من <img> أو window.open
 ):
     """
-    إرجاع رابط مؤقت (presigned URL) لعرض الصورة.
-    لا يتطلب مصادقة لأن المتصفح لا يُرسل التوكن في طلبات الصور المباشرة.
-    الأمان يعتمد على سرية المفتاح (UUID عشوائي).
+    إرجاع الصورة مباشرة (StreamingResponse) بعد جلبها من B2.
+    لا حاجة لإعادة توجيه، ولا مصادقة مسبقة.
+    الأمان: المفتاح عشوائي (UUID) ولا يمكن تخمينه.
     """
     # التحقق من أن المفتاح مرتبط بـ remark موجود (لمنع الوصول العشوائي)
     remark = db.query(models.Remark).filter(
@@ -973,15 +969,47 @@ async def view_evidence(
     if not s3_client:
         raise HTTPException(503, "Storage not configured")
     
+    # ✅ التحقق من الذاكرة المؤقتة أولاً
+    if key in _image_cache:
+        cached = _image_cache[key]
+        return StreamingResponse(
+            BytesIO(cached['data']),
+            media_type=cached['content_type']
+        )
+    
+    # إنشاء presigned URL للـ GET
     try:
         url = s3_client.generate_presigned_url(
             'get_object',
             Params={'Bucket': B2_BUCKET, 'Key': key},
             ExpiresIn=900
         )
-        return RedirectResponse(url)
-    except ClientError:
-        raise HTTPException(404, "File missing")
+    except ClientError as e:
+        raise HTTPException(500, f"Failed to generate URL: {str(e)}")
+    
+    # جلب الصورة من B2
+    try:
+        response = requests.get(url, timeout=30)
+        if response.status_code != 200:
+            raise HTTPException(404, "File not found on storage")
+        
+        content_type = response.headers.get('content-type', 'image/jpeg')
+        image_data = response.content
+        
+        # ✅ تخزين في الذاكرة المؤقتة (حد أقصى 50 صورة)
+        if len(_image_cache) > 50:
+            _image_cache.pop(next(iter(_image_cache)))
+        _image_cache[key] = {
+            'data': image_data,
+            'content_type': content_type
+        }
+        
+        return StreamingResponse(
+            BytesIO(image_data),
+            media_type=content_type
+        )
+    except requests.exceptions.RequestException:
+        raise HTTPException(500, "Failed to fetch image from storage")
 
 # ==========================================
 # REACT FRONTEND (serve static files)
