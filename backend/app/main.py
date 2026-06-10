@@ -3,6 +3,7 @@
 # 2026-06-03: إصلاح أمني – إضافة require_write_permission إلى /api/sync
 # 2026-06-03: إضافة endpoint /api/evidence/presigned-url و /api/evidence/view لدعم الصور
 # 2026-06-08: تعديل لدعم Backblaze B2 (PUT presigned URL بدلاً من POST)
+# 2026-06-10: إضافة endpoint /api/evidence/upload (Proxy Upload)
 
 from fastapi import FastAPI, Depends, HTTPException, Query, UploadFile, File, Request, status
 from fastapi.middleware.cors import CORSMiddleware
@@ -877,7 +878,7 @@ def seed_latrines(
     return {"created": len(created), "codes": created[:5]}
 
 # ==========================================
-# IMAGE ENDPOINTS (Backblaze B2) — PUT presigned URL
+# IMAGE ENDPOINTS (Backblaze B2) — PUT presigned URL (Legacy)
 # ==========================================
 @app.post("/api/evidence/presigned-url")
 async def get_presigned_url(
@@ -892,7 +893,6 @@ async def get_presigned_url(
     file_id = str(uuid.uuid4())
     key = f"evidence/user_{current_user.id}/{file_id}.{ext}"
     try:
-        # ✅ استخدام PUT بدلاً من POST (أفضل لـ B2)
         url = s3_client.generate_presigned_url(
             'put_object',
             Params={
@@ -926,6 +926,48 @@ async def view_evidence(
         return RedirectResponse(url)
     except ClientError:
         raise HTTPException(404, "File missing")
+
+# ==========================================
+# IMAGE ENDPOINTS (Backblaze B2) - PROXY UPLOAD (NEW)
+# ==========================================
+@app.post("/api/evidence/upload")
+async def upload_evidence(
+    file: UploadFile = File(...),
+    current_user: models.User = Depends(security.require_role(["remarks:write", "*"]))
+):
+    """
+    رفع الصورة عبر الخادم (بدون CORS). تستقبل الملف وتحمله مباشرة إلى B2.
+    """
+    if not s3_client:
+        raise HTTPException(503, "Storage not configured")
+    if not file.content_type or file.content_type not in ALLOWED_MIME_TYPES:
+        raise HTTPException(400, f"Unsupported type. Allowed: {', '.join(ALLOWED_MIME_TYPES)}")
+    
+    # قراءة الملف بالكامل
+    contents = await file.read()
+    
+    # التحقق من الحجم الأقصى
+    if len(contents) > MAX_IMAGE_SIZE:
+        raise HTTPException(413, f"File too large. Max: {MAX_IMAGE_SIZE // (1024*1024)} MB")
+    
+    # تحديد الامتداد والمسار
+    ext = EXT_MAP.get(file.content_type, "jpg")
+    file_id = str(uuid.uuid4())
+    key = f"evidence/user_{current_user.id}/{file_id}.{ext}"
+    
+    try:
+        # رفع الملف مباشرة من الذاكرة إلى B2
+        s3_client.upload_fileobj(
+            BytesIO(contents),
+            B2_BUCKET,
+            key,
+            ExtraArgs={'ContentType': file.content_type}
+        )
+        logger.info(f"User {current_user.username} uploaded image: {key}")
+        return {"key": key}
+    except ClientError as e:
+        logger.error(f"B2 upload failed: {e}")
+        raise HTTPException(500, f"Upload failed: {str(e)}")
 
 # ==========================================
 # REACT FRONTEND (serve static files)
