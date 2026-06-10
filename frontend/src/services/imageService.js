@@ -1,5 +1,4 @@
 import { db } from '../db/index.js';
-import { apiFetch } from '../api';
 import imageCompression from 'browser-image-compression';
 import heic2any from 'heic2any';
 
@@ -101,23 +100,32 @@ class ImageService {
         const formData = new FormData();
         formData.append('file', compressedFile);
 
-        const res = await apiFetch('/evidence/upload', {
+        // ✅ استخدام fetch مباشرة لتجنب تداخل apiFetch مع Content-Type
+        const token = localStorage.getItem('nrc_token');
+        const baseURL = process.env.REACT_APP_API_URL || '';
+        const url = `${baseURL}/api/evidence/upload`;
+
+        const response = await fetch(url, {
             method: 'POST',
-            body: formData
+            body: formData,
+            headers: {
+                'Authorization': `Bearer ${token}`
+                // لا نضيف Content-Type – المتصفح يضبطه تلقائياً مع الـ boundary
+            }
         });
 
-        if (!res.ok) {
-            let errorMsg = `فشل رفع الصورة: ${res.status}`;
+        if (!response.ok) {
+            let errorMsg = `فشل رفع الصورة: ${response.status}`;
             try {
-                const errData = await res.json();
+                const errData = await response.json();
                 errorMsg = errData.detail || errorMsg;
             } catch (e) {
-                errorMsg = await res.text() || errorMsg;
+                errorMsg = await response.text() || errorMsg;
             }
             throw new Error(errorMsg);
         }
 
-        const data = await res.json();
+        const data = await response.json();
         return data.key;
     }
 
