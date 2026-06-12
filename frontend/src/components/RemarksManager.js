@@ -71,12 +71,33 @@ const LoadingSkeleton = () => (
   </div>
 );
 
-// --- PhotoStrip (جديد موحد لعرض الصور) ---
+// --- PhotoStrip (معدل لاستخدام fetch مع التوكن وعرض الصورة كـ Blob) ---
 const PhotoStrip = ({ remark, onAddImage, disabled }) => {
   const beforeKey = remark.before_photo_ref;
   const afterKey = remark.after_photo_ref;
   const beforePending = beforeKey?.startsWith('pending:');
   const afterPending = afterKey?.startsWith('pending:');
+
+  const viewImage = async (key) => {
+    const token = localStorage.getItem('nrc_token');
+    const baseURL = process.env.REACT_APP_API_URL || '';
+    const url = `${baseURL}/api/evidence/view?key=${encodeURIComponent(key)}`;
+    try {
+      const response = await fetch(url, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (response.ok) {
+        const blob = await response.blob();
+        const blobUrl = URL.createObjectURL(blob);
+        window.open(blobUrl, '_blank');
+        setTimeout(() => URL.revokeObjectURL(blobUrl), 10000);
+      } else {
+        alert('فشل تحميل الصورة: ' + response.status);
+      }
+    } catch (err) {
+      alert('خطأ في الشبكة: ' + err.message);
+    }
+  };
 
   return (
     <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap', marginTop: '6px' }}>
@@ -88,7 +109,7 @@ const PhotoStrip = ({ remark, onAddImage, disabled }) => {
               src={`/api/evidence/view?key=${encodeURIComponent(beforeKey)}`}
               alt="قبل"
               style={{ width: '48px', height: '48px', objectFit: 'cover', borderRadius: '6px', cursor: 'pointer', border: '2px solid #3498db' }}
-              onClick={() => window.open(`/api/evidence/view?key=${encodeURIComponent(beforeKey)}`, '_blank')}
+              onClick={() => viewImage(beforeKey)}
             />
             <span style={{ position: 'absolute', bottom: '2px', right: '2px', background: '#3498db', color: 'white', fontSize: '9px', padding: '1px 4px', borderRadius: '3px' }}>قبل</span>
           </div>
@@ -113,7 +134,7 @@ const PhotoStrip = ({ remark, onAddImage, disabled }) => {
               src={`/api/evidence/view?key=${encodeURIComponent(afterKey)}`}
               alt="بعد"
               style={{ width: '48px', height: '48px', objectFit: 'cover', borderRadius: '6px', cursor: 'pointer', border: '2px solid #27ae60' }}
-              onClick={() => window.open(`/api/evidence/view?key=${encodeURIComponent(afterKey)}`, '_blank')}
+              onClick={() => viewImage(afterKey)}
             />
             <span style={{ position: 'absolute', bottom: '2px', right: '2px', background: '#27ae60', color: 'white', fontSize: '9px', padding: '1px 4px', borderRadius: '3px' }}>بعد</span>
           </div>
@@ -558,7 +579,7 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
     }
   }, []);
 
-  // ✅ إصلاح 1: مزامنة الصور المعلقة + البيانات الفاشلة عند العودة للإنترنت
+  // ✅ مزامنة الصور المعلقة + البيانات الفاشلة عند العودة للإنترنت
   useEffect(() => {
     const handleOnline = async () => {
       const pendingImages = await db.pending_images?.where('sync_status').equals('pending').count() || 0;
@@ -891,7 +912,7 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
   const handleAddImage = async (remark, type) => {
     setProcessingIds(prev => new Set(prev).add(remark.id));
     try {
-      // ✅ التأكد من وجود local_uuid (إنشاء جديد إذا لم يكن موجوداً)
+      // التأكد من وجود local_uuid (إنشاء جديد إذا لم يكن موجوداً)
       let localUuid = remark.local_uuid || remark.remark_id;
       if (!localUuid) {
         localUuid = uuidv4();
@@ -904,15 +925,14 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
       const field = type === 'before' ? 'before_photo_ref' : 'after_photo_ref';
       const isPending = key.startsWith('pending:');
 
-      // ✅ تحديث IndexedDB
+      // تحديث IndexedDB
       await db.remarks.update(remark.id, { 
         [field]: key, 
         sync_status: 'local',
         last_update: new Date().toISOString()
       });
 
-      // ✅ إصلاح 3: إرسال UPDATE_REMARK للسيرفر فوراً إذا كان الرفع مباشراً (Online)
-      // إذا كان offline (pending)، فإن imageService.syncPendingImages() ستتولى الأمر لاحقاً
+      // إرسال UPDATE_REMARK للسيرفر فوراً إذا كان الرفع مباشراً (Online)
       if (!isPending) {
         await pushToSyncQueue('UPDATE_REMARK', {
           id: remark.id,
@@ -1193,7 +1213,6 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
                       <span style={{ background: UI_COLORS.sync[r.sync_status || 'local'], color: 'white', padding: '1px 6px', borderRadius: '4px', fontSize: '10px' }}>{UI_LABELS.sync[r.sync_status || 'local']}</span>
                     </div>
                     <div>{r.template ? `📋 ${r.template.title}` : r.description}</div>
-                    {/* ✅ إصلاح 4: PhotoStrip موحد في السجل الخام */}
                     <PhotoStrip remark={r} onAddImage={handleAddImage} disabled={processingIds.has(r.id)} />
                   </div>
                   {r.status === 'open' && (
@@ -1227,7 +1246,6 @@ const RemarksManager = ({ latrineId, boqCode, initialFilter = '', onBack }) => {
                             <span style={{ background: UI_COLORS.sync[r.sync_status || 'local'], color: 'white', padding: '1px 6px', borderRadius: '4px', fontSize: '10px' }}>{UI_LABELS.sync[r.sync_status || 'local']}</span>
                           </div>
                           <div>{r.template ? `📋 ${r.template.title}` : r.description}</div>
-                          {/* ✅ إصلاح 5: PhotoStrip موحد في التجميعات */}
                           <PhotoStrip remark={r} onAddImage={handleAddImage} disabled={processingIds.has(r.id)} />
                         </div>
                         {r.status === 'open' && (
